@@ -1,0 +1,20 @@
+# deps / build
+node_modules/
+dist/
+*.local
+.vite/
+release/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+*.log
+*.tmp
+*.bak
+
+# local only
+.claude/
+# frames the dev build saves for comparing the look (hundreds of MB), and other games' reference pictures
+docs/concept/shots/
+docs/concept/refs/

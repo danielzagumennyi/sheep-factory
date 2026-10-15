@@ -1,0 +1,19 @@
+{
+  "name": "@kit/outline",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Blender-style object outlines for three.js: an ID buffer and one fullscreen pass, no post-processing stack (from Cubocalypse, without its crowd skinning)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.7.0",
+    "react": "~19.2.0",
+    "three": "^0.185.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/three": "^0.185.0"
+  }
+}
