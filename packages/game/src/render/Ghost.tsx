@@ -4,15 +4,16 @@ import { Html } from '@react-three/drei'
 import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Vector2, Vector3, type Group, type Mesh } from 'three'
 import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, RES, type BuildingId, type Dir, dimsOf } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { anchorAt, footprint, get, inCell, inCells, inGrid, outCells, pastureAt, reachCells, whyNot } from '@/game/grid'
+import { anchorAt, buildPrice, footprint, get, inCells, inGrid, outCells, pastureAt, reachCells, whyNot } from '@/game/grid'
 import { pathDirs, routeCells } from '@/game/actions/path'
-import { Field, GameState, Plant, Ui, blankBuilding, key, res, unkey } from '@/game/world'
+import { Field, Flock, GameState, Plant, Ui, blankBuilding, key, res, unkey } from '@/game/world'
 import { useT } from '@/i18n'
+import { UI } from '@/i18n/ui'
 import { RES_NAMES, WHY_TEXT } from '@/i18n/content'
 import { Icon } from '@/ui/Icon'
-import { GEO, flat, toonBands, vmat, yawOf } from './kit'
+import { GEO, flat, machineYaw, toonBands, vmat, yawOf } from './kit'
 import { Batch, useInstanced } from './instancing'
-import { chute, machineBody, machineModel } from './machineModels'
+import { machineBody, machineModel } from './machineModels'
 import { drawBelt, useBeltPieces } from './Belts'
 import { reach } from './reach'
 import { cam } from './camera'
@@ -20,11 +21,12 @@ import { markOutlined, unmarkOutlined } from '@kit/outline'
 
 /**
  * Placing, after Tower Factory (the author's screenshot of a belt piece in hand): what is held — a building or a line
- * of belt, the same way — is its own model in its own colours, held up on a see-through sky-blue block that fills the
- * gap to the ground, the model outlined in cream; a pink arrow before it shows the way in, a periwinkle one after it the
- * way out. A producer's reach tints everything inside it a cool blue (reach.ts) inside a lemon border, and two or three
- * thin lemon dashes run from the nearest resources. Where it can't stand, the block and the outline go red, the model
- * reddens a little, and the reason shows above it.
+ * of belt, the same way — is its own model in its own colours, turned as it will stand, held up on a see-through
+ * sky-blue block that fills the gap to the ground, the model outlined in cream; a pink arrow before it shows the way
+ * in, a periwinkle one after it the way out, and the ways in and out of whatever stands right next to it show too, so
+ * it can be lined up (the author). A producer's reach tints everything inside it a cool blue (reach.ts) inside a lemon
+ * border, and thin lemon dashes run from the resources it takes. Where it can't stand, or there aren't the coins for
+ * it, the block and the outline go red, the model reddens a little, and the reason shows above it.
  */
 const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45 } as const
 /**
@@ -33,8 +35,6 @@ const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45 } as cons
  */
 const HELD_MAT = new MeshToonMaterial({ vertexColors: true, gradientMap: toonBands })
 const BLOCKED_MAT = new MeshToonMaterial({ vertexColors: true, color: LOOK.blockedTint, gradientMap: toonBands })
-const HELD_OUT = new MeshToonMaterial({ color: LOOK.chevron, gradientMap: toonBands }),
-  HELD_IN = new MeshToonMaterial({ color: LOOK.inlet, gradientMap: toonBands })
 /** The in and out arrows draw over everything, so no model or belt ever hides one (the author). */
 const arrowMat = (c: string) => new MeshBasicMaterial({ color: c, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, toneMapped: false })
 const ARROW_IN = arrowMat(LOOK.arrowIn),
@@ -145,17 +145,11 @@ export function Ghost() {
   const sel = useRef<Mesh>(null)
   const stray = useRef<Mesh>(null)
   const frameM = useInstanced(GEO.box(), flat(LOOK.bad, 0.9), 8, 'ghost_frame', false)
-  const inArrows = useInstanced(arrowGeo, ARROW_IN, 16, 'ghost_in_arrows', false)
-  const outArrows = useInstanced(arrowGeo, ARROW_OUT, 16, 'ghost_out_arrows', false)
+  const inArrows = useInstanced(arrowGeo, ARROW_IN, 64, 'ghost_in_arrows', false)
+  const outArrows = useInstanced(arrowGeo, ARROW_OUT, 64, 'ghost_out_arrows', false)
   const dashes = useInstanced(GEO.box(), DASH_MAT, 900, 'ghost_reach_dashes', false)
-  const stubs = useInstanced(chute(), HELD_MAT, 6, 'ghost_stubs', false)
-  const stubOut = useInstanced(GEO.chevron(), HELD_OUT, 4, 'ghost_stub_out', false)
-  const stubIn = useInstanced(GEO.chevron(), HELD_IN, 2, 'ghost_stub_in', false)
   const belt = useBeltPieces(160, 'ghost_belt', false)
-  const b = useMemo(
-    () => ({ frame: new Batch(frameM), inArrows: new Batch(inArrows), outArrows: new Batch(outArrows), dashes: new Batch(dashes), stubs: new Batch(stubs), stubOut: new Batch(stubOut), stubIn: new Batch(stubIn) }),
-    [frameM, inArrows, outArrows, dashes, stubs, stubOut, stubIn],
-  )
+  const b = useMemo(() => ({ frame: new Batch(frameM), inArrows: new Batch(inArrows), outArrows: new Batch(outArrows), dashes: new Batch(dashes) }), [frameM, inArrows, outArrows, dashes])
   dashes.renderOrder = 20
   inArrows.renderOrder = outArrows.renderOrder = 30
   // the line of belt in hand is outlined as one thing, as a building in hand is
@@ -205,20 +199,33 @@ export function Ghost() {
       ;(into ? b.inArrows : b.outArrows).put(ex + dx * k, y, ez + dz * k, yawOf(d))
     }
     // every way in and out of a building, at height `at` — the same for every building, from the rules (inCells,
-    // outCells); a machine in hand carries its stubs of belt, as when built
-    const showFlow = (type: BuildingId | 'dock', x: number, y: number, dir: Dir, at: number, stubsAt = -1, probe = blankBuilding(type, x, y, dir)) => {
-      if (stubsAt >= 0 && type !== 'dock' && !BUILDINGS[type].onBelt) {
-        const stub = (sx: number, sz: number, d: number, arrows: Batch) => {
-          const yaw = yawOf(d)
-          b.stubs.put(sx, 0.13 + stubsAt, sz, yaw)
-          arrows.put(sx + Math.cos(yaw) * 0.02, 0.28 + stubsAt, sz - Math.sin(yaw) * 0.02, yaw)
-        }
-        for (const c of outCells(probe)) stub(c.sx + 0.5 + DIRS[c.d]![0] * 0.3, c.sy + 0.5 + DIRS[c.d]![1] * 0.3, c.d, b.stubOut)
-        const i = inCell(probe)
-        if (i) stub(i.sx + 0.5 - DIRS[i.d]![0] * 0.3, i.sy + 0.5 - DIRS[i.d]![1] * 0.3, i.d, b.stubIn)
-      }
+    // outCells)
+    const showFlow = (type: BuildingId | 'dock', x: number, y: number, dir: Dir, at: number, probe = blankBuilding(type, x, y, dir)) => {
       for (const c of outCells(probe)) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, at)
       for (const i of inCells(world, probe)) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, at)
+    }
+    // a pasture's way out and way in, the same way
+    const showPasture = (pa: (typeof flock.pastures)[number], at: number, exit = true, entry = true) => {
+      const [dx, dz] = DIRS[pa.dir]!
+      if (exit) arrow(pa.exit.x + 0.5 - dx * 0.5, pa.exit.y + 0.5 - dz * 0.5, pa.dir, false, at)
+      const [ix, iz] = DIRS[pa.entry.d]!
+      if (entry) arrow(pa.entry.x + 0.5 + ix * 0.5, pa.entry.y + 0.5 + iz * 0.5, pa.entry.d, true, at)
+    }
+    const flock = res(world, Flock)
+    /**
+     * The ways in and out of what stands right next to these cells (the author: the neighbours' ports while building,
+     * but no «мессиво из стрелок»): only a port whose outside cell touches the cells, corners included, and never a
+     * plain belt's.
+     */
+    const showNear = (cells: readonly (readonly [number, number])[]) => {
+      const near = new Set<string>()
+      for (const [x, y] of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) near.add(key(x + dx, y + dy))
+      for (const nb of res(world, Plant).b.values()) {
+        if (nb.type === 'belt') continue
+        for (const c of outCells(nb)) if (near.has(key(c.x, c.y))) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, 0.3)
+        for (const i of inCells(world, nb)) if (near.has(key(i.x, i.y))) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, 0.3)
+      }
+      for (const pa of flock.pastures) showPasture(pa, 0.3, near.has(key(pa.exit.x, pa.exit.y)), near.has(key(pa.entry.x, pa.entry.y)))
     }
     const showReach = (type: BuildingId, x: number, y: number, bw: number, bh: number) => {
       const near = BUILDINGS[type].near!
@@ -262,19 +269,15 @@ export function Ghost() {
         if (hb) {
           if (hb.type !== 'dock' && BUILDINGS[hb.type].near) lab = showReach(hb.type, hb.x, hb.y, hb.w, hb.h)
           // every building the same: its ways in and out, above the belts that may run up to it
-          showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, -1, hb)
+          showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
         }
         // a pasture shows its way out and its way in the same way
         const pa = hb ? null : pastureAt(world, h.x, h.y)
-        if (pa) {
-          const [dx, dz] = DIRS[pa.dir]!
-          arrow(pa.exit.x + 0.5 - dx * 0.5, pa.exit.y + 0.5 - dz * 0.5, pa.dir, false, 0.3)
-          const [ix, iz] = DIRS[pa.entry.d]!
-          arrow(pa.entry.x + 0.5 + ix * 0.5, pa.entry.y + 0.5 + iz * 0.5, pa.entry.d, true, 0.3)
-        }
+        if (pa) showPasture(pa, 0.3)
         // a resource says what it is and how much is left in it (the author), on any land
         const rc = hb || pa || h.sheep !== null ? null : res(world, Field).res.get(key(h.x, h.y))
-        if (rc) lab = { x: h.x + 0.5, y: rc.t === 'water' ? 0.45 : 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + ' · ' + rc.left + '/' + RES[rc.t].max, tone: 'ink', icon: rc.t === 'water' ? 'pond' : rc.t }
+        // water never runs out, so a pond has no count
+        if (rc) lab = { x: h.x + 0.5, y: rc.t === 'water' ? 0.45 : 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + (rc.t === 'water' ? '' : ' · ' + rc.left + '/' + RES[rc.t].max), tone: 'ink', icon: rc.t === 'water' ? 'pond' : rc.t }
       } else if (tool === 'erase') {
         const hb = hovered ?? get(world, h.x, h.y)
         if (hb && !hb.fixed) {
@@ -284,7 +287,8 @@ export function Ghost() {
       } else if (tool === 'belt') {
         // the line in hand is held like a building: its pieces up on one block, a pink arrow in, a periwinkle one out
         const phase = (time * 0.9) % 1
-        const line = (cells: { x: number; y: number }[], dirs: Dir[]) => {
+        const coins = res(world, GameState).coins
+        const line = (cells: { x: number; y: number }[], dirs: Dir[], short = false) => {
           cells.forEach((c, i) => {
             const ex = get(world, c.x, c.y)
             if (!ex || ex.type === 'belt') drawBelt(belt, c.x, c.y, i > 0 ? dirs[i - 1]! : dirs[i]!, dirs[i]!, phase, lift)
@@ -292,7 +296,7 @@ export function Ghost() {
           showBlock(
             cells.map((c) => [c.x, c.y] as const),
             lift,
-            false,
+            short,
           )
           const a = cells[0]!,
             z = cells[cells.length - 1]!,
@@ -300,7 +304,9 @@ export function Ghost() {
             d1 = dirs[dirs.length - 1]!
           arrow(a.x + 0.5 - DIRS[d0]![0] * 0.5, a.y + 0.5 - DIRS[d0]![1] * 0.5, d0, true, lift)
           arrow(z.x + 0.5 + DIRS[d1]![0] * 0.5, z.y + 0.5 + DIRS[d1]![1] * 0.5, d1, false, lift)
-          beltHeld = 'place'
+          // what stands by its ends, so the line can be led into it
+          showNear(cells.length > 1 ? [[a.x, a.y], [z.x, z.y]] : [[a.x, a.y]])
+          beltHeld = short ? 'blocked' : 'place'
         }
         const bad = () => {
           showBlock([[h.x, h.y]], lift, true)
@@ -309,19 +315,24 @@ export function Ghost() {
         if (ui.pending) {
           const list = routeCells(world, ui.pending, h)
           if (list) {
-            line(list, pathDirs(world, list, ui.rot))
             const cost = list.filter((c) => !get(world, c.x, c.y)).length * BUILDINGS.belt.cost
+            line(list, pathDirs(world, list, ui.rot), coins < cost)
             // the price beside the pointer, half a cell to the right on the screen, clear of the arrow at the end
-            lab = { x: h.x + 0.5 + Math.cos(cam.yaw) * 0.5, y: lift + 0.55, z: h.y + 0.5 - Math.sin(cam.yaw) * 0.5, text: String(cost), tone: res(world, GameState).coins >= cost ? 'ink' : 'bad', icon: 'coin' }
+            lab = { x: h.x + 0.5 + Math.cos(cam.yaw) * 0.5, y: lift + 0.55, z: h.y + 0.5 - Math.sin(cam.yaw) * 0.5, text: String(cost), tone: coins >= cost ? 'ink' : 'bad', icon: 'coin' }
           } else bad()
         } else {
           const why = whyNot(world, 'belt', h.x, h.y)
           // a belt cell being moved can't come down on another belt; a new one turns the belt it is put on
           const onBelt = !ui.moving && get(world, h.x, h.y)?.type === 'belt'
+          const short = !ui.moving && !onBelt && coins < BUILDINGS.belt.cost
           if (why && !onBelt) {
             bad()
             lab = { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(WHY_TEXT[why]), tone: 'bad' }
-          } else line([{ x: h.x, y: h.y }], [ui.rot])
+          } else {
+            // a single cell goes the way its neighbours suggest; one being moved goes as the player turned it
+            line([{ x: h.x, y: h.y }], ui.moving ? [ui.rot] : pathDirs(world, [{ x: h.x, y: h.y }], ui.rot), short)
+            if (short) lab = { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
+          }
         }
       } else {
         const type = tool as BuildingId
@@ -329,26 +340,31 @@ export function Ghost() {
         const [bw, bh] = dimsOf(type, ui.rot),
           [ax, ay] = anchorAt(type, ui.rot, h.wx, h.wy)
         const why = whyNot(world, type, ax, ay, ui.rot)
+        // a move is free; a new building needs its coins (the author: the hand said nothing about them)
+        const short = !why && !ui.moving && res(world, GameState).coins < buildPrice(world, type)
         if (ghost.current && body.current) {
           ghost.current.visible = true
           held = true
           ghost.current.position.set(ax + bw / 2, lift, ay + bh / 2)
-          // the building itself, in its own colours; its body faces the camera, as when built
-          body.current.geometry = machineBody(type, bw >= bh)
-          body.current.material = why ? BLOCKED_MAT : HELD_MAT
-          body.current.rotation.y = BUILDINGS[type].onBelt ? yawOf(ui.rot) : 0
-          showBlock(footprint(ax, ay, bw, bh), lift, !!why)
-          const want = why ? 'blocked' : 'place'
+          // the building itself, in its own colours, turned as it will stand
+          body.current.geometry = machineBody(type)
+          body.current.material = why || short ? BLOCKED_MAT : HELD_MAT
+          body.current.rotation.y = machineYaw(type, ui.rot)
+          showBlock(footprint(ax, ay, bw, bh), lift, !!why || short)
+          const want = why || short ? 'blocked' : 'place'
           if (tint.current !== want) {
             if (tint.current) unmarkOutlined(body.current)
             markOutlined(body.current, want, true)
             tint.current = want
           }
         }
-        if (why) lab = { x: ax + bw / 2, y: machineModel(type, bw >= bh).top + lift + 0.6, z: ay + bh / 2, text: t(WHY_TEXT[why]), tone: 'bad' }
+        const over = machineModel(type).top + lift + 0.6
+        if (why) lab = { x: ax + bw / 2, y: over, z: ay + bh / 2, text: t(WHY_TEXT[why]), tone: 'bad' }
         else {
           if (BUILDINGS[type].near) lab = showReach(type, ax, ay, bw, bh)
-          showFlow(type, ax, ay, ui.rot, lift, lift)
+          if (short) lab = { x: ax + bw / 2, y: over, z: ay + bh / 2, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
+          showFlow(type, ax, ay, ui.rot, lift)
+          showNear(footprint(ax, ay, bw, bh))
         }
       }
     }

@@ -2,7 +2,7 @@ import type { BufferGeometry } from 'three'
 import { BoxGeometry, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, DataTexture, DodecahedronGeometry, Float32BufferAttribute, LinearFilter, MeshBasicMaterial, MeshToonMaterial, NearestFilter, RedFormat, SphereGeometry, TorusGeometry, type Material } from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { DIRS } from '@/game/balance'
+import { BUILDINGS, DIRS, type BuildingId } from '@/game/balance'
 import type { Building } from '@/game/world'
 import { withReach } from './reach'
 
@@ -148,6 +148,12 @@ export function model(parts: BufferGeometry[]): BufferGeometry {
 export const cx = (x: number) => x + 0.5
 /** Yaw of a direction: dir 0 faces +X (east), dir 1 faces +Z (south, towards the camera). */
 export const yawOf = (dir: number) => -dir * (Math.PI / 2)
+/**
+ * How a building's model stands on the field: the whole of it turns with the building (the author: «поворачиваются
+ * только входы и выходы, а не всё здание целиком»). Machines are built facing south (dir 1, towards the camera at the
+ * start), the pieces that sit on a belt facing east (dir 0).
+ */
+export const machineYaw = (type: BuildingId | 'dock', dir: number) => (type !== 'dock' && BUILDINGS[type].onBelt ? yawOf(dir) : yawOf(dir) + Math.PI / 2)
 export const dirVec = (d: number) => DIRS[d]!
 
 /** Where an item sits on a belt cell at progress p: from the side it came in, through the centre, out the far side. */

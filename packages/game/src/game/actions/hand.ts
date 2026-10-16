@@ -1,5 +1,5 @@
-import { BELT, GRID, HAND, LOOK, SHEEP, type ItemId } from '../balance'
-import { get, inGrid, isBeltLike, jobOf, owned, pastureAt, plotOf, plotPrice, terr } from '../grid'
+import { GRID, HAND, LOOK, SHEEP, type ItemId } from '../balance'
+import { capOf, get, inGrid, isBeltLike, owned, pastureAt, plotOf, plotPrice, terr, wantsOf } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, float, key, newItem, puff, res, stockAdd, stockTake, toStock, type Building, type SheepT, type World } from '../world'
 import { enterBelt, machineAccept } from '../systems/belts'
 import { takeRes } from '../systems/machines'
@@ -8,9 +8,9 @@ import { pileHere } from './build'
 
 /**
  * The hand (GDD 3), which is the barn's stock (the author: «этот склад и рука одно и тоже»): one click gathers one
- * item, a fluffy sheep is shorn in three clicks, a pile or a good on a belt is picked up — all into the stock, with no
- * limit. A click on a machine hands it what it takes from the stock; a click on a dock, the market or a pasture opens
- * its popup, where the player picks what and how much to load or trade.
+ * item on the player's own land, a fluffy sheep is shorn in three clicks, a pile or a good on a belt is picked up — all
+ * into the stock, with no limit. A click on a building opens its popup, where a machine, a feeder or a trough is
+ * loaded from the stock and a dock or the market is loaded or traded with, the player picking what and how much.
  */
 
 /** The sheep under a ground point (cells), if any: fluffy sheep are bigger targets. */
@@ -41,21 +41,12 @@ export function shearClick(w: World, s: SheepT) {
   }
 }
 
-/** Put up to n of a good from the stock into a machine that takes it, as much as it has room for; how many went. */
-export function feed(w: World, b: Building, k: ItemId, n: number = BELT.bufMax) {
-  if (!jobOf(b)?.inp[k]) return 0
-  const got = stockTake(w, k, Math.min(n, BELT.bufMax - (b.inv[k] ?? 0)))
+/** Put up to n of a good from the stock into a building that stores it (its popup's «+N»), as much as it has room for; how many went. */
+export function feed(w: World, b: Building, k: ItemId, n: number = capOf(b)) {
+  if (!wantsOf(b)?.[k]) return 0
+  const got = stockTake(w, k, Math.min(n, capOf(b) - (b.inv[k] ?? 0)))
   if (got) b.inv[k] = (b.inv[k] ?? 0) + got
   return got
-}
-
-/** Hand a machine what it takes from the stock, up to what it holds of each input. */
-export function giveTo(w: World, b: Building) {
-  let n = 0
-  const inp = jobOf(b)?.inp
-  if (inp) for (const k of Object.keys(inp) as ItemId[]) n += feed(w, b, k)
-  if (n) float(w, b.x + 0.5, b.y, '+' + n, 'accent')
-  return n > 0
 }
 
 /** The game is paused: the hand only opens popups, it doesn't work the field (the author: no shearing on pause). */
@@ -83,8 +74,8 @@ export function takePile(w: World, m: Building) {
 }
 
 /**
- * A click with the hand at a ground point (cells): shear a sheep, pick up a pile, a belt's good or hand over to a
- * machine, gather a resource (on any land), open a popup (a building, a plot for sale, a pasture) — in that order.
+ * A click with the hand at a ground point (cells): shear a sheep, pick up a pile or a belt's good, gather a resource
+ * on own land, open a popup (a building, a plot for sale, a pasture) — in that order.
  */
 export function handClick(w: World, px: number, py: number) {
   const ui = res(w, Ui)
@@ -109,9 +100,9 @@ export function handClick(w: World, px: number, py: number) {
     clickBuilding(w, b)
     return
   }
-  // a resource is gathered by hand anywhere, bought land or not; machines take only from your own land (the author)
+  // a resource is gathered by hand on own land only (the author, 16.10.2026); on land for sale a click opens the plot
   const t = terr(w, x, y)
-  if (t === 'meadow' || t === 'bush' || t === 'water') {
+  if ((t === 'meadow' || t === 'bush' || t === 'water') && owned(w, x, y)) {
     if (still) return pausedNudge(w)
     if (gather(w, x, y)) return
   }
@@ -129,9 +120,9 @@ export function handClick(w: World, px: number, py: number) {
 }
 
 /**
- * A click on a building, wherever on its model it lands (the pointer picks it by its model): a belt gives up its
- * good, a machine takes what the stock has for it, or the building is selected — a dock's or the market's popup is
- * where goods are loaded and traded.
+ * A click on a building, wherever on its model it lands (the pointer picks it by its model): a belt gives up its good,
+ * otherwise the building is selected — its popup is where it is loaded from the stock (the author: a click that fed
+ * the machine by itself was «крайне неочевидная логика»), a dock's or the market's where goods are loaded and traded.
  */
 export function clickBuilding(w: World, b: Building) {
   const ui = res(w, Ui)
@@ -140,7 +131,6 @@ export function clickBuilding(w: World, b: Building) {
     b.item = null
     return
   }
-  if (b.type !== 'dock' && !handStill(w) && giveTo(w, b)) return
   ui.sel = ui.sel?.kind === 'b' && ui.sel.key === key(b.x, b.y) ? null : { kind: 'b', key: key(b.x, b.y) }
 }
 

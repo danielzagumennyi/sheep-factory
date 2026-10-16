@@ -1,4 +1,4 @@
-import { BLOCKING, BUILDINGS, DIRS, ESCALATE, dimsOf, GRID, PLOTS, REACH, RECIPES, RES, SHEEP, UPGRADE, type BuildingId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
+import { BELT, BLOCKING, BUILDINGS, DIRS, ESCALATE, dimsOf, GRID, PLOTS, REACH, RECIPES, RES, SHEEP, UPGRADE, type BuildingId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
 import { Field, Flock, GameState, Plant, key, res, unkey, type Building, type PastureT, type ResCell, type World } from './world'
 
 /**
@@ -85,9 +85,16 @@ export const reachStock = (w: World, x: number, y: number, t: ResId, bw = 1, bh 
 export const reachOf = (w: World, b: Building, t: ResId, own = false) => reachCells(w, b.x, b.y, t, own, b.w, b.h)
 
 /** Why a building may not stand here — a key into UI.why, or '' when it may. */
-export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'taken' | 'bridge' | 'needMeadow' | 'needWater' | 'needBush' | 'foreignRes'
+export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'taken' | 'bridge' | 'needMeadow' | 'needWater' | 'needBush' | 'foreignRes' | 'inWater'
+/** The back cell of a footprint facing `dir`: the one behind the cell it gives out of (a 2×1's other cell). */
+export function backCell(x: number, y: number, w: number, h: number, dir: Dir): [number, number] {
+  const [fx, fy] = sideCell({ x, y, w, h } as Building, dir)
+  return [fx - DIRS[dir]![0] * (w - 1), fy - DIRS[dir]![1] * (h - 1)]
+}
 export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Dir = 0): WhyNot {
   const [bw, bh] = dimsOf(type, dir)
+  // the pump's back cell (its tower) stands in the water, the front one (its barrel) on land (the author)
+  const wet = BUILDINGS[type].onWater ? key(...backCell(x, y, bw, bh, dir)) : ''
   // every cell of the footprint must be buildable
   for (const [cx, cy] of footprint(x, y, bw, bh)) {
     if (!inGrid(cx, cy)) return 'edge'
@@ -95,6 +102,11 @@ export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Di
     if (isRoad(cx, cy)) return 'road'
     if (pastureAt(w, cx, cy)) return 'pasture'
     const t = terr(w, cx, cy)
+    if (key(cx, cy) === wet) {
+      if (t !== 'water') return 'inWater'
+      if (get(w, cx, cy)) return 'taken'
+      continue
+    }
     if (t === 'water') return 'onWater'
     if (t === 'rock' || t === 'tree' || t === 'bush' || t === 'meadow') return t
     const b = get(w, cx, cy)
@@ -111,11 +123,11 @@ export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Di
 
 // ---------------------------------------------------------------- belts: who feeds whom
 
-/** The directions a building pushes out of. A shearer sends the sheep on and the wool to its right. */
+/** The directions a building pushes out of. A shearer sends the sheep on and the wool to its right; a barn, a feeder or a trough only takes. */
 function outDirs(b: Building): Dir[] {
   if (b.type === 'splitter') return [b.dir, ((b.dir + 1) % 4) as Dir, ((b.dir + 3) % 4) as Dir]
   if (b.type === 'shearer') return [b.dir, ((b.dir + 1) % 4) as Dir]
-  if (b.type === 'dock' || b.type === 'barn') return []
+  if (b.type === 'dock' || b.type === 'barn' || BUILDINGS[b.type].takes) return []
   return [b.dir]
 }
 
@@ -151,8 +163,8 @@ function sideCell(b: Building, d: Dir): [number, number] {
   return [x1, y0]
 }
 
-/** Does a building of this type take goods in? Producers only give; a shearer takes sheep, a barn any good, the others their inputs. */
-export const takesIn = (t: BuildingId | 'dock') => t === 'shearer' || t === 'workshop' || t === 'barn' || (t !== 'dock' && !!BUILDINGS[t].inp)
+/** Does a building of this type take goods in? Producers only give; a shearer takes sheep, a barn any good, a feeder or trough its one good, the others their inputs. */
+export const takesIn = (t: BuildingId | 'dock') => t === 'shearer' || t === 'workshop' || t === 'barn' || (t !== 'dock' && (!!BUILDINGS[t].inp || !!BUILDINGS[t].takes))
 
 /** Where a building takes goods in. */
 export interface InCell {
@@ -180,11 +192,13 @@ export function inCell(b: Building): InCell | null {
 /**
  * Every way a building takes goods in — what the in arrows show, the same for every building (the author: «чтобы у
  * всего был один принцип»): a machine's or a barn's one way in; a splitter from behind; a merger from behind and both
- * sides; a belt from the side it takes from; a dock from every side that a belt can reach (not the dock row itself).
+ * sides; a belt from the side it takes from; a feeder or trough from its open side into either cell; a dock from every
+ * side that a belt can reach (not the dock row itself).
  */
 export function inCells(w: World, b: Building): InCell[] {
   const from = (sx: number, sy: number, d: Dir): InCell => ({ x: sx - DIRS[d]![0], y: sy - DIRS[d]![1], sx, sy, d })
   if (b.type === 'merger') return [b.dir, ((b.dir + 1) % 4) as Dir, ((b.dir + 3) % 4) as Dir].map((d) => from(b.x, b.y, d))
+  if (b.type !== 'dock' && BUILDINGS[b.type].takes) return cellsOf(b).map(([cx, cy]) => from(cx, cy, b.dir))
   if (b.type === 'splitter') return [from(b.x, b.y, b.dir)]
   if (b.type === 'belt') return [from(b.x, b.y, beltInDir(w, b))]
   if (b.type === 'dock') {
@@ -200,9 +214,10 @@ export function inCells(w: World, b: Building): InCell[] {
   const c = inCell(b)
   return c ? [c] : []
 }
-/** Does building t take a good that moves into its cell (tx, ty) going d? A dock takes from any side. */
+/** Does building t take a good that moves into its cell (tx, ty) going d? A dock takes from any side, a feeder or trough into either cell from its open side. */
 export function entersAt(t: Building, tx: number, ty: number, d: Dir) {
   if (t.type === 'dock') return true
+  if (BUILDINGS[t.type].takes) return d === t.dir
   const c = inCell(t)
   return !!c && c.sx === tx && c.sy === ty && c.d === d
 }
@@ -237,6 +252,49 @@ export function beltInDir(w: World, b: Building): Dir {
   return b.dir
 }
 
+/**
+ * How well a belt on (x, y) going d would hand its goods on: into a machine's way in, a pasture's way in or a dock
+ * best, straight on into a belt's back next, into a belt's free side a little, nowhere nothing — and worse than nothing
+ * head-on into a belt, into a wall or a fence.
+ */
+function handOnScore(w: World, x: number, y: number, d: Dir): number {
+  const [tx, ty] = step(x, y, d)
+  const p = pastureAt(w, tx, ty)
+  if (p) return entersPasture(p, x, y, d) ? 3 : -1
+  if (!inGrid(tx, ty)) return -1
+  const t = get(w, tx, ty)
+  if (!t) return 0
+  if (t.type === 'dock') return 3
+  if (t.type === 'splitter') return d === t.dir ? 2 : -1
+  if (t.type === 'merger') return t.dir === back(d) ? -1 : 2
+  if (t.type === 'belt') {
+    if (t.dir === back(d)) return -2
+    if (t.dir === d) return 2.5
+    // its side: taken only while nothing feeds it from straight behind
+    return feeds(w, tx - DIRS[t.dir]![0], ty - DIRS[t.dir]![1], tx, ty) ? 0 : 1
+  }
+  return entersAt(t, tx, ty, d) ? 3 : -1
+}
+/**
+ * The way a single belt set down on (x, y) should go, from what stands round it (the author: belts among two to four
+ * neighbours «не совсем понимают куда нужно поворачиваться и к чему присоединяться»): on towards whatever takes goods
+ * best, straight on from whatever feeds the cell, never back into a feeder; `rot` (the player's R) breaks ties and is
+ * the answer when nothing round it says otherwise. A wrongly turned belt is turned by clicking it again.
+ */
+export function beltAutoDir(w: World, x: number, y: number, rot: Dir): Dir {
+  const score = [0, 1, 2, 3].map((d) => handOnScore(w, x, y, d as Dir) + (d === rot ? 0.5 : 0))
+  for (let s = 0; s < 4; s++) {
+    const [nx, ny] = step(x, y, s)
+    if (!feeds(w, nx, ny, x, y)) continue
+    // goods come in from side s: going straight on is natural, turning back into their source is not
+    score[back(s)]! += 1.5
+    score[s]! -= 5
+  }
+  let best = rot
+  for (let d = 0; d < 4; d++) if (score[d]! > score[best]!) best = d as Dir
+  return score[best]! < 0 ? rot : best
+}
+
 /** Is there somewhere to go from (x, y) towards d? */
 export function targetOk(w: World, x: number, y: number, d: number) {
   const [tx, ty] = step(x, y, d)
@@ -265,6 +323,15 @@ export function jobOf(b: Pick<Building, 'type' | 'recipe'>): Job | null {
   const d = BUILDINGS[b.type]
   return d.inp && d.out && d.time ? { inp: d.inp, out: d.out, time: d.time } : null
 }
+/** The goods a building stores at its input — a job's inputs, or the one good a feeder or trough takes — or null. */
+export function wantsOf(b: Pick<Building, 'type' | 'recipe'>): Partial<Record<ItemId, number>> | null {
+  if (b.type === 'dock') return null
+  const takes = BUILDINGS[b.type].takes
+  if (takes) return { [takes]: 1 }
+  return jobOf(b)?.inp ?? null
+}
+/** How many of each input a building holds: a feeder's or trough's own cap, a machine's four places. */
+export const capOf = (b: Pick<Building, 'type'>) => (b.type !== 'dock' && BUILDINGS[b.type].cap) || BELT.bufMax
 
 // ---------------------------------------------------------------- prices
 

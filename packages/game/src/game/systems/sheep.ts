@@ -1,16 +1,15 @@
 import { DIRS, SHEEP, type Dir, type ItemId } from '../balance'
 import { get, inGrid } from '../grid'
-import { Flock, Mission, Plant, Rng, newItem, pastureSpot, res, stockOf, stockTake, type PastureT, type SheepT, type World } from '../world'
+import { Flock, Mission, Plant, Rng, newItem, pastureSpot, res, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 import { fireEvent } from './unlocks'
 
 /**
  * Sheep and pastures (GDD 5). A pasture works like a machine with a recipe, «1 hay + 1 water → a fleece»: a shorn
- * sheep in it takes one hay and one water from the stock and then grows its wool in SHEEP.grow seconds (the author:
- * «сено и воду потребляло пастбище в зависимости от того сколько в нём животных»). With too little in stock it waits,
- * and whoever has waited longest is fed first — across every pasture, since the stock is one. A fleece already paid
- * for always grows to the end. A fluffy sheep walks out through the exit by itself when a belt or a shearer stands
- * there.
+ * sheep in it takes one hay from the pasture's feeder and one water from its trough (the author, 16.10.2026: the
+ * stock behind the scenes was «совсем непонятной») and then grows its wool in SHEEP.grow seconds. With the feeder or
+ * trough empty it waits, and whoever has waited longest is fed first. A fleece already paid for always grows to the
+ * end. A fluffy sheep walks out through the exit by itself when a belt or a shearer stands there.
  */
 
 /** The goods one fleece costs in this mission (none on mission 1). */
@@ -20,6 +19,11 @@ export function fleeceCost(w: World): ItemId[] {
 }
 /** A sheep in the pasture waiting for its hay and water. */
 export const hungry = (s: SheepT) => s.state === 'pasture' && s.wool < 1 && !s.fed
+/** A pasture's store of one good: its feeder for hay, its trough for water. */
+export function storeOf(w: World, p: PastureT, k: ItemId): Building | null {
+  const key = k === 'hay' ? p.feeder : k === 'water' ? p.trough : null
+  return key ? (res(w, Plant).b.get(key) ?? null) : null
+}
 
 export function toPasture(w: World, s: SheepT, p: PastureT, x: number, y: number) {
   s.state = 'pasture'
@@ -46,17 +50,18 @@ export function sheepSystem(w: World, dt: number) {
     if (p.exitT > 0) p.exitT -= dt
     p.want = []
   }
-  // the hungry, longest wait first, one queue for every pasture: each takes its fleece's goods while the stock has them
+  // the hungry, longest wait first: each takes its fleece's goods from its pasture's feeder and trough while they have them
   const queue = flock.sheep.filter(hungry).sort((a, b) => b.waitT - a.waitT)
   for (const s of queue) {
     s.waitT += dt
-    const lack = cost.filter((k) => stockOf(w, k) < 1)
+    const p = flock.pastures[s.home]!
+    const stores = cost.map((k) => [k, storeOf(w, p, k)] as const)
+    const lack = stores.filter(([k, b]) => !b || (b.inv[k] ?? 0) < 1).map(([k]) => k)
     if (lack.length) {
-      const p = flock.pastures[s.home]!
       for (const k of lack) if (!p.want.includes(k)) p.want.push(k)
       continue
     }
-    for (const k of cost) stockTake(w, k, 1)
+    for (const [k, b] of stores) b!.inv[k] = (b!.inv[k] ?? 0) - 1
     s.fed = true
     s.waitT = 0
   }

@@ -6,7 +6,7 @@ import { useGame } from '@/game/GameContext'
 import { anchorAt, freeCell, get } from '@/game/grid'
 import { liftUp, place, putDown, remove } from '@/game/actions/build'
 import { clickBuilding, dropSheep, handClick, pickSheep } from '@/game/actions/hand'
-import { beltStart, buildPath, stepDir } from '@/game/actions/path'
+import { beltStart, buildPath, pathDirs, stepDir } from '@/game/actions/path'
 import { sendHome } from '@/game/systems/sheep'
 import { GameState, Ui, Unlocks, res, type SheepT } from '@/game/world'
 import { cam, clampCam, placeCamera, turnCam } from './camera'
@@ -189,9 +189,11 @@ export function Pointer() {
           const st = beltStart(world, c)
           if (st) ui.pending = st
         } else if (ui.pending.x === c.x && ui.pending.y === c.y) {
+          // a second click on the same cell: a belt there turns a quarter; an empty cell gets one belt, going the way
+          // its neighbours suggest (R breaks ties)
           const ex = get(world, c.x, c.y)
           if (ex && ex.type === 'belt') ex.dir = ((ex.dir + 1) % 4) as Dir
-          else place(world, 'belt', c.x, c.y, ui.rot)
+          else place(world, 'belt', c.x, c.y, pathDirs(world, [c], ui.rot)[0]!)
           ui.pending = null
         } else {
           buildPath(world, ui.pending, c, ui.rot)

@@ -6,15 +6,19 @@ import { useGame } from '@/game/GameContext'
 import { residents } from '@/game/grid'
 import { Flock, res, type PastureT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
-import { GEO, mat, vmat, yawOf } from './kit'
-import { chute } from './machineModels'
+import { GEO, mat } from './kit'
 import { useView, views } from './pick'
 import type { Group } from 'three'
 
+/** How far a gate stands open, radians from the fence line; the leaf's length between its posts. */
+const GATE = { open: 1.1, leaf: 0.9 } as const
+
 /**
- * The pasture, a building of its own (the author): a fenced lawn with two gaps, a way out and a way in, each with its
- * stub of belt and arrow as every machine has; its sheep eat and drink from the stock, so no trough or drinker. When
- * the stock lacks hay or water, one bubble over the pasture says what (not one per sheep: the author).
+ * The pasture, a building of its own (the author): a fenced lawn with two gates, a way out and a way in, each a leaf
+ * swung open the way the sheep go through it — outward at the exit, inward at the entry — so the pen says itself
+ * where sheep leave and where they come back (the author: «калитки, которые открыты в определённую сторону»). Its
+ * feeder and trough stand outside the fence on its other two sides (Machines.tsx draws them). When they run out of
+ * hay or water, one bubble over the pasture says what (not one per sheep: the author).
  */
 export function Pastures() {
   const { world } = useGame()
@@ -35,16 +39,20 @@ function PastureView({ p }: { p: PastureT }) {
   // the hover line finds the pasture by its id
   const root = useRef<Group>(null)
   useView(views.pastures, p.id, root)
-  // the way out and the way in: the pen's cell by each gap, the side it opens on, and the way the sheep move
+  // the way out and the way in: the gap in the fence by the pen cell at each, between two posts (a, b), and the way
+  // the sheep go through it
   const gates = useMemo(() => {
     const [dx, dy] = DIRS[p.dir]!,
       [ix, iy] = DIRS[p.entry.d]!
-    return [
-      { x: p.exit.x - dx, y: p.exit.y - dy, side: p.dir as number, d: p.dir as number, out: true },
-      { x: p.entry.x + ix, y: p.entry.y + iy, side: (p.entry.d + 2) % 4, d: p.entry.d as number, out: false },
-    ]
+    const gap = (cx: number, cy: number, side: number, d: number) => {
+      if (side === 0) return { ax: cx + 1, az: cy, bx: cx + 1, bz: cy + 1, d }
+      if (side === 2) return { ax: cx, az: cy, bx: cx, bz: cy + 1, d }
+      if (side === 1) return { ax: cx, az: cy + 1, bx: cx + 1, bz: cy + 1, d }
+      return { ax: cx, az: cy, bx: cx + 1, bz: cy, d }
+    }
+    return [gap(p.exit.x - dx, p.exit.y - dy, p.dir, p.dir), gap(p.entry.x + ix, p.entry.y + iy, (p.entry.d + 2) % 4, p.entry.d)]
   }, [p])
-  // fence posts around the edge, leaving both gaps open
+  // fence posts all round the edge: the gates hang between two of them
   const posts = useMemo(() => {
     const out: [number, number][] = []
     for (let i = 0; i <= p.w; i++) {
@@ -55,24 +63,19 @@ function PastureView({ p }: { p: PastureT }) {
       out.push([p.x, p.y + j])
       out.push([p.x + p.w, p.y + j])
     }
-    // drop the posts that flank each gap
-    return out.filter(([x, y]) =>
-      gates.every((g) => {
-        if (g.side === 0 || g.side === 2) return !(x === (g.side === 0 ? p.x + p.w : p.x) && (y === g.y || y === g.y + 1))
-        return !(y === (g.side === 1 ? p.y + p.h : p.y) && (x === g.x || x === g.x + 1))
-      }),
-    )
-  }, [p, gates])
-  // two rails between neighbouring posts along each side
+    return out
+  }, [p])
+  // two rails between neighbouring posts along each side, none across a gate
   const rails = useMemo(() => {
     const has = new Set(posts.map(([x, y]) => x + ',' + y))
+    const gaps = new Set(gates.map((g) => (g.ax + g.bx) / 2 + ',' + (g.az + g.bz) / 2))
     const out: [number, number, boolean][] = []
     for (const [x, y] of posts) {
-      if ((y === p.y || y === p.y + p.h) && has.has(x + 1 + ',' + y)) out.push([x + 0.5, y, true])
-      if ((x === p.x || x === p.x + p.w) && has.has(x + ',' + (y + 1))) out.push([x, y + 0.5, false])
+      if ((y === p.y || y === p.y + p.h) && has.has(x + 1 + ',' + y) && !gaps.has(x + 0.5 + ',' + y)) out.push([x + 0.5, y, true])
+      if ((x === p.x || x === p.x + p.w) && has.has(x + ',' + (y + 1)) && !gaps.has(x + ',' + (y + 0.5))) out.push([x, y + 0.5, false])
     }
     return out
-  }, [posts, p])
+  }, [posts, p, gates])
   // straw and pebbles strewn on the floor, from stable numbers
   const litter = useMemo(() => {
     const out: [number, number, boolean][] = []
@@ -124,16 +127,24 @@ function PastureView({ p }: { p: PastureT }) {
           <mesh key={i} position={[x, 0.05, z]} geometry={GEO.ball()} material={mat(LOOK.stone)} scale={[0.14, 0.07, 0.11]} rotation-y={i * 1.3} />
         ),
       )}
-      {/* a stub of belt in each gap, its arrow along the way the sheep go: dark out, light in, as on every machine */}
-      {gates.map((g) => {
-        const [dx, dz] = DIRS[g.side]!,
-          x = g.x + 0.5 + dx * 0.3,
-          z = g.y + 0.5 + dz * 0.3,
-          yaw = yawOf(g.d)
+      {/* a gate in each gap, hinged on one post and swung open the way the sheep go: out at the exit, in at the entry */}
+      {gates.map((g, i) => {
+        const ux = g.bx - g.ax,
+          uz = g.bz - g.az,
+          [vx, vz] = DIRS[g.d]!
+        const c = Math.cos(GATE.open),
+          s = Math.sin(GATE.open)
+        const lx = ux * c + vx * s,
+          lz = uz * c + vz * s
         return (
-          <group key={g.out ? 'out' : 'in'}>
-            <mesh position={[x, 0.13, z]} rotation-y={yaw} geometry={chute()} material={vmat()} castShadow receiveShadow />
-            <mesh position={[x + Math.cos(yaw) * 0.02, 0.28, z - Math.sin(yaw) * 0.02]} rotation-y={yaw} geometry={GEO.chevron()} material={mat(g.out ? LOOK.chevron : LOOK.inlet)} />
+          <group key={i} position={[g.ax, 0, g.az]} rotation-y={-Math.atan2(lz, lx)}>
+            <mesh position={[0, 0.3, 0]} geometry={GEO.rboxOf(0.14, 0.6, 0.14, 0.045)} material={mat(LOOK.fence)} castShadow />
+            <mesh position={[0, 0.61, 0]} geometry={GEO.ball()} material={mat(LOOK.fence)} scale={[0.17, 0.1, 0.17]} />
+            {[0.16, 0.36].map((h) => (
+              <mesh key={h} position={[GATE.leaf / 2, h, 0]} geometry={GEO.rboxOf(GATE.leaf, 0.07, 0.06, 0.025)} material={mat(LOOK.fenceRail)} castShadow />
+            ))}
+            <mesh position={[GATE.leaf - 0.04, 0.26, 0]} geometry={GEO.rboxOf(0.08, 0.34, 0.07, 0.025)} material={mat(LOOK.fenceRail)} castShadow />
+            <mesh position={[GATE.leaf / 2, 0.26, 0]} rotation-z={0.28} geometry={GEO.rboxOf(GATE.leaf - 0.1, 0.05, 0.05, 0.02)} material={mat(LOOK.fenceRail)} />
           </group>
         )
       })}

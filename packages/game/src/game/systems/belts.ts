@@ -1,5 +1,5 @@
 import { BELT, BUILDINGS, type Dir } from '../balance'
-import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, jobOf, pastureAt, speedOf, step } from '../grid'
+import { back, beltInDir, capOf, entersAt, entersPasture, get, inGrid, isBeltLike, pastureAt, speedOf, step, wantsOf } from '../grid'
 import { GameState, Plant, float, key, res, toStock, type Building, type Item, type World } from '../world'
 import { dockAccept } from './orders'
 import { toPasture } from './sheep'
@@ -54,7 +54,7 @@ export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boole
   return machineAccept(w, t, it)
 }
 
-/** A machine takes an item it can use (it came in through the way in, or a hand dropped it there); a barn takes any good. */
+/** A machine takes an item it can use (it came in through the way in, or a hand dropped it there); a barn takes any good; a feeder or trough its one good, up to its cap. */
 export function machineAccept(w: World, m: Building, it: Item): boolean {
   if (m.type === 'barn') {
     if (it.sheep) return false
@@ -70,9 +70,9 @@ export function machineAccept(w: World, m: Building, it: Item): boolean {
     m.timer = m.total = pass ? 0.3 : BUILDINGS.shearer.time! / speedOf(m)
     return true
   }
-  const r = jobOf(m)?.inp
+  const r = wantsOf(m)
   if (r && it.kind !== 'sheep' && r[it.kind]) {
-    if ((m.inv[it.kind] ?? 0) >= BELT.bufMax) return false
+    if ((m.inv[it.kind] ?? 0) >= capOf(m)) return false
     m.inv[it.kind] = (m.inv[it.kind] ?? 0) + 1
     return true
   }

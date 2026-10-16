@@ -1,10 +1,10 @@
 import { useEffect, type RefObject } from 'react'
-import { Box3, Group, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Matrix4, type Object3D } from 'three'
+import { Box3, Group, Matrix4, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
 import type { BuildingId } from '@/game/balance'
 import { sheepAt } from '@/game/actions/hand'
 import { get, isBeltLike } from '@/game/grid'
 import { Flock, Plant, key, res, type Building, type SheepT, type World } from '@/game/world'
-import { vmat } from './kit'
+import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
 import { fleece, sheepHead, sheepLegs, shorn } from './models'
 
@@ -70,7 +70,8 @@ const ray = new Raycaster(),
   hit = new Vector3(),
   ball = new Sphere(new Vector3(), 0.55),
   box = new Box3(),
-  at = new Vector3()
+  at = new Vector3(),
+  turn = new Matrix4()
 /** A machine's whole model, put where one stands, for the ray to be tested against. */
 const body = new Mesh(undefined, vmat())
 const pickable = (s: SheepT) => s.state === 'pasture' || s.state === 'waiting' || s.state === 'belt'
@@ -122,14 +123,16 @@ export function pickAt(w: World, camera: Camera, ndc: Vector2, sheep = true): Pi
       const v = views.buildings.get(key(b.x, b.y))
       d = v ? (ray.intersectObject(v, true)[0]?.distance ?? Infinity) : Infinity
     } else {
-      // the box round its model first, then the model itself
-      const g = machineBody(b.type as BuildingId, b.w >= b.h)
+      // the box round its model, turned as it stands, first, then the model itself
+      const g = machineBody(b.type as BuildingId)
       if (!g.boundingBox) g.computeBoundingBox()
       at.set(b.x + b.w / 2, 0, b.y + b.h / 2)
-      box.copy(g.boundingBox!).translate(at)
+      const yaw = machineYaw(b.type, b.dir)
+      box.copy(g.boundingBox!).applyMatrix4(turn.makeRotationY(yaw)).translate(at)
       if (!ray.ray.intersectBox(box, hit) || o.distanceTo(hit) >= best) continue
       body.geometry = g
       body.position.copy(at)
+      body.rotation.y = yaw
       body.updateMatrixWorld()
       d = ray.intersectObject(body, false)[0]?.distance ?? Infinity
     }

@@ -114,7 +114,7 @@ export const BUY_SHARE = 2
 /** A finished order keeps buying the same good for this share of a batch's pay (the author, 14.10.2026). */
 export const EXTRA_SHARE = 0.5
 
-export type BuildingId = 'belt' | 'shearer' | 'mower' | 'pump' | 'barn' | 'carder' | 'spinner' | 'splitter' | 'merger' | 'felter' | 'berry' | 'workshop'
+export type BuildingId = 'belt' | 'shearer' | 'mower' | 'pump' | 'barn' | 'carder' | 'spinner' | 'splitter' | 'merger' | 'felter' | 'berry' | 'workshop' | 'feeder' | 'trough'
 
 export interface BuildingDef {
   cost: number
@@ -126,6 +126,11 @@ export interface BuildingDef {
   /** A producer: the resource it takes and the item it gives. */
   near?: ResId
   gives?: ItemId
+  /** Its back cell stands in the water (the pump): no reach, the pond never runs dry (the author). */
+  onWater?: boolean
+  /** A store that only takes one good in — the pasture's feeder and trough — up to `cap` of it. */
+  takes?: ItemId
+  cap?: number
   /** It may stand only with its resource in reach (bushes are few); a mower or a pump goes anywhere (the author). */
   needsNear?: boolean
   /** Each further copy costs more (ESCALATE). */
@@ -147,8 +152,9 @@ export const BUILDINGS: Readonly<Record<BuildingId, BuildingDef>> = {
   belt: { cost: 2 },
   shearer: { cost: 30, time: 2.5, escalate: true, upgradable: true, size: [2, 2] },
   mower: { cost: 40, time: 6, near: 'meadow', gives: 'hay', escalate: true, upgradable: true, size: [2, 1] },
-  pump: { cost: 40, time: 5, near: 'water', gives: 'water', escalate: true, upgradable: true, size: [2, 1] },
-  /** Takes any good in from behind into the stock (the author: «склад куда игрок должен привозить воду и сено»). */
+  /** Its tower stands on a water cell, the barrel on the land beside it; water never runs out (the author, 16.10.2026). */
+  pump: { cost: 40, time: 5, gives: 'water', onWater: true, escalate: true, upgradable: true, size: [2, 1] },
+  /** Takes any good in from behind into the stock, so goods can be loaded on trucks by hand. */
   barn: { cost: 25, size: [2, 2] },
   carder: { cost: 60, time: 3, inp: { wool: 2 }, out: 'roving', escalate: true, upgradable: true, size: [2, 2] },
   spinner: { cost: 90, time: 5, inp: { roving: 1 }, out: 'yarn', escalate: true, upgradable: true, size: [2, 2] },
@@ -157,6 +163,12 @@ export const BUILDINGS: Readonly<Record<BuildingId, BuildingDef>> = {
   felter: { cost: 70, time: 4, inp: { wool: 3 }, out: 'felt', escalate: true, upgradable: true, size: [2, 2] },
   berry: { cost: 40, time: 6, near: 'bush', gives: 'dye', needsNear: true, escalate: true, upgradable: true, size: [2, 1] },
   workshop: { cost: 100, escalate: true, upgradable: true, size: [2, 2], recipes: true },
+  /**
+   * The pasture's feeder and trough (the author, 16.10.2026: «игрок подвозил сено и воду к пастбищу»): fixed 2×1 stores
+   * along the pasture's two free sides, each taking one good in from its outer side; the sheep eat and drink from them.
+   */
+  feeder: { cost: 0, size: [1, 2], takes: 'hay', cap: 8 },
+  trough: { cost: 0, size: [1, 2], takes: 'water', cap: 8 },
 }
 
 /** A building's footprint in cells along x and y when it faces `dir`: its length runs along dir, its width across. */
@@ -268,6 +280,8 @@ export const ROOF: Readonly<Record<BuildingId, string>> = {
   felter: '#3fb6a0',
   berry: '#c2477f',
   workshop: '#e5503f',
+  feeder: '#c9935a',
+  trough: '#6aa8d8',
 }
 
 /** Colours of the 3D scene; the HUD has its own CSS variables. */
@@ -379,8 +393,6 @@ export const LOOK = {
   beltWall: '#93603a',
   beltWallTop: '#b07a46',
   chevron: '#8a5530',
-  /** The arrow on a machine's way in: a light one, so in and out never look alike. */
-  inlet: '#fff1d6',
   machine: '#f7f9fc',
   machineEdge: '#2b3547',
   accent: '#dd4379',
@@ -594,9 +606,6 @@ export const MISSIONS: readonly MissionDef[] = [
       { when: 'lowhay', card: 'hay' },
       { when: 'lowwater', card: 'water' },
       { when: 'lowland', card: 'land' },
-      // the first producer placed opens the barn its goods go to
-      { when: 'placed:pump', unlock: 'barn' },
-      { when: 'placed:mower', unlock: 'barn' },
     ],
   },
   {

@@ -1,5 +1,5 @@
-import { BUILDINGS, LOOK, RECIPES, SHEEP, SPLIT_RULES, UPGRADE, type BuildingId, type Dir, type ItemId, type RecipeId, BLOCKING, dimsOf, type TerrainId } from '../balance'
-import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, roomPrice, upgradePrice, whyNot, cellsOf, inGrid, owned, isRoad, pastureAt, terr } from '../grid'
+import { BUILDINGS, LOOK, RECIPES, SHEEP, SPLIT_RULES, UPGRADE, type BuildingId, type Dir, type ItemId, type RecipeId, dimsOf } from '../balance'
+import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, roomPrice, upgradePrice, whyNot, cellsOf } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makeSheep, newItem, puff, res, sound, toStock, type Building, type Item, type PastureT, type SplitRules, type World } from '../world'
 import { sendHome } from '../systems/sheep'
 import { fireEvent } from '../systems/unlocks'
@@ -56,7 +56,9 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
     const r = res(w, Ui).recipe
     b.recipe = un.recipes.has(r) ? r : ([...un.recipes][0] ?? 'cyarn')
   }
+  // set on a belt, a splitter takes goods the way they came in, a merger sends them on the way they went
   if (type === 'splitter' && ex) b.dir = beltInDir(w, ex)
+  if (type === 'merger' && ex) b.dir = ex.dir
   if (item) b.item = item
   stand(w, b, cells)
   if (type !== 'belt') fireEvent(w, 'placed:' + type)
@@ -66,6 +68,7 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
 /** Put a building onto its cells; another machine's pile lying there goes to the stock, a little dust goes up. */
 function stand(w: World, b: Building, cells: [number, number][]) {
   const plant = res(w, Plant)
+  res(w, GameState).plantVersion++
   plant.b.set(key(b.x, b.y), b)
   for (const [cx, cy] of cells.slice(1)) plant.occ.set(key(cx, cy), key(b.x, b.y))
   for (const [cx, cy] of cells) {
@@ -82,6 +85,7 @@ function stand(w: World, b: Building, cells: [number, number][]) {
 /** Take a building off the field, everything in it kept; sheep waiting at it go home, its pile goes to the stock. */
 function takeOff(w: World, b: Building) {
   const plant = res(w, Plant)
+  res(w, GameState).plantVersion++
   plant.b.delete(key(b.x, b.y))
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
   for (const q of b.pile) toStock(w, q)
@@ -164,6 +168,7 @@ export function remove(w: World, x: number, y: number): boolean {
     else toStock(w, it)
   }
   const plant = res(w, Plant)
+  res(w, GameState).plantVersion++
   plant.b.delete(key(x, y))
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
   for (const s of res(w, Flock).sheep) if (s.state === 'waiting' && s.waitAt === key(x, y)) sendHome(w, s)
@@ -174,34 +179,34 @@ export function remove(w: World, x: number, y: number): boolean {
 }
 
 /**
- * Turn a building a quarter clockwise (R); docks are fixed. A 2×1 swings round its top-left cell, so it turns only when
- * its new cells are free to build on.
+ * Turn a building a quarter clockwise (R); docks, feeders and troughs are fixed. It is lifted off for a moment to ask
+ * whether it may stand turned (a 2×1 swings round its top-left cell; a pump's tower must still be in the water), so it
+ * turns only where it could be built. Goods waiting to leave turn with it, and its pile goes to the stock, as the pile
+ * cell may no longer be an output cell.
  */
 export function rotate(w: World, b: Building) {
-  if (b.fixed) return false
+  if (b.fixed || b.type === 'dock') return false
   const dir = ((b.dir + 1) % 4) as Dir
-  if (b.type === 'dock') return false
-  const [nw, nh] = dimsOf(b.type, dir)
-  if (nw !== b.w || nh !== b.h) {
-    const plant = res(w, Plant),
-      me = key(b.x, b.y)
-    // its own cells don't count against it
-    const cells = footprint(b.x, b.y, nw, nh)
-    const blocked = cells.some(([cx, cy]) => {
-      const o = get(w, cx, cy)
-      if (o && o !== b) return true
-      return !inGrid(cx, cy) || !owned(w, cx, cy) || isRoad(cx, cy) || !!pastureAt(w, cx, cy) || BLOCKING.includes(terr(w, cx, cy) as TerrainId)
-    })
-    if (blocked) {
-      float(w, b.x + 0.5, b.y, 'taken', 'bad')
-      return false
-    }
-    for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
-    b.w = nw
-    b.h = nh
-    for (const [cx, cy] of cells.slice(1)) plant.occ.set(key(cx, cy), me)
+  const plant = res(w, Plant),
+    me = key(b.x, b.y)
+  const was = cellsOf(b)
+  plant.b.delete(me)
+  for (const [cx, cy] of was.slice(1)) plant.occ.delete(key(cx, cy))
+  const why = whyNot(w, b.type, b.x, b.y, dir)
+  if (why) {
+    plant.b.set(me, b)
+    for (const [cx, cy] of was.slice(1)) plant.occ.set(key(cx, cy), me)
+    float(w, b.x + 0.5, b.y, 'taken', 'bad')
+    return false
   }
-  b.dir = dir
+  const [nw, nh] = dimsOf(b.type, dir)
+  for (const o of b.outs) o.dir = ((o.dir + 1) % 4) as Dir
+  for (const q of b.pile) toStock(w, q)
+  b.pile = []
+  Object.assign(b, { dir, w: nw, h: nh, pileX: b.x, pileY: b.y })
+  plant.b.set(me, b)
+  for (const [cx, cy] of footprint(b.x, b.y, nw, nh).slice(1)) plant.occ.set(key(cx, cy), me)
+  res(w, GameState).plantVersion++
   return true
 }
 

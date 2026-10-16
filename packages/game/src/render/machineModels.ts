@@ -12,35 +12,32 @@ import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, r
  * marks each output. Every part is chunky: nothing thinner than ~0.06 of a cell, no fuzz of small bits
  * (docs/04-ART.md).
  *
- * Local frame: x to the right of the screen, z towards the camera, y up, footprint centred. The bodies keep this
- * orientation whatever way a machine works, so each reads the same from the camera; its output chutes turn with it.
- * A body is one merged vertex-coloured geometry; each moving part is another, placed by `MachineSpec.parts`.
+ * Local frame: x to the right of the screen, z towards the camera, y up, footprint centred. A model is built facing
+ * south (dir 1, towards the camera at the start) and the whole of it turns with its building (`machineYaw`): a 2×1 lies
+ * along z, the machine on its back cell and what it fills on its front cell, where its output is. A body is one merged
+ * vertex-coloured geometry; each moving part is another, placed by `MachineSpec.parts`.
  */
 
 /** A moving part: where it sits, how it is turned at rest (`tilt`), how it moves while the machine works. */
 export type PartSpec = { geo: () => BufferGeometry; at: V3; motion: Motion; phase?: number; scale?: number; tilt?: V3 }
-/** How a part moves while the machine works. */
-export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'stamp' | 'swing' | 'bob' | 'still'
+/** How a part moves while the machine works; `fill` stands for what a store holds, scaled up from its floor by how full it is. */
+export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'stamp' | 'swing' | 'bob' | 'fill' | 'still'
 export type MachineSpec = { body: BufferGeometry; top: number; parts: PartSpec[] }
 
 const specs = new Map<string, MachineSpec>()
-/**
- * A machine's body and moving parts, built once per type and lie: a 2×1 producer lies either wide (along x) or deep
- * (along z) as it is turned. `top` is where its signs float.
- */
-export function machineModel(type: BuildingId, wide = true): MachineSpec {
-  const k = type + (wide ? '' : ':deep')
-  let s = specs.get(k)
+/** A machine's body and moving parts, built once per type. `top` is where its signs float. */
+export function machineModel(type: BuildingId): MachineSpec {
+  let s = specs.get(type)
   if (!s) {
-    s = build(type, wide)
-    specs.set(k, s)
+    s = build(type)
+    specs.set(type, s)
   }
   return s
 }
 /** The whole machine still, body and parts in one geometry: the placement ghost shows it see-through. */
-export const machineBody = (type: BuildingId, wide = true) =>
-  cached('ghost' + type + (wide ? '' : ':deep'), () => {
-    const s = machineModel(type, wide)
+export const machineBody = (type: BuildingId) =>
+  cached('ghost' + type, () => {
+    const s = machineModel(type)
     const parts = s.parts.map((p) => {
       const g = p.geo().clone()
       const k = p.scale ?? 1
@@ -51,18 +48,6 @@ export const machineBody = (type: BuildingId, wide = true) =>
     })
     return model([s.body.clone(), ...parts])
   })
-
-/** An output: a short stub of wooden belt coming out of the machine along +X, the way its goods leave. */
-export const chute = () =>
-  cached('chute', () =>
-    model([
-      put(rb(0.4, 0.1, 0.72, 0.035), LOOK.beltBed, [0, 0.05, 0]),
-      put(rb(0.12, 0.035, 0.56, 0.015), LOOK.beltSlat, [-0.08, 0.115, 0]),
-      put(rb(0.12, 0.035, 0.56, 0.015), LOOK.beltSlat, [0.1, 0.115, 0]),
-      put(rb(0.4, 0.2, 0.1, 0.035), LOOK.beltWall, [0, 0.12, 0.33]),
-      put(rb(0.4, 0.2, 0.1, 0.035), LOOK.beltWall, [0, 0.12, -0.33]),
-    ]),
-  )
 
 // ---------------------------------------------------------------- shared pieces
 
@@ -138,20 +123,19 @@ function shift(list: BufferGeometry[], dx: number, dz: number) {
   return list
 }
 
+/** Where a 2×1's machine (A) stands: on the back cell, behind what it fills (B) on the front cell, where its output is. */
+const A_Z = -0.48
 /**
- * A 2×1 producer: the machine itself (A) and what it fills (B) side by side on one plinth — wide: A on the left, deep:
- * A in front, towards the camera. Returns the merged body and A's offset for its moving parts.
+ * A 2×1 producer: the machine itself (A) on the back cell and what it fills (B) on the front one, on one plinth — or,
+ * for a pump, only B on a plinth, A standing in the water. Returns the merged body; A's parts sit at `moved(…, 0, A_Z)`.
  */
-function pair(wide: boolean, a: BufferGeometry[], b: BufferGeometry[], tallA = false) {
-  // a tall A (the windpump's tower) goes behind when deep, so it never hides B
-  const front = tallA ? -0.48 : 0.48
-  const [ax, az] = wide ? [-0.48, 0] : [0, front],
-    [bx, bz] = wide ? [0.48, 0] : [0, -front]
-  return { body: model([...plinth(wide ? 1.84 : 0.9, wide ? 0.9 : 1.84), ...shift(a, ax, az), ...shift(b, bx, bz)]), ax, az }
+function pair(a: BufferGeometry[], b: BufferGeometry[], plinthFront = false) {
+  const base = plinthFront ? shift(plinth(0.9, 0.9), 0, -A_Z) : plinth(0.9, 1.84)
+  return { body: model([...base, ...shift(a, 0, A_Z), ...shift(b, 0, -A_Z)]) }
 }
 const moved = (p: V3, dx: number, dz: number): V3 => [p[0] + dx, p[1], p[2] + dz]
 
-function build(type: BuildingId, wide: boolean): MachineSpec {
+function build(type: BuildingId): MachineSpec {
   const c = ROOF[type]
   switch (type) {
     case 'barn': {
@@ -434,7 +418,7 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
         w.push(put(rb(0.28, 0.18, 0.24, 0.05), LOOK.hay, [x, y, z]))
         w.push(put(rb(0.06, 0.185, 0.245, 0.02), WOOD_DARK, [x, y, z]))
       }
-      const { body, ax, az } = pair(wide, m, w)
+      const { body } = pair(m, w)
       return {
         body,
         top: 1.15,
@@ -450,35 +434,38 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
                 }
                 return model(r)
               }),
-            at: moved([0, 0.3, 0.36], ax, az),
+            at: moved([0, 0.3, 0.36], 0, A_Z),
             motion: 'spinX-',
           },
         ],
       }
     }
     case 'pump': {
-      // a windpump: a sturdy four-legged tower carrying a big wind wheel facing the camera, and beside it the barrel it
-      // fills, with a thick pipe between them and a little trough
+      // a windpump standing in the pond (the author: its tower's cell is in the water): a sturdy four-legged tower on
+      // a little deck over the water, carrying a big wind wheel, its intake pipe down into the pond; on the land cell in
+      // front the barrel it fills, a thick pipe from the tower's head over to a spout bent down over it, water pouring in
       const t: BufferGeometry[] = []
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) t.push(put(rb(0.11, 1.08, 0.11, 0.045), WOOD, [sx * 0.15, 0.68, sz * 0.15], [sz * 0.1, 0, -sx * 0.1]))
-      for (const y of [0.44, 0.84]) t.push(put(rb(0.36, 0.08, 0.36, 0.03), WOOD_DARK, [0, y, 0]))
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) t.push(put(rb(0.11, 1.16, 0.11, 0.045), WOOD, [sx * 0.17, 0.6, sz * 0.17], [sz * 0.1, 0, -sx * 0.1]))
+      t.push(put(rb(0.62, 0.08, 0.62, 0.03), WOOD_DARK, [0, 0.16, 0]))
+      for (const y of [0.5, 0.86]) t.push(put(rb(0.36, 0.08, 0.36, 0.03), WOOD_DARK, [0, y, 0]))
       t.push(put(rb(0.22, 0.18, 0.26, 0.06), INKY, [0, 1.24, 0]))
       t.push(put(rb(0.08, 0.28, 0.4, 0.035), c, [0, 1.28, -0.36]))
-      t.push(put(cyl(0.09, 0.9, 12), METAL, [0, 0.6, 0]))
+      t.push(put(cyl(0.09, 1.1, 12), METAL, [0, 0.7, 0]))
+      t.push(put(cyl(0.13, 0.08, 12), INKY, [0, 0.2, 0]))
       const r: BufferGeometry[] = [put(cyl(0.3, 0.46, 22, 0.26), WOOD, [0, 0.38, -0.04])]
       for (const y of [0.24, 0.52]) r.push(put(cyl(0.31, 0.06, 22), INKY, [0, y, -0.04]))
       r.push(put(cyl(0.26, 0.05, 22), LOOK.waterItem, [0, 0.6, -0.04]))
       r.push(put(rb(0.46, 0.14, 0.2, 0.05), WOOD_DARK, [0, 0.23, 0.32]))
       r.push(put(rb(0.4, 0.04, 0.14, 0.02), LOOK.waterItem, [0, 0.3, 0.32]))
-      const { body, ax, az } = pair(wide, t, r, true)
+      const { body } = pair(t, r, true)
       // the pipe from the tower over to the barrel, a spout bent down over it and the water pouring in
-      const [bx, bz] = wide ? [0.48, -0.04] : [0, 0.44]
+      const bz = -A_Z - 0.04
       const pipe = [
-        wide ? put(cyl(0.085, 0.9, 12), METAL, [0, 0.98, 0], [0, 0, Math.PI / 2]) : put(cyl(0.085, 0.9, 12), METAL, [0, 0.98, 0], [Math.PI / 2, 0, 0]),
-        put(ball(0.11), METAL, [bx, 0.98, bz]),
-        put(cyl(0.085, 0.2, 12), METAL, [bx, 0.86, bz]),
-        put(cyl(0.11, 0.06, 12), INKY, [bx, 0.76, bz]),
-        put(cyl(0.07, 0.16, 10, 0.06), LOOK.waterItem, [bx, 0.66, bz]),
+        put(cyl(0.085, 0.96, 12), METAL, [0, 0.98, A_Z / 2 + bz / 2], [Math.PI / 2, 0, 0]),
+        put(ball(0.11), METAL, [0, 0.98, bz]),
+        put(cyl(0.085, 0.2, 12), METAL, [0, 0.86, bz]),
+        put(cyl(0.11, 0.06, 12), INKY, [0, 0.76, bz]),
+        put(cyl(0.07, 0.16, 10, 0.06), LOOK.waterItem, [0, 0.66, bz]),
       ]
       return {
         body: model([body, ...pipe]),
@@ -494,7 +481,7 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
                 }
                 return model(f)
               }),
-            at: moved([0, 1.24, 0.2], ax, az),
+            at: moved([0, 1.24, 0.2], 0, A_Z),
             tilt: [-0.5, 0, 0],
             motion: 'spinZ',
           },
@@ -529,7 +516,7 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
       for (const y of [0.24, 0.5]) v.push(put(cyl(0.35, 0.06, 22), INKY, [0, y, 0]))
       v.push(put(cyl(0.3, 0.05, 22), shade(LOOK.dye, 1.2), [0, 0.58, 0]))
       v.push(put(cyl(0.05, 0.6, 10), WOOD, [0.12, 0.72, 0.05], [0.3, 0, -0.5]))
-      const { body, ax, az } = pair(wide, k, v)
+      const { body } = pair(k, v)
       return {
         body,
         top: 1.25,
@@ -544,7 +531,7 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
                   put(ball(0.08), LOOK.dye, [0.6, 0.3, 0]),
                 ]),
               ),
-            at: moved([-0.3, 0.76, -0.26], ax, az),
+            at: moved([-0.3, 0.76, -0.26], 0, A_Z),
             motion: 'swing',
           },
         ],
@@ -567,6 +554,52 @@ function build(type: BuildingId, wide: boolean): MachineSpec {
       for (const sd of split ? [0, 1, 3] : [1, 2, 3]) arrow(sd, split)
       if (!split) arrow(0, true, 0.31)
       return { body: model(p), top: 0.3, parts: [] }
+    }
+    case 'feeder': {
+      // the pasture's hay rack, two cells long along the fence: a low wooden manger (a floor and four low walls, so the
+      // hay shows inside) on stout legs, a slanted rack of bars on the pen side (in front) that the sheep pull the hay
+      // through; the hay in it rises with what it holds
+      const p: BufferGeometry[] = []
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(0.11, 0.24, 0.11, 0.04), WOOD_DARK, [sx * 0.78, 0.12, sz * 0.24]))
+      p.push(put(rb(1.84, 0.08, 0.7, 0.03), WOOD, [0, 0.24, 0]))
+      for (const sz of [-1, 1]) p.push(put(rb(1.84, 0.22, 0.09, 0.035), WOOD, [0, 0.35, sz * 0.31]))
+      for (const sx of [-1, 1]) p.push(put(rb(0.09, 0.22, 0.7, 0.035), WOOD, [sx * 0.88, 0.35, 0]))
+      for (let i = 0; i < 7; i++) p.push(put(rb(0.07, 0.42, 0.07, 0.03), WOOD_DARK, [-0.72 + i * 0.24, 0.6, 0.24], [-0.38, 0, 0]))
+      p.push(put(rb(1.86, 0.08, 0.08, 0.03), WOOD_DARK, [0, 0.78, 0.15]))
+      return {
+        body: model(p),
+        top: 0.9,
+        parts: [
+          {
+            geo: () =>
+              cached('feederHay', () =>
+                model([
+                  put(rb(1.6, 1, 0.52, 0.12), LOOK.hay, [0, 0.5, 0]),
+                  put(ball(0.22), LOOK.hay, [-0.5, 1, 0.04], [0, 0, 0], [1.2, 0.5, 1]),
+                  put(ball(0.22), LOOK.hay, [0.1, 1, -0.06], [0, 0, 0], [1.3, 0.5, 1]),
+                  put(ball(0.2), LOOK.hay, [0.6, 1, 0.05], [0, 0, 0], [1.1, 0.5, 1]),
+                ]),
+              ),
+            at: [0, 0.28, 0],
+            motion: 'fill',
+            scale: 0.3,
+          },
+        ],
+      }
+    }
+    case 'trough': {
+      // the pasture's water trough, two cells long along the fence: a long stone basin (a floor and four walls, so the
+      // water shows inside) on a stone sill, its water rising with what it holds; a bucket by one end
+      const p: BufferGeometry[] = [put(rb(1.9, 0.08, 0.84, 0.04), STONE_DARK, [0, 0.04, 0])]
+      p.push(put(rb(1.8, 0.1, 0.72, 0.03), shade(c, 0.7), [0, 0.12, 0]))
+      for (const sz of [-1, 1]) p.push(put(rb(1.8, 0.36, 0.11, 0.045), c, [0, 0.26, sz * 0.305]))
+      for (const sx of [-1, 1]) p.push(put(rb(0.11, 0.36, 0.72, 0.045), c, [sx * 0.845, 0.26, 0]))
+      p.push(good('water').clone().scale(1.3, 1.3, 1.3).translate(-0.72, 0.08, 0.5))
+      return {
+        body: model(p),
+        top: 0.7,
+        parts: [{ geo: () => cached('troughWater', () => model([put(rb(1.56, 1, 0.5, 0.02), LOOK.waterItem, [0, 0.5, 0])])), at: [0, 0.16, 0], motion: 'fill', scale: 0.26 }],
+      }
     }
     default:
       return { body: model(plinth(0.9, 0.9)), top: 0.5, parts: [] }

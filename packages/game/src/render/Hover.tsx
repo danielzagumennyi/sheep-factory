@@ -3,10 +3,9 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { Group, Mesh, type Object3D } from 'three'
 import { OUTLINE_LAYER, OutlinePass, markOutlined, outlined, unmarkOutlined } from '@kit/outline'
 import { useGame } from '@/game/GameContext'
-import { BUILDINGS } from '@/game/balance'
 import { beltInDir, pastureAt } from '@/game/grid'
 import { Plant, Ui, key, res } from '@/game/world'
-import { vmat, yawOf } from './kit'
+import { machineYaw, vmat } from './kit'
 import { drawBelt, useBeltPieces } from './Belts'
 import { machineBody } from './machineModels'
 import { pickAt, poseProxy, pointer, sheepPoses, sheepProxy, views } from './pick'
@@ -69,10 +68,10 @@ export function Hover() {
           drawBelt(beltProxy, b.x, b.y, beltInDir(world, b), b.dir, b.phase, 0, true)
           next = belt.g
         } else if (b && b.type !== 'dock') {
-          // a machine, a barn, a splitter or a merger: a mesh of its whole model in its place (on-belt ones turn)
-          machine.geometry = machineBody(b.type, b.w >= b.h)
+          // a machine, a barn, a splitter or a merger: a mesh of its whole model in its place, turned as it stands
+          machine.geometry = machineBody(b.type)
           machine.position.set(b.x + b.w / 2, 0, b.y + b.h / 2)
-          machine.rotation.y = BUILDINGS[b.type].onBelt ? yawOf(b.dir) : 0
+          machine.rotation.y = machineYaw(b.type, b.dir)
           next = machine
         } else if (b) next = views.buildings.get(key(b.x, b.y)) ?? null
         else {

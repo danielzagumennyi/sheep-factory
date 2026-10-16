@@ -3,8 +3,10 @@ import { GRID, RES, SHEEP, type BuildingId } from './balance'
 import { anchorForInput, beltInDir, get, inCell, inCells, outCells, plotPrice, reachCells, reachOf, whyNot } from './grid'
 import { buyPlot, liftUp, place, putBack, putDown, remove, rotate, setRecipe } from './actions/build'
 import { feed, gather, handClick } from './actions/hand'
+import { BUILDINGS } from './balance'
 import { stepSimulation } from './systems'
 import { buy, buyPrice, dockAccept, dockX, loadDock, sell, sellPrice } from './systems/orders'
+import { storeOf } from './systems/sheep'
 import { blankBuilding, createGameWorld, Field, Flock, GameState, Market, Plant, Stock, Ui, Unlocks, key, newItem, res, stockOf, unkey, type SheepT, type World } from './world'
 
 let worlds: World[] = []
@@ -131,9 +133,12 @@ describe('orders (GDD 7)', () => {
 })
 
 describe('pasture (GDD 5)', () => {
-  it('a shorn sheep pays one hay and one water from the stock for its next fleece; the longest wait is fed first', () => {
+  it('a shorn sheep takes one hay from the feeder and one water from the trough for its next fleece; the longest wait is fed first', () => {
     const w = world()
     const flock = res(w, Flock)
+    const p = flock.pastures[0]!
+    const feeder = storeOf(w, p, 'hay')!,
+      trough = storeOf(w, p, 'water')!
     for (const s of flock.sheep) {
       s.wool = 0
       s.fed = false
@@ -141,25 +146,78 @@ describe('pasture (GDD 5)', () => {
     }
     const [a, b] = flock.sheep as [SheepT, SheepT]
     a.waitT = 5
-    // stock for one fleece: the sheep that waited longer gets it, the pasture says what the rest wait for
-    res(w, Stock).n = { hay: 1, water: 1 }
+    // hay and water for one fleece in the stores (none in the stock: the stock feeds nobody): the sheep that waited
+    // longer gets it, the pasture says what the rest wait for
+    res(w, Stock).n = { hay: 5, water: 5 }
+    feeder.inv.hay = 1
+    trough.inv.water = 1
     run(w, 0.05)
     expect(a.fed).toBe(true)
     expect(b.fed).toBe(false)
-    expect(stockOf(w, 'hay')).toBe(0)
-    expect(flock.pastures[0]!.want.sort()).toEqual(['hay', 'water'])
+    expect(feeder.inv.hay).toBe(0)
+    expect(trough.inv.water).toBe(0)
+    expect(stockOf(w, 'hay')).toBe(5)
+    expect(p.want.sort()).toEqual(['hay', 'water'])
     // a paid fleece grows in SHEEP.grow seconds, then the sheep is fluffy and the next one is unpaid
     run(w, SHEEP.grow + 0.5)
     expect(a.wool).toBe(1)
     expect(a.fed).toBe(false)
     expect(b.wool).toBe(0)
-    // with enough in stock every shorn sheep is fed at once: nine sheep take nine of each
+    // with enough in the stores every shorn sheep is fed at once: nine sheep take nine of each
     const k = flock.sheep.filter((s) => s.state === 'pasture' && s.wool < 1).length
-    res(w, Stock).n = { hay: 20, water: 20 }
+    feeder.inv.hay = 20
+    trough.inv.water = 20
     run(w, 0.05)
-    expect(stockOf(w, 'hay')).toBe(20 - k)
-    expect(stockOf(w, 'water')).toBe(20 - k)
-    expect(flock.pastures[0]!.want).toEqual([])
+    expect(feeder.inv.hay).toBe(20 - k)
+    expect(trough.inv.water).toBe(20 - k)
+    expect(p.want).toEqual([])
+  })
+  it('the feeder and trough stand on free land by every pasture, take their one good from their open side and are filled from the stock', () => {
+    for (const m of ['m2', 'm3', 'm4', 'm5', 'm6', 'm7'] as const) {
+      const w = world(m)
+      const f = res(w, Field)
+      for (const p of res(w, Flock).pastures)
+        for (const k of ['hay', 'water'] as const) {
+          const b = storeOf(w, p, k)!
+          expect(b, m + ' ' + k).toBeTruthy()
+          expect(b.fixed).toBe(true)
+          for (const [x, y] of [[b.x, b.y], [b.x + b.w - 1, b.y + b.h - 1]]) {
+            expect(f.terrain.has(key(x!, y!)), m + ' ' + k + ' on terrain').toBe(false)
+            expect(res(w, Field).plots.has(key(Math.floor(x! / GRID.plotW), Math.floor(y! / GRID.plotH))), m + ' ' + k + ' owned').toBe(true)
+            expect(get(w, x!, y!)).toBe(b)
+          }
+          // two ways in, both from the side away from the pen, going towards it
+          const ins = inCells(w, b)
+          expect(ins.length).toBe(2)
+          expect(ins.every((c) => c.d === b.dir)).toBe(true)
+          expect(outCells(b)).toEqual([])
+        }
+    }
+    const w = world('m3')
+    const p = res(w, Flock).pastures[0]!
+    const feeder = storeOf(w, p, 'hay')!
+    // a belt from its open side brings hay in; one from the pen's side or with the wrong good is refused
+    const c = inCells(w, feeder)[0]!
+    place(w, 'belt', c.x, c.y, c.d)
+    const belt = get(w, c.x, c.y)!
+    belt.item = newItem('hay')
+    belt.item.p = 1
+    run(w, 0.2)
+    expect(belt.item).toBeNull()
+    expect(feeder.inv.hay).toBe(1)
+    belt.item = newItem('water')
+    belt.item.p = 1
+    run(w, 0.2)
+    expect(belt.item?.kind).toBe('water')
+    // its popup's «+N»: from the stock up to its cap
+    res(w, Stock).n = { hay: 20 }
+    expect(feed(w, feeder, 'hay', 99)).toBe(BUILDINGS.feeder.cap! - 1)
+    expect(feeder.inv.hay).toBe(BUILDINGS.feeder.cap)
+    expect(stockOf(w, 'hay')).toBe(20 - BUILDINGS.feeder.cap! + 1)
+    // fixed: not removed, not moved, not turned
+    expect(remove(w, feeder.x, feeder.y)).toBe(false)
+    expect(liftUp(w, feeder)).toBe(false)
+    expect(rotate(w, feeder)).toBe(false)
   })
   it('on pause the hand works no field: no shearing, no gathering', () => {
     const w = world('m1')
@@ -201,16 +259,24 @@ describe('pasture (GDD 5)', () => {
     expect(p1).toBeLessThan(p0)
     expect(buyPlot(w, px, py)).toBe(true)
   })
-  it('the hand gathers a resource on land not bought yet', () => {
+  it('the hand gathers nothing on land not bought yet: a click there opens the plot', () => {
     const w = world()
     const f = res(w, Field)
+    res(w, Stock).n = {}
     const k = [...f.res.keys()].find((q) => !f.plots.has(key(Math.floor(unkey(q)[0] / GRID.plotW), Math.floor(unkey(q)[1] / GRID.plotH))))!
     const [x, y] = unkey(k),
       r = f.res.get(k)!
     const left = r.left
     handClick(w, x + 0.5, y + 0.5)
-    expect(f.res.get(k)?.left ?? 0).toBe(left - 1)
-    expect(stockOf(w, r.t === 'meadow' ? 'hay' : r.t === 'bush' ? 'dye' : 'water')).toBeGreaterThan(0)
+    expect(f.res.get(k)!.left).toBe(left)
+    expect(stockOf(w, r.t === 'meadow' ? 'hay' : r.t === 'bush' ? 'dye' : 'water')).toBe(0)
+    expect(res(w, Ui).sel?.kind).toBe('plot')
+    // on own land it gathers; a pond never runs out
+    const own = [...f.res.keys()].find((q) => f.plots.has(key(Math.floor(unkey(q)[0] / GRID.plotW), Math.floor(unkey(q)[1] / GRID.plotH))) && f.res.get(q)!.t === 'water')!
+    const [ox, oy] = unkey(own)
+    for (let i = 0; i < 30; i++) handClick(w, ox + 0.5, oy + 0.5)
+    expect(stockOf(w, 'water')).toBe(30)
+    expect(f.res.get(own)!.left).toBe(RES.water.max)
   })
   it('only sheep go into a pasture, and only through its way in; hay goes into a barn', () => {
     const w = world()
@@ -305,13 +371,29 @@ describe('building', () => {
     const dock = [...res(w, Plant).b.values()].find((q) => q.type === 'dock')!
     expect(liftUp(w, dock)).toBe(false)
   })
-  it('a mower or a pump stands anywhere, a berry picker only by bushes', () => {
+  it('a mower stands anywhere, a berry picker only by bushes, a pump with its tower in the water', () => {
     const w = world()
     // a spot with no meadow, pond or bush in reach
     const [x, y] = free((x, y) => !whyNot(w, 'belt', x, y) && !whyNot(w, 'belt', x + 1, y) && (['meadow', 'water', 'bush'] as const).every((r) => !reachCells(w, x, y, r, false, 2, 1).length))
     expect(whyNot(w, 'mower', x, y, 0)).toBe('')
-    expect(whyNot(w, 'pump', x, y, 0)).toBe('')
+    expect(whyNot(w, 'pump', x, y, 0)).toBe('inWater')
     expect(whyNot(w, 'berry', x, y, 0)).toBe('needBush')
+    // m3's river runs along row 12: a pump facing north stands with its tower on (12, 12) and its barrel on (12, 11)
+    expect(whyNot(w, 'pump', 12, 11, 3)).toBe('')
+    // the other way round — barrel in the river, tower on the bank — it may not
+    expect(whyNot(w, 'pump', 12, 12, 3)).toBe('onWater')
+    expect(place(w, 'pump', 12, 11, 3)).toBe(true)
+    const pump = get(w, 12, 12)!
+    expect(pump.type).toBe('pump')
+    expect(outCells(pump).map((c) => [c.x, c.y])).toEqual([[12, 10]])
+    // its output cell is the pasture's trough: it gives water straight into it, without draining the river
+    const trough = storeOf(w, res(w, Flock).pastures[0]!, 'water')!
+    expect(get(w, 12, 10)).toBe(trough)
+    trough.inv.water = 0
+    run(w, 6)
+    expect(trough.inv.water).toBe(1)
+    expect(res(w, Field).res.get(key(12, 12))!.left).toBe(RES.water.max)
+    expect(pump.status).not.toBe('empty')
   })
   it('a belt runs empty too', () => {
     const w = world()
