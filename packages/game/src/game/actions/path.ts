@@ -1,6 +1,6 @@
 import { BUILDINGS, DIRS, GRID, type Dir } from '../balance'
-import { freeCell, get, inGrid, isBeltLike, outCells, owned, pastureAt, step, targetOk, terr } from '../grid'
-import { Flock, GameState, Plant, res, type World } from '../world'
+import { beltAutoDir, freeCell, get, inGrid, isBeltLike, outCells, owned, pastureAt, step, targetOk, terr } from '../grid'
+import { Flock, GameState, res, type World } from '../world'
 import { noMoney, place } from './build'
 
 /**
@@ -21,7 +21,8 @@ export function routeCells(w: World, a: Cell, b: Cell): Cell[] | null {
   // a line drawn into a pasture goes to its way in
   const pa = pastureAt(w, b.x, b.y)
   if (pa) b = { x: pa.entry.x, y: pa.entry.y }
-  const mk = a.x + ',' + a.y + '>' + b.x + ',' + b.y + ':' + res(w, GameState).fieldVersion + ':' + res(w, Plant).b.size
+  const gs = res(w, GameState)
+  const mk = a.x + ',' + a.y + '>' + b.x + ',' + b.y + ':' + gs.fieldVersion + ':' + gs.plantVersion
   if (memo.k === mk) return memo.cells
   let out: Cell[] | null = null
   if (a.x === b.x && a.y === b.y) out = [{ x: a.x, y: a.y }]
@@ -104,9 +105,12 @@ function sheepSource(w: World, c: Cell) {
   )
 }
 
-/** Directions along a path; the last cell turns into whatever it can feed, preferring a machine over a belt. */
+/**
+ * Directions along a path; the last cell turns into whatever it can feed, preferring a machine over a belt. A single
+ * cell goes the way its neighbours suggest (`beltAutoDir`), the player's R breaking ties.
+ */
 export function pathDirs(w: World, cells: Cell[], rot: Dir): Dir[] {
-  const dirs = cells.map((c, i) => (i < cells.length - 1 ? stepDir(c, cells[i + 1]!) : cells.length > 1 ? stepDir(cells[i - 1]!, c) : rot))
+  const dirs = cells.map((c, i) => (i < cells.length - 1 ? stepDir(c, cells[i + 1]!) : cells.length > 1 ? stepDir(cells[i - 1]!, c) : beltAutoDir(w, c.x, c.y, rot)))
   const L = cells.length - 1
   if (L >= 1) {
     const c = cells[L]!,

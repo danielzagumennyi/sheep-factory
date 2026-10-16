@@ -5,21 +5,23 @@ import { tryPush } from './belts'
 
 /**
  * Machines (GDD 4.3). A workshop starts a job when its inputs hold a whole recipe; a producer takes one unit from the
- * nearest owned resource cell in reach every `time` seconds; the shearer cuts the sheep that walks in. A finished
- * output waits until it can leave: onto a belt, into the pasture or a dock, or onto a small pile beside the machine.
+ * nearest owned resource cell in reach every `time` seconds (the pump, standing in the water, just gives); the shearer
+ * cuts the sheep that walks in. A finished output waits until it can leave: onto a belt, into the pasture or a dock,
+ * or onto a small pile beside the machine.
  */
 
-/** Take one unit from a resource cell. An empty cell disappears and becomes plain ground (GDD 6.1). */
+/** Take one unit from a resource cell. An empty cell disappears and becomes plain ground (GDD 6.1); water never runs out (the author). */
 export function takeRes(w: World, k: string) {
   const f = res(w, Field)
   const r = f.res.get(k)
   if (!r || r.left <= 0) return false
+  if (r.t === 'water') return true
   if (--r.left <= 0) {
     const [x, y] = unkey(k)
     f.res.delete(k)
     f.terrain.delete(k)
     res(w, GameState).fieldVersion++
-    puff(w, x + 0.5, y + 0.5, r.t === 'water' ? LOOK.water : r.t === 'bush' ? LOOK.bush : LOOK.meadow, 6)
+    puff(w, x + 0.5, y + 0.5, r.t === 'bush' ? LOOK.bush : LOOK.meadow, 6)
   }
   return true
 }
@@ -107,9 +109,10 @@ export function machineSystem(w: World, dt: number) {
     if (PRODUCERS.includes(m.type as BuildingId)) {
       m.prog = Math.min(def.time!, m.prog + dt * speedOf(m))
       if (m.prog >= def.time!) {
-        // the nearest owned cell in reach; nothing left around — it stands still until moved
-        const c = reachOf(w, m, def.near!, true)[0]
-        if (c && takeRes(w, c.k)) {
+        // the nearest owned cell in reach; nothing left around — it stands still until moved. A pump stands in the
+        // water itself and never runs dry
+        const c = def.near ? reachOf(w, m, def.near, true)[0] : null
+        if (!def.near || (c && takeRes(w, c.k))) {
           m.prog = 0
           m.outs.push({ item: newItem(def.gives!), dir: m.dir })
           m.count++
@@ -160,7 +163,8 @@ export function machineState(w: World, b: Building): { tone: MachineTone; text: 
   if (PRODUCERS.includes(b.type as BuildingId)) {
     if (b.status === 'full' || b.status === 'jam') return { tone: 'bad', text: 'outBlocked' }
     if (b.status === 'empty') return { tone: 'warn', text: 'emptyAround' }
-    return { tone: 'ok', text: 'producing', n: reachOf(w, b, def.near!, true).reduce((s, c) => s + c.r.left, 0) }
+    if (!def.near) return { tone: 'ok', text: 'working' }
+    return { tone: 'ok', text: 'producing', n: reachOf(w, b, def.near, true).reduce((s, c) => s + c.r.left, 0) }
   }
   const job = jobOf(b)
   if (job) {

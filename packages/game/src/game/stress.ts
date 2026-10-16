@@ -1,5 +1,5 @@
 import { GRID, type BuildingId, type Dir, type ItemId, type RecipeId } from './balance'
-import { get, jobOf } from './grid'
+import { capOf, get, wantsOf } from './grid'
 import { place, setRecipe } from './actions/build'
 import { buildShowcase } from './showcase'
 import { enterBelt } from './systems/belts'
@@ -85,12 +85,12 @@ export function buildStress(w: World, opts: { sheep?: number } = {}) {
   for (let t = 0; t < STRESS.warmup; t += 1 / 60) stepSimulation(w)
 }
 
-/** Keep the stress factory working: every machine stocked with what its job takes, and its pile cleared. */
+/** Keep the stress factory working: every machine stocked with what its job takes (a feeder or trough filled), and its pile cleared. */
 export function feedStress(w: World) {
   for (const b of res(w, Plant).b.values()) {
-    const job = jobOf(b)
-    if (!job) continue
-    for (const k of Object.keys(job.inp) as ItemId[]) b.inv[k] = Math.max(b.inv[k] ?? 0, STRESS.stock)
+    const wants = wantsOf(b)
+    if (!wants) continue
+    for (const k of Object.keys(wants) as ItemId[]) b.inv[k] = Math.max(b.inv[k] ?? 0, b.fixed ? capOf(b) : STRESS.stock)
     b.pile.length = 0
   }
 }

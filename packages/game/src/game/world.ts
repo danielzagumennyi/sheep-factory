@@ -109,6 +109,9 @@ export interface PastureT {
   exit: { x: number; y: number }
   /** The cell just outside where sheep come back in, and the way they move as they come in. */
   entry: { x: number; y: number; d: Dir }
+  /** Its feeder and trough (keys into Plant.b), fixed 2×1 stores on its two free sides; null where the mission needs none. */
+  feeder: string | null
+  trough: string | null
 }
 
 export interface OrderT extends OrderDef {
@@ -176,6 +179,8 @@ export const GameState = trait(() => ({
   pauseNudge: 0,
   /** Bumped when terrain or plots change, so the 3D field rebuilds only then. */
   fieldVersion: 0,
+  /** Bumped whenever a building is set down, taken off or turned: cached routes and views go stale on it. */
+  plantVersion: 0,
 }))
 
 export const Mission = trait(() => ({ def: missionDef('m1') as MissionDef }))
@@ -298,13 +303,16 @@ export function createGameWorld(id: MissionId = 'm1', opts: WorldOptions = {}): 
     f.forSale.add(key(Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)))
   }
   const flock = res(world, Flock)
+  const plant = res(world, Plant)
   def.pastures.forEach((q, i) => {
-    const p: PastureT = { id: i, x: q.x, y: q.y, w: q.w, h: q.h, dir: q.dir, cap: q.w * q.h, grown: 0, exitT: 0, want: [], exit: exitOf(q), entry: entryOf(q) }
+    const p: PastureT = { id: i, x: q.x, y: q.y, w: q.w, h: q.h, dir: q.dir, cap: q.w * q.h, grown: 0, exitT: 0, want: [], exit: exitOf(q), entry: entryOf(q), feeder: null, trough: null }
     flock.pastures.push(p)
+    // its trough on the side right of the exit, its feeder on the back side — where the mission feeds and waters
+    if (def.needs.water) p.trough = key(...standBy(world, 'trough', p, ((p.dir + 1) % 4) as Dir))
+    if (def.needs.food) p.feeder = key(...standBy(world, 'feeder', p, ((p.dir + 2) % 4) as Dir))
   })
   for (let i = 0; i < def.sheep; i++) flock.sheep.push(makeSheep(world, 0, true))
   Object.assign(res(world, Stock).n, def.stock ?? {})
-  const plant = res(world, Plant)
   // docks are 2×1 on the dock row; the market is a 2×2 stall reaching up into the row above
   for (const [client, x] of def.docks) {
     const m = client === 'market',
@@ -344,12 +352,34 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
   return { ...e, d: ((side + 2) % 4) as Dir }
 }
 
+/**
+ * Where a pasture's 2×1 store stands on side `s`: the last two cells along that side, just outside the fence, turned to
+ * face the pasture, so its way in is from the open side away from the pen.
+ */
+export function storeSpot(p: { x: number; y: number; w: number; h: number }, s: Dir): { x: number; y: number; dir: Dir } {
+  const along = s === 0 || s === 2 ? p.h : p.w,
+    i = along - 2
+  if (s === 0) return { x: p.x + p.w, y: p.y + i, dir: 2 }
+  if (s === 2) return { x: p.x - 1, y: p.y + i, dir: 0 }
+  if (s === 1) return { x: p.x + i, y: p.y + p.h, dir: 3 }
+  return { x: p.x + i, y: p.y - 1, dir: 1 }
+}
+/** Set a fixed store (a feeder or a trough) down by a pasture's side `s`; its top-left cell. */
+function standBy(world: World, type: 'feeder' | 'trough', p: PastureT, s: Dir): [number, number] {
+  const at = storeSpot(p, s)
+  const b: Building = { ...blankBuilding(type, at.x, at.y, at.dir), fixed: true }
+  const plant = res(world, Plant)
+  plant.b.set(key(b.x, b.y), b)
+  for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
+  return [at.x, at.y]
+}
+
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
   const [w, h] = type === 'dock' ? [DOCK.w, DOCK.h] : dimsOf(type, dir)
   return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, lvl: 1, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
 }
 
-/** A random spot inside a pasture where a sheep may stand (clear of the fence and the troughs along the bottom). */
+/** A random spot inside a pasture where a sheep may stand (clear of the fence). */
 export function pastureSpot(world: World, p: PastureT) {
   const rnd = res(world, Rng).next
   return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 1.15) }

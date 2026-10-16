@@ -27,6 +27,7 @@ export const UI = {
   erase: { ru: 'снос', en: 'clear' },
   eraseTip: { ru: 'тяни по постройкам — монеты вернутся', en: 'drag over buildings — coins come back' },
   rotateTip: { ru: '· R — повернуть', en: '· R — rotate' },
+  noCoins: { ru: 'мало монет', en: 'not enough coins' },
   stock: { ru: 'Склад', en: 'Stock' },
   pause: { ru: 'Пауза · пробел', en: 'Pause · space' },
   sound: { ru: 'Звук', en: 'Sound' },

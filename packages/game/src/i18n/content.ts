@@ -39,7 +39,7 @@ export const BUILDING_TEXT: Readonly<Record<BuildingId, { name: Text; desc: Text
   belt: { name: { ru: 'Лента', en: 'Belt' }, desc: { ru: 'везёт груз', en: 'carries goods' } },
   shearer: { name: { ru: 'Стригальня', en: 'Shearer' }, desc: { ru: 'стрижёт овец', en: 'shears sheep' } },
   mower: { name: { ru: 'Сенокос', en: 'Mower' }, desc: { ru: 'косит ближний покос вокруг', en: 'mows the nearest meadow' } },
-  pump: { name: { ru: 'Насос', en: 'Pump' }, desc: { ru: 'качает ближнюю воду вокруг', en: 'pumps the nearest water' } },
+  pump: { name: { ru: 'Насос', en: 'Pump' }, desc: { ru: 'стоит в пруду, качает воду', en: 'stands in a pond, pumps water' } },
   barn: { name: { ru: 'Амбар', en: 'Barn' }, desc: { ru: 'всё привезённое — на склад', en: 'whatever comes in is stocked' } },
   carder: { name: { ru: 'Чесалка', en: 'Carder' }, desc: { ru: 'расчёсывает шерсть в ровницу', en: 'combs wool into roving' } },
   spinner: { name: { ru: 'Прялка', en: 'Spinner' }, desc: { ru: 'прядёт из ровницы нить', en: 'spins roving into yarn' } },
@@ -48,6 +48,8 @@ export const BUILDING_TEXT: Readonly<Record<BuildingId, { name: Text; desc: Text
   felter: { name: { ru: 'Валяльня', en: 'Felter' }, desc: { ru: 'сбивает шерсть в войлок', en: 'presses wool into felt' } },
   berry: { name: { ru: 'Ягодник', en: 'Berry picker' }, desc: { ru: 'собирает ближние кусты вокруг', en: 'picks the nearest bushes' } },
   workshop: { name: { ru: 'Мастерская', en: 'Workshop' }, desc: { ru: 'делает по выбранному рецепту', en: 'makes the recipe you pick' } },
+  feeder: { name: { ru: 'Кормушка', en: 'Feeder' }, desc: { ru: 'сено для овец пастбища', en: 'hay for the pasture\'s sheep' } },
+  trough: { name: { ru: 'Поилка', en: 'Trough' }, desc: { ru: 'вода для овец пастбища', en: 'water for the pasture\'s sheep' } },
 }
 
 export const RES_NAMES: Readonly<Record<ResId, Text>> = {
@@ -71,11 +73,11 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
   shear: { title: { ru: 'Стрижка', en: 'Shearing' }, text: { ru: '3 клика по пушистой овце', en: '3 clicks on a fluffy sheep' } },
   shearer: { title: { ru: 'Стригальня', en: 'Shearer' }, text: { ru: 'Ставь на выход пастбища', en: 'Put it on the pasture exit' } },
   belt: { title: { ru: 'Лента', en: 'Belt' }, text: { ru: 'Клик у выхода машины, клик у цели', en: 'Click by an output, then by the target' } },
-  needs: { title: { ru: 'Корм и вода', en: 'Food and water' }, text: { ru: 'Сытая и напоенная овца обрастает. Сено и вода — со склада', en: 'A fed, watered sheep grows wool. Hay and water come from stock' } },
-  hay: { title: { ru: 'Корм', en: 'Food' }, text: { ru: 'Кликай по покосу — сено на склад', en: 'Click the meadow — hay to stock' } },
+  needs: { title: { ru: 'Корм и вода', en: 'Food and water' }, text: { ru: 'Сено в кормушку, вода в поилку — овца обрастает', en: 'Hay in the feeder, water in the trough: wool grows' } },
+  hay: { title: { ru: 'Корм', en: 'Food' }, text: { ru: 'Кликай по покосу, сено — в кормушку', en: 'Click the meadow, hay into the feeder' } },
   mower: { title: { ru: 'Сенокос', en: 'Mower' }, text: { ru: 'Косит покос вокруг. Скошенная клетка исчезает', en: 'Mows around itself. A mown cell is gone' } },
-  water: { title: { ru: 'Вода', en: 'Water' }, text: { ru: 'Кликай по пруду — вёдра на склад', en: 'Click the pond — buckets to stock' } },
-  pump: { title: { ru: 'Насос', en: 'Pump' }, text: { ru: 'Качает воду вокруг. Пруд мелеет до дна', en: 'Pumps around itself. A pond runs dry' } },
+  water: { title: { ru: 'Вода', en: 'Water' }, text: { ru: 'Кликай по пруду, ведро — в поилку', en: 'Click the pond, a bucket into the trough' } },
+  pump: { title: { ru: 'Насос', en: 'Pump' }, text: { ru: 'Ставь его в пруд. Вода не кончается', en: 'Stand it in a pond. Water never runs out' } },
   barn: { title: { ru: 'Амбар', en: 'Barn' }, text: { ru: 'Лента в амбар — груз на склад', en: 'A belt into the barn stocks goods' } },
   carder: { title: { ru: 'Чесалка', en: 'Carder' }, text: { ru: 'Расчёсывает шерсть в ровницу', en: 'Combs wool into roving' } },
   spinner: { title: { ru: 'Прялка', en: 'Spinner' }, text: { ru: 'Прядёт из ровницы нить', en: 'Spins roving into yarn' } },
@@ -109,6 +111,7 @@ export const WHY_TEXT: Readonly<Record<Exclude<WhyNot, ''>, Text>> = {
   needWater: { ru: 'нужен пруд рядом', en: 'needs a pond near' },
   needBush: { ru: 'нужны кусты рядом', en: 'needs bushes near' },
   foreignRes: { ru: 'ресурс на чужом участке', en: 'resource on unowned land' },
+  inWater: { ru: 'насос ставится в пруд', en: 'the pump stands in a pond' },
 }
 
 /** A machine's state line in its popup (machineState's text keys). */

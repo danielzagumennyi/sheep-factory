@@ -2,16 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, UPGRADE, type BuildingId, type ItemId, DIRS } from '@/game/balance'
+import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, UPGRADE, dimsOf, type BuildingId, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { inCell, jobOf, outCells } from '@/game/grid'
+import { capOf, jobOf } from '@/game/grid'
 import { machineState } from '@/game/systems/machines'
 import { Plant, res, type Building } from '@/game/world'
 import { Icon } from '@/ui/Icon'
-import { GEO, flat, mat, vmat, yawOf } from './kit'
-import { chute, machineModel, type PartSpec } from './machineModels'
+import { GEO, flat, machineYaw, mat, vmat, yawOf } from './kit'
+import { WORKSHOP_SHOW, machineModel, type PartSpec } from './machineModels'
 import { cached, product } from './models'
-import { Batch, useInstanced } from './instancing'
 import { frame } from './frame'
 
 /** The icon a producer shows when nothing is left in its reach. */
@@ -44,44 +43,8 @@ export function Machines() {
   return (
     <group>
       <MachineMeshes list={list} />
-      <Stubs list={list} />
       {list.map((b) => (
         <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.recipe ?? '')} b={b} />
-      ))}
-    </group>
-  )
-}
-
-/**
- * The stubs of belt on every machine: one per output, on the edge of the cell it leaves from, its arrow pointing out;
- * one at the way in, on the back edge, its arrow (a light one) pointing in (the author: «у зданий должен быть
- * конкретный выход и вход»). Three instanced meshes for all machines, laid again only when the machines change.
- */
-function Stubs({ list }: { list: Building[] }) {
-  const stubs = useInstanced(chute(), vmat(), 512, 'machine_stubs')
-  const outs = useInstanced(GEO.chevron(), mat(LOOK.chevron), 512, 'machine_out_arrows', false)
-  const ins = useInstanced(GEO.chevron(), mat(LOOK.inlet), 256, 'machine_in_arrows', false)
-  const b = useMemo(() => ({ stubs: new Batch(stubs), outs: new Batch(outs), ins: new Batch(ins) }), [stubs, outs, ins])
-  useEffect(() => {
-    for (const q of Object.values(b)) q.begin()
-    const stub = (x: number, z: number, d: number, arrows: Batch) => {
-      const yaw = yawOf(d)
-      b.stubs.put(x, 0.13, z, yaw)
-      // the arrow rides on the stub, a little towards its outer end
-      arrows.put(x + Math.cos(yaw) * 0.02, 0.28, z - Math.sin(yaw) * 0.02, yaw)
-    }
-    for (const m of list) {
-      if (m.type === 'splitter' || m.type === 'merger') continue
-      for (const c of outCells(m)) stub(c.sx + 0.5 + DIRS[c.d]![0] * 0.3, c.sy + 0.5 + DIRS[c.d]![1] * 0.3, c.d, b.outs)
-      const i = inCell(m)
-      if (i) stub(i.sx + 0.5 - DIRS[i.d]![0] * 0.3, i.sy + 0.5 - DIRS[i.d]![1] * 0.3, i.d, b.ins)
-    }
-    for (const q of Object.values(b)) q.end()
-  }, [list, b])
-  return (
-    <group>
-      {Object.values(b).map((q) => (
-        <primitive key={q.mesh.name} object={q.mesh} />
       ))}
     </group>
   )
@@ -107,7 +70,7 @@ function MachineView({ b }: { b: Building }) {
   })
   if (type === 'splitter' || type === 'merger') return <BeltPiece b={b} />
   if (!mood) return null
-  const signY = machineModel(type, b.w >= b.h).top + 0.3
+  const signY = machineModel(type).top + 0.3
   return (
     <Html position={[b.x + b.w / 2, signY + 0.25, b.y + b.h / 2]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
       <div className={'bubble bubble--' + mood.split(':')[0]}>{mood.split(':')[1] === '!' ? '!' : <Icon kind={mood.split(':')[1]!} size={16} />}</div>
@@ -123,7 +86,7 @@ const busyOf = (b: Building) => !!b.slot || (PRODUCERS.includes(b.type as Buildi
 
 /** What a workshop shows on its stand: the product of its recipe. */
 const showOf = (b: Building) => onShow(b.recipe ? RECIPES[b.recipe].out : 'cyarn')
-const SHOW: PartSpec = { geo: () => onShow('cyarn'), at: [0, 0.62, 0.42], motion: 'bob', scale: 1.9 }
+const SHOW: PartSpec = { geo: () => onShow('cyarn'), at: WORKSHOP_SHOW, motion: 'bob', scale: 1.9 }
 
 const _m = new Matrix4(),
   _n = new Matrix4(),
@@ -137,7 +100,8 @@ const _m = new Matrix4(),
 /**
  * Every machine's body, moving parts, product on show and level beads: one instanced mesh per model (the body of a
  * kind, each of its parts), posed in one pass each frame — 30 machines of five meshes each cost 300 draw calls with
- * their shadows, this costs about 40. A part moves while its machine works: spins keep their angle per machine.
+ * their shadows, this costs about 40. The whole model turns with its building (machineYaw). A part moves while its
+ * machine works: spins keep their angle per machine; a store's `fill` part stands as full as the store is.
  */
 function MachineMeshes({ list }: { list: Building[] }) {
   const machines = useMemo(() => list.filter((b) => b.type !== 'splitter' && b.type !== 'merger'), [list])
@@ -146,7 +110,7 @@ function MachineMeshes({ list }: { list: Building[] }) {
     const need = new Map<BufferGeometry, number>()
     const want = (g: BufferGeometry) => need.set(g, (need.get(g) ?? 0) + 1)
     for (const b of machines) {
-      const spec = machineModel(b.type as BuildingId, b.w >= b.h)
+      const spec = machineModel(b.type as BuildingId)
       want(spec.body)
       for (const pt of spec.parts) want(pt.geo())
       if (b.type === 'workshop') want(showOf(b))
@@ -192,21 +156,26 @@ function MachineMeshes({ list }: { list: Building[] }) {
       t0 = frame.t,
       dt = frame.dt
     for (const b of machines) {
-      const spec = machineModel(b.type as BuildingId, b.w >= b.h)
+      const spec = machineModel(b.type as BuildingId)
       const cx = b.x + b.w / 2,
         cz = b.y + b.h / 2
       const id = b.type + b.x + ',' + b.y
       if (!born.current.has(id)) born.current.set(id, first.current ? -9 : now)
-      const base = _n.compose(_p.set(cx, 0, cz), _q.identity(), _s.set(1, 1, 1))
+      // the whole model turned the way the building faces
+      _q.setFromEuler(_e.set(0, machineYaw(b.type, b.dir), 0))
+      const base = _n.compose(_p.set(cx, 0, cz), _q, _s.set(1, 1, 1))
       const age = now - born.current.get(id)!
       if (age < DROP.fall + DROP.settle) {
         // down from the height it was held at, then a little squash as it lands
         const f = Math.min(1, age / DROP.fall),
           k = age > DROP.fall ? Math.sin((Math.PI * (age - DROP.fall)) / DROP.settle) : 0
-        base.compose(_p.set(cx, DROP.lift * (1 - f * f), cz), _q.identity(), _s.set(1 + 0.05 * k, 1 - 0.1 * k, 1 + 0.05 * k))
+        base.compose(_p.set(cx, DROP.lift * (1 - f * f), cz), _q, _s.set(1 + 0.05 * k, 1 - 0.1 * k, 1 + 0.05 * k))
       }
       put(spec.body, base)
       const busy = busyOf(b)
+      // what a feeder or trough holds, as a share of what it can
+      const takes = b.type === 'dock' ? undefined : BUILDINGS[b.type].takes
+      const level = takes ? (b.inv[takes] ?? 0) / capOf(b) : 1
       const n = spec.parts.length + (b.type === 'workshop' ? 1 : 0)
       for (let i = 0; i < n; i++) {
         const pt = spec.parts[i] ?? SHOW
@@ -215,9 +184,15 @@ function MachineMeshes({ list }: { list: Building[] }) {
         let rx = 0,
           ry = 0,
           rz = 0,
-          py = 0
+          py = 0,
+          sy = 1
         let a = spins.current.get(k) ?? 0
         switch (pt.motion) {
+          case 'fill':
+            // nothing in it: nothing to show
+            if (level <= 0) continue
+            sy = level
+            break
           case 'spinX':
             if (busy) a += dt * 4
             rx = a
@@ -260,10 +235,12 @@ function MachineMeshes({ list }: { list: Building[] }) {
         spins.current.set(k, a)
         // where the part sits and how it leans at rest, then its own motion, then its size
         _m.compose(_p.set(...pt.at), _q.setFromEuler(_e.set(...(pt.tilt ?? [0, 0, 0]))), _s.set(1, 1, 1))
-        _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.setScalar(pt.scale ?? 1)))
+        _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(pt.scale ?? 1, (pt.scale ?? 1) * sy, pt.scale ?? 1)))
         put(pt === SHOW ? showOf(b) : pt.geo(), _a.premultiply(base))
       }
-      for (let i = 0; i < b.lvl - 1; i++) beads.m.setMatrixAt(beads.m.count++, _m.compose(_p.set(b.x + 0.2 + i * 0.14, 0.18, b.y + b.h - 0.12), _q.identity(), _s.setScalar(0.11)))
+      // the level beads in the model's front right-hand corner, turning with it: clear of its way in and out
+      const [mw, mh] = dimsOf(b.type as BuildingId, 1)
+      for (let i = 0; i < b.lvl - 1; i++) beads.m.setMatrixAt(beads.m.count++, _m.compose(_p.set(mw / 2 - 0.16, 0.18, mh / 2 - 0.12 - i * 0.14), _q.identity(), _s.setScalar(0.11)).premultiply(base))
       if (b.lvl >= UPGRADE.maxLevel) beads.top.setMatrixAt(beads.top.count++, _m.compose(_p.set(cx, spec.top + 0.42, cz), _q.identity(), _s.setScalar(0.07)))
     }
     first.current = false

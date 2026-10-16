@@ -67,14 +67,14 @@ export function fireEvent(w: World, ev: string) {
     }
 }
 
-/** A needed resource on own land is nearly gone and a plot with it is for sale. */
+/** A needed resource on own land is nearly gone (water: there is none at all, since it never runs out) and a plot with it is for sale. */
 export function lowLand(w: World) {
   const def = res(w, Mission).def,
     f = res(w, Field)
   const need = [def.needs.food && 'meadow', def.needs.water && 'water', res(w, Unlocks).unlocked.has('berry') && 'bush'].filter(Boolean) as ('meadow' | 'water' | 'bush')[]
   return need.some((t) => {
     let left = 0
-    for (const [k, r] of f.res) if (r.t === t && owned(w, ...unkey(k))) left += r.left
+    for (const [k, r] of f.res) if (r.t === t && owned(w, ...unkey(k))) left += t === 'water' ? LOW_LAND + 1 : r.left
     if (left > LOW_LAND) return false
     for (let py = 0; py * GRID.plotH < GRID.roadY; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) if (!f.plots.has(key(px, py)) && plotRes(w, px, py)[t]) return true
     return false

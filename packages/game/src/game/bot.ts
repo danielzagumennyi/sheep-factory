@@ -1,9 +1,10 @@
 import { BUILDINGS, GRID, HAND, RECIPES, RECIPE_ORDER, type BuildingId, type Dir, type ItemId, type RecipeId, type ResId, dimsOf } from './balance'
-import { anchorForInput, footprint, freeCell, get, jobOf, outCells, owned, plotAdjacent, plotPrice, plotRes, reachStock, whyNot } from './grid'
+import { anchorForInput, capOf, footprint, freeCell, get, jobOf, outCells, owned, plotAdjacent, plotPrice, plotRes, reachStock, terr, whyNot } from './grid'
 import { buildPath, routeCells, type Cell } from './actions/path'
 import { buyPlot, buySheep, place, remove, setRecipe } from './actions/build'
-import { dropSheep, handClick, pickSheep } from './actions/hand'
+import { dropSheep, feed, handClick, pickSheep } from './actions/hand'
 import { dockX, loadDock, openOrders, sell } from './systems/orders'
+import { storeOf } from './systems/sheep'
 import { FIXED_DT, stepSimulation } from './systems'
 import { Field, Flock, GameState, Market, Mission, Plant, Stock, Unlocks, key, res, stockOf, stockTake, unkey, type Building, type World, blankBuilding } from './world'
 
@@ -105,10 +106,20 @@ export function createBot(w: World) {
   function piles() {
     for (const b of all()) if (b.pile.length) click(b.pileX, b.pileY)
   }
-  /** Keep a little hay and water in stock by hand while there is no producer for it. */
+  /** Hay and water from the stock into every pasture's feeder and trough, as a player does in their popups. */
+  function feedPasture() {
+    for (const p of S().flock.pastures)
+      for (const k of [p.feeder, p.trough]) {
+        const b = k ? S().b.get(k) : null
+        if (b) feed(w, b, BUILDINGS[b.type as BuildingId].takes!, capOf(b))
+      }
+  }
+  /** What a pasture's feeder or trough holds of its good, all pastures together. */
+  const stored = (k: 'hay' | 'water') => S().flock.pastures.reduce((a, p) => a + (storeOf(w, p, k)?.inv[k] ?? 0), 0)
+  /** Keep a little hay and water in the feeder and trough by hand while there is no producer for it. */
   function feedByHand() {
     const needs = S().def.needs
-    if (needs.food && n('hay') < 3) {
+    if (needs.food && stored('hay') + n('hay') < 3) {
       let left = 2
       for (const [k, t] of S().field.terrain) {
         const [x, y] = unkey(k)
@@ -118,7 +129,7 @@ export function createBot(w: World) {
         }
       }
     }
-    if (needs.water && n('water') < 3)
+    if (needs.water && stored('water') + n('water') < 3)
       for (const [k, t] of S().field.terrain) {
         const [x, y] = unkey(k)
         if (t === 'water' && owned(w, x, y)) {
@@ -193,6 +204,24 @@ export function createBot(w: World) {
       }
     return best
   }
+  /** Where a pump may stand: its tower on an owned water cell, its barrel on free land, its output cell free. */
+  function pumpSpot(): [number, number, Dir] | null {
+    for (const [k, t] of S().field.terrain) {
+      if (t !== 'water') continue
+      const [wx, wy] = unkey(k)
+      if (!owned(w, wx, wy)) continue
+      for (const d of [0, 1, 2, 3] as Dir[]) {
+        // the barrel cell lies one step along d from the tower; the footprint's top-left is the lesser of the two
+        const [bx, by] = [wx + (d === 0 ? 1 : d === 2 ? -1 : 0), wy + (d === 1 ? 1 : d === 3 ? -1 : 0)]
+        const x = Math.min(wx, bx),
+          y = Math.min(wy, by)
+        if (whyNot(w, 'pump', x, y, d)) continue
+        const o = outCells(blankBuilding('pump', x, y, d))[0]!
+        if (freeCell(w, o.x, o.y) && terr(w, o.x, o.y) === '') return [x, y, d]
+      }
+    }
+    return null
+  }
   /** The adjacent plot with the most cells of this resource per coin. */
   function buyResPlot(rt: ResId) {
     let best: [number, number, number] | null = null
@@ -207,12 +236,12 @@ export function createBot(w: World) {
     return best ? buyPlot(w, best[0], best[1]) : false
   }
   const emptyT = new Map<string, number>()
-  /** One mower per 4 sheep, one pump per 5; empty producers move; when nothing is in reach, buy land. */
+  /** One mower and one pump per 5 sheep; empty producers move; when nothing is in reach, buy land. */
   function resources(thrift: boolean) {
     const sh = S().flock.sheep.length,
       dyeWanted = openOrders(w).some((q) => ['cyarn', 'sweater', 'valenki', 'dye'].includes(q.kind))
     const plan: [BuildingId, ResId, number][] = [
-      ['mower', 'meadow', S().def.needs.food ? Math.ceil(sh / 4) : 0],
+      ['mower', 'meadow', S().def.needs.food ? Math.ceil(sh / 5) : 0],
       ['pump', 'water', S().def.needs.water ? Math.ceil(sh / 5) : 0],
       ['berry', 'bush', dyeWanted ? 2 : 0],
     ]
@@ -221,7 +250,7 @@ export function createBot(w: World) {
       const want = thrift ? 1 : want0
       for (const m of all().filter((b) => b.type === t)) {
         const k = key(m.x, m.y)
-        if (m.status === 'empty' && reachStock(w, m.x, m.y, rt, m.w, m.h) === 0) {
+        if (t !== 'pump' && m.status === 'empty' && reachStock(w, m.x, m.y, rt, m.w, m.h) === 0) {
           emptyT.set(k, (emptyT.get(k) ?? 0) + 1)
           if ((emptyT.get(k) ?? 0) > 6) {
             remove(w, m.x, m.y)
@@ -230,6 +259,14 @@ export function createBot(w: World) {
         } else emptyT.delete(k)
       }
       if (all().filter((b) => b.type === t).length >= want) continue
+      if (t === 'pump') {
+        // a pump stands in the water and never runs dry: any owned pond will do, else buy one
+        const sp = pumpSpot()
+        if (sp) {
+          if (S().gs.coins >= BUILDINGS[t].cost + 10) place(w, t, sp[0], sp[1], sp[2])
+        } else buyResPlot(rt)
+        continue
+      }
       const sp = bestSpot(t, rt)
       if (sp && sp[3] >= 6) {
         if (S().gs.coins >= BUILDINGS[t].cost + 10) place(w, t, sp[0], sp[1], sp[2])
@@ -260,7 +297,7 @@ export function createBot(w: World) {
     if (!openOrders(w).length) return
     const chain = () => [...new Set(openOrders(w).flatMap((q) => chainFor(q.kind)))]
     const missing = chain().some((t) => t !== 'shearer' && has(typeOf(t)) && !BUILDINGS[typeOf(t)].gives && !built(t))
-    const urgent = n('water') < 2 || n('hay') < 2
+    const urgent = stored('water') + n('water') < 2 || stored('hay') + n('hay') < 2
     resources(missing && !urgent)
     // one chain at a time: the cheapest order first, deepest machine first
     const cost = (kind: ItemId) => chainFor(kind).reduce((a, t) => a + BUILDINGS[typeOf(t)].cost, 0)
@@ -322,6 +359,7 @@ export function createBot(w: World) {
     returnWaiting()
     piles()
     feedByHand()
+    feedPasture()
     if (s.def.terrain.bush) {
       const o = openOrders(w)[0]
       if (o && ['dye', 'cyarn', 'sweater', 'valenki'].includes(o.kind)) pickDye()

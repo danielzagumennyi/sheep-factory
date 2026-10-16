@@ -1,5 +1,5 @@
 import { Box3, DirectionalLight, HemisphereLight, Mesh, OrthographicCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderTarget, type BufferGeometry, type WebGLRenderer } from 'three'
-import { LIGHT, LOOK, ROOF, type BuildingId, type ItemId } from '@/game/balance'
+import { BUILDINGS, LIGHT, LOOK, ROOF, type BuildingId, type ItemId } from '@/game/balance'
 import { RENDERED_ICONS, type RenderedIcon } from '@/ui/iconKinds'
 import { model, vmat } from './kit'
 import { machineBody } from './machineModels'
@@ -58,7 +58,11 @@ const bush = () => model([bushBody().clone(), ...[[0.12, 0.38, 0.2], [-0.16, 0.3
 
 const MACHINES: BuildingId[] = ['shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'berry', 'workshop']
 function geometryOf(kind: RenderedIcon): BufferGeometry {
-  if ((MACHINES as string[]).includes(kind)) return machineBody(kind as BuildingId, true)
+  if ((MACHINES as string[]).includes(kind)) {
+    // a 2×1 lies along z; for its icon it is turned to lie across the frame, machine on the left
+    const g = machineBody(kind as BuildingId)
+    return BUILDINGS[kind as BuildingId].size?.[0] === 2 && BUILDINGS[kind as BuildingId].size?.[1] === 1 ? g.clone().rotateY(Math.PI / 2) : g
+  }
   switch (kind) {
     case 'belt':
       return belt()

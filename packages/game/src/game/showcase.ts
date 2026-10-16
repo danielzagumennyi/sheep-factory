@@ -8,8 +8,9 @@ import { Field, GameState, Unlocks, res, type World } from './world'
 /**
  * A ready-made factory on mission 7's map for screenshots and concept art (dev console: `__game.showcase()`): the
  * sheep loop with its shearer, wool → carder → spinner → workshop (coloured yarn, the dye from a berry picker joining
- * through a merger) → over the bridge to the school's dock, a mower and a pump filling two barns; a felter and a second
- * workshop (sweaters) stand idle south of the river. Then it runs a while so goods are on the belts.
+ * through a merger) → over the bridge to the school's dock, a mower feeding the pasture's hay rack and a pump in the
+ * river filling its trough; a barn, a felter and a second workshop (sweaters) stand idle. Then it runs a while so goods
+ * are on the belts.
  */
 export function buildShowcase(w: World, warmup = 90) {
   const un = res(w, Unlocks),
@@ -55,13 +56,13 @@ export function buildShowcase(w: World, warmup = 90) {
   place(w, 'belt', 19, 9, 1)
   // coloured yarn over the bridge to the school's dock
   buildPath(w, { x: 22, y: 10 }, { x: 18, y: 15 })
-  // hay and water into two barns, so the sheep's stock fills: the mower pours down into one, the pump by the river
-  // into the other
+  // hay into the pasture's feeder on its west side: the mower by the home meadow gives south, a belt turns east into
+  // the rack; water into its trough on the south side straight from a pump standing in the river below it
+  place(w, 'mower', 8, 7, 1)
+  place(w, 'belt', 8, 9, 0)
+  place(w, 'pump', 12, 11, 3)
+  // the rest of the machines, standing idle, so one frame shows them all
   place(w, 'barn', 8, 10, 1)
-  place(w, 'mower', 8, 8, 1)
-  place(w, 'barn', 10, 10, 2)
-  place(w, 'pump', 12, 10, 2)
-  // the rest of the machines, standing idle south of the river, so one frame shows them all
   place(w, 'felter', 12, 13, 2)
   place(w, 'workshop', 16, 13, 3)
   const ws2 = get(w, 16, 13)
