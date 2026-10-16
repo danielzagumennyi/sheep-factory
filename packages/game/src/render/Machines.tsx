@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, UPGRADE, type BuildingId, type ItemId } from '@/game/balance'
+import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, UPGRADE, dimsOf, type BuildingId, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { capOf, jobOf } from '@/game/grid'
 import { machineState } from '@/game/systems/machines'
 import { Plant, res, type Building } from '@/game/world'
 import { Icon } from '@/ui/Icon'
 import { GEO, flat, machineYaw, mat, vmat, yawOf } from './kit'
-import { machineModel, type PartSpec } from './machineModels'
+import { WORKSHOP_SHOW, machineModel, type PartSpec } from './machineModels'
 import { cached, product } from './models'
 import { frame } from './frame'
 
@@ -86,7 +86,7 @@ const busyOf = (b: Building) => !!b.slot || (PRODUCERS.includes(b.type as Buildi
 
 /** What a workshop shows on its stand: the product of its recipe. */
 const showOf = (b: Building) => onShow(b.recipe ? RECIPES[b.recipe].out : 'cyarn')
-const SHOW: PartSpec = { geo: () => onShow('cyarn'), at: [0, 0.62, 0.42], motion: 'bob', scale: 1.9 }
+const SHOW: PartSpec = { geo: () => onShow('cyarn'), at: WORKSHOP_SHOW, motion: 'bob', scale: 1.9 }
 
 const _m = new Matrix4(),
   _n = new Matrix4(),
@@ -238,7 +238,9 @@ function MachineMeshes({ list }: { list: Building[] }) {
         _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(pt.scale ?? 1, (pt.scale ?? 1) * sy, pt.scale ?? 1)))
         put(pt === SHOW ? showOf(b) : pt.geo(), _a.premultiply(base))
       }
-      for (let i = 0; i < b.lvl - 1; i++) beads.m.setMatrixAt(beads.m.count++, _m.compose(_p.set(b.x + 0.2 + i * 0.14, 0.18, b.y + b.h - 0.12), _q.identity(), _s.setScalar(0.11)))
+      // the level beads in the model's front right-hand corner, turning with it: clear of its way in and out
+      const [mw, mh] = dimsOf(b.type as BuildingId, 1)
+      for (let i = 0; i < b.lvl - 1; i++) beads.m.setMatrixAt(beads.m.count++, _m.compose(_p.set(mw / 2 - 0.16, 0.18, mh / 2 - 0.12 - i * 0.14), _q.identity(), _s.setScalar(0.11)).premultiply(base))
       if (b.lvl >= UPGRADE.maxLevel) beads.top.setMatrixAt(beads.top.count++, _m.compose(_p.set(cx, spec.top + 0.42, cz), _q.identity(), _s.setScalar(0.07)))
     }
     first.current = false
