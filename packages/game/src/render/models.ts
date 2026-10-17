@@ -68,7 +68,7 @@ export function shade(hex: string, k: number) {
 /** A workshop's product, shown big on its stand so the recipe reads from afar (and, smaller, as a good). */
 export const product = (kind: ItemId) =>
   cached('product' + kind, () => {
-    const c: string = { sweater: LOOK.sweater, valenki: LOOK.valenki, cyarn: LOOK.cyarn, yarn: LOOK.yarn }[kind as string] ?? '#ffffff'
+    const c: string = { sweater: LOOK.sweater, valenki: LOOK.valenki, pyarn: LOOK.pyarn, yarn: LOOK.yarn }[kind as string] ?? '#ffffff'
     switch (kind) {
       case 'sweater':
         return model([
@@ -267,6 +267,20 @@ export const sheepLegs = () =>
     return model(p)
   })
 
+/** A whole sheep in full fleece, standing still and facing a little towards the camera: its icon, and a sheep in hand. */
+export const sheepModel = () =>
+  cached('sheepWhole', () => {
+    const head = sheepHead().clone()
+    head.scale(0.78, 0.78, 0.78)
+    head.translate(0.34, 0.45, 0)
+    const body = fleece().clone()
+    body.scale(1.12, 1.12, 1.12)
+    body.translate(-0.02, 0.35, 0)
+    const g = model([sheepLegs().clone(), body, head])
+    g.rotateY(-0.5)
+    return g
+  })
+
 // ---------------------------------------------------------------- decor (scattered on free land)
 
 /** Three five-petal flowers of one colour on stems, with broad leaves. */
@@ -373,7 +387,7 @@ export const marketBody = () =>
     // goods on the counter
     const goods: [string, number][] = [
       [LOOK.hay, -0.56],
-      [LOOK.cyarn, -0.2],
+      [LOOK.pyarn, -0.2],
       [LOOK.wool, 0.16],
       [LOOK.sweater, 0.52],
     ]
@@ -395,18 +409,24 @@ export const good = (kind: ItemId) =>
   cached('good' + kind, () => {
     switch (kind) {
       case 'wool':
-        return model([put(ball(0.12), LOOK.wool, [0, 0.11, 0]), put(ball(0.09), LOOK.wool, [0.1, 0.09, 0.04]), put(ball(0.09), LOOK.wool, [-0.09, 0.09, -0.03]), put(ball(0.08), LOOK.wool, [0.01, 0.18, 0.02])])
-      case 'roving': {
-        // a fat white rope of combed wool, coiled, with twist marks
-        const p: BufferGeometry[] = [put(new TorusGeometry(0.11, 0.075, 10, 20), LOOK.roving, [0, 0.075, 0], [Math.PI / 2, 0, 0])]
+      case 'pwool': {
+        // a fleece: white, or pink off a dyed sheep
+        const c = kind === 'pwool' ? LOOK.pwool : LOOK.wool
+        return model([put(ball(0.12), c, [0, 0.11, 0]), put(ball(0.09), c, [0.1, 0.09, 0.04]), put(ball(0.09), c, [-0.09, 0.09, -0.03]), put(ball(0.08), c, [0.01, 0.18, 0.02])])
+      }
+      case 'roving':
+      case 'proving': {
+        // a fat rope of combed wool, coiled, with twist marks
+        const c = kind === 'proving' ? LOOK.proving : LOOK.roving
+        const p: BufferGeometry[] = [put(new TorusGeometry(0.11, 0.075, 10, 20), c, [0, 0.075, 0], [Math.PI / 2, 0, 0])]
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2
-          p.push(put(rb(0.03, 0.16, 0.05, 0.012), shade(LOOK.roving, 0.84), [Math.cos(a) * 0.11, 0.08, Math.sin(a) * 0.11], [0, -a, 0.6]))
+          p.push(put(rb(0.03, 0.16, 0.05, 0.012), shade(c, 0.84), [Math.cos(a) * 0.11, 0.08, Math.sin(a) * 0.11], [0, -a, 0.6]))
         }
         return model(p)
       }
       case 'yarn':
-      case 'cyarn': {
+      case 'pyarn': {
         const g = product(kind).clone()
         g.scale(0.72, 0.72, 0.72)
         g.translate(0, 0.125, 0)
@@ -432,17 +452,6 @@ export const good = (kind: ItemId) =>
         return model([put(cyl(0.1, 0.16, 16, 0.085), LOOK.dye, [0, 0.08, 0]), put(cyl(0.07, 0.03, 14), shade(LOOK.dye, 1.4), [0, 0.165, 0]), put(cyl(0.045, 0.05, 10), '#c9935a', [0, 0.19, 0])])
       case 'hay':
         return model([put(rb(0.3, 0.2, 0.22, 0.05), LOOK.hay, [0, 0.1, 0]), put(rb(0.31, 0.21, 0.03, 0.012), WOOD, [0, 0.1, -0.06]), put(rb(0.31, 0.21, 0.03, 0.012), WOOD, [0, 0.1, 0.06])])
-      case 'water':
-        // a wooden bucket of water (the author: «капли воды замени на ведра»): two dark hoops, a metal handle
-        return model([
-          put(cyl(0.085, 0.16, 16, 0.11), '#c98f55', [0, 0.08, 0]),
-          put(cyl(0.09, 0.02, 16, 0.093), '#6b5444', [0, 0.04, 0]),
-          put(cyl(0.101, 0.02, 16, 0.104), '#6b5444', [0, 0.125, 0]),
-          // brimful, so the water shows from the side too
-          put(cyl(0.104, 0.03, 16, 0.108), LOOK.waterItem, [0, 0.158, 0]),
-          put(ball(0.02), '#ffffff', [-0.04, 0.175, 0.03]),
-          put(new TorusGeometry(0.105, 0.011, 6, 14, Math.PI), '#9aa3ad', [0, 0.155, 0]),
-        ])
       default:
         return model([put(ball(0.1), '#ffffff', [0, 0.1, 0])])
     }

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type Group } from 'three'
-import { HAND } from '@/game/balance'
+import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type Group } from 'three'
+import { HAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { Flock, res, type SheepT } from '@/game/world'
+import { Flock, isOn, res, type SheepT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
 import { vmat } from './kit'
 import { fleece, sheepHead, sheepLegs, shorn } from './models'
@@ -19,10 +19,13 @@ const _m = new Matrix4(),
   _q = new Quaternion(),
   _s = new Vector3(),
   _e = new Euler()
+/** A fleece as it grows: white, or pink after the dyer (an instance tint over the white). */
+const WHITE = new Color('#ffffff'),
+  PINK = new Color(LOOK.pinkFleece)
 
 /**
  * The flock: cube sheep with big eyes, like the animals of the reference dioramas. The fleece grows from a pink shorn
- * body to a big white block; a bubble shows what a sheep needs. All of them are four instanced meshes — legs, fleece,
+ * body to a big white block — a pink one after the dyer; a bubble shows what a sheep needs. All of them are four instanced meshes — legs, fleece,
  * shorn body, head — posed in one pass (a sheep of four meshes cost eight draw calls with its shadow: 48 sheep, 380);
  * each sheep's pose is also kept in `sheepPoses`, which the pointer and the hover line read.
  */
@@ -39,7 +42,10 @@ export function Flock3D() {
       m.frustumCulled = false
       return m
     }
-    return { legs: make(sheepLegs(), 'sheep_legs'), fleece: make(fleece(), 'sheep_fleece'), skin: make(shorn(), 'sheep_shorn'), head: make(sheepHead(), 'sheep_heads') }
+    const out = { legs: make(sheepLegs(), 'sheep_legs'), fleece: make(fleece(), 'sheep_fleece'), skin: make(shorn(), 'sheep_shorn'), head: make(sheepHead(), 'sheep_heads') }
+    // the fleece's tint from the start, so its shader is built with it
+    for (let i = 0; i < CAP; i++) out.fleece.setColorAt(i, WHITE)
+    return out
   }, [])
   useEffect(() => () => Object.values(meshes).forEach((m) => m.dispose()), [meshes])
   useFrame(() => {
@@ -58,7 +64,7 @@ export function Flock3D() {
         continue
       }
       seen.add(s.id)
-      const hop = s.state === 'pasture' && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
+      const hop = (s.state === 'pasture' || s.state === 'transit') && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
       // the whole sheep: where it stands, which way it faces, a waddle while it walks
       const base = poseOf(s.id).base
       base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : 0) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
@@ -71,6 +77,7 @@ export function Flock3D() {
       if (pose.woolly) {
         const k = 0.62 + 0.5 * w
         pose.fleece.multiplyMatrices(base, _m.compose(_p.set(-0.02, 0.15 + 0.18 * k, 0), _q.identity(), _s.set(k, k, k)))
+        meshes.fleece.setColorAt(nf, s.pink ? PINK : WHITE)
         meshes.fleece.setMatrixAt(nf++, pose.fleece)
       } else {
         pose.fleece.multiplyMatrices(base, _m.makeTranslation(-0.02, 0.27, 0))
@@ -87,15 +94,17 @@ export function Flock3D() {
     meshes.skin.count = ns
     meshes.head.count = nh
     for (const m of Object.values(meshes)) m.instanceMatrix.needsUpdate = true
+    if (meshes.fleece.instanceColor) meshes.fleece.instanceColor.needsUpdate = true
   })
   return (
     <group>
       {Object.values(meshes).map((m) => (
         <primitive key={m.name} object={m} />
       ))}
-      {ids.map((s) => (
-        <SheepBubble key={s.id} s={s} />
-      ))}
+      {isOn(world, 'tags') &&
+        ids.map((s) => (
+          <SheepBubble key={s.id} s={s} />
+        ))}
     </group>
   )
 }

@@ -1,408 +1,276 @@
-import { BUILDINGS, GRID, HAND, RECIPES, RECIPE_ORDER, type BuildingId, type Dir, type ItemId, type RecipeId, type ResId, dimsOf } from './balance'
-import { anchorForInput, capOf, footprint, freeCell, get, jobOf, outCells, owned, plotAdjacent, plotPrice, plotRes, reachStock, terr, whyNot } from './grid'
-import { buildPath, routeCells, type Cell } from './actions/path'
-import { buyPlot, buySheep, place, remove, setRecipe } from './actions/build'
-import { dropSheep, feed, handClick, pickSheep } from './actions/hand'
-import { dockX, loadDock, openOrders, sell } from './systems/orders'
-import { storeOf } from './systems/sheep'
+import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type Dir, type ItemId } from './balance'
+import { get, isBeltLike, owned, plotAdjacent, residents, reachCells, sowable, targetOk } from './grid'
+import { buyPlot, buySheep, place, rotate } from './actions/build'
+import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from './actions/hand'
+import { PLAN, applyStep, finishJob, landReady, pieceCost, pieces, plotsToBuy } from './plan'
 import { FIXED_DT, stepSimulation } from './systems'
-import { Field, Flock, GameState, Market, Mission, Plant, Stock, Unlocks, key, res, stockOf, stockTake, unkey, type Building, type World, blankBuilding } from './world'
+import { hungry, loopHasFeeder } from './systems/sheep'
+import { buy, loadDock, openAsks, sell } from './systems/village'
+import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, stockOf, toStock, unkey, type World } from './world'
 
 /**
- * The balance bot (TDD 5): plays like a player with quick hands — clicks, buildings, belt lines — so a mission's par
- * time and economy can be checked without a person. Missions 1–2 run on belts; 3–7 build each chain's machines and
- * carry goods between their piles through the stock (a weak player at logistics, a strong one at clicking). It is a
- * measure, not a model of the best play: par times are set from its runs × ~1.3.
+ * The balance bot (TDD 5): plays the long game like a player with quick hands. It builds the farm of game/plan.ts job
+ * by job, as levels open the buildings and coins allow, buys sheep for every pen with room, and does with the hand
+ * what the hand may do — shear and feed sheep with no station for it, gather, pick up piles and dead ends, load the
+ * docks, sell what nothing asks for, sow when the meadows run low. Machines get their goods only by belt. It is a
+ * measure, not a model of the best play: `pnpm simulate` prints the time of every level.
  */
 export function createBot(w: World) {
-  const S = () => ({ gs: res(w, GameState), b: res(w, Plant).b, stock: res(w, Stock).n, flock: res(w, Flock), field: res(w, Field), un: res(w, Unlocks), def: res(w, Mission).def })
-  const n = (k: ItemId) => stockOf(w, k)
-  const click = (x: number, y: number) => handClick(w, x + 0.5, y + 0.5)
-  const has = (t: BuildingId) => res(w, Unlocks).unlocked.has(t)
-  const all = () => [...res(w, Plant).b.values()]
-  const lines: Record<string, { to: string; cells: Cell[] }> = {}
+  const gs = () => res(w, GameState)
+  const un = () => res(w, Unlocks)
+  const has = (id: BuildingId | 'valenki') => (id === 'valenki' ? un().recipes.has('valenki') : un().unlocked.has(id))
+  const done = new Set<string>()
 
-  function line(name: string, a: Cell, b: Cell) {
-    if (lines[name] && lines[name].to === key(b.x, b.y)) return true
-    if (lines[name]) for (const c of lines[name].cells) if (get(w, c.x, c.y)?.type === 'belt') remove(w, c.x, c.y)
-    const cells = routeCells(w, a, b)
-    if (!cells) return false
-    if (S().gs.coins < cells.length * 2) {
-      delete lines[name]
-      return false
-    }
-    buildPath(w, a, b)
-    lines[name] = { to: key(b.x, b.y), cells }
-    return true
-  }
-  const placeAt = (t: BuildingId, x: number, y: number, dir: Dir) => {
-    const q = get(w, x, y)
-    if (q && q.type === t) return true
-    if (q && q.type === 'belt' && !BUILDINGS[t].onBelt) remove(w, x, y)
-    return place(w, t, x, y, dir)
-  }
-
-  /** The machines an order's good needs, deepest last: building ids, or `workshop:<recipe>` for a workshop job. */
-  function chainFor(kind: ItemId): string[] {
-    const need: string[] = []
-    const add = (k: ItemId) => {
-      const r = RECIPE_ORDER.find((q) => RECIPES[q].out === k)
-      if (r) {
-        if (!need.includes('workshop:' + r)) {
-          need.push('workshop:' + r)
-          for (const q of Object.keys(RECIPES[r].inp) as ItemId[]) add(q)
-        }
-        return
-      }
-      for (const [t, b] of Object.entries(BUILDINGS) as [BuildingId, (typeof BUILDINGS)[BuildingId]][])
-        if ((b.out === k || b.gives === k) && t !== 'mower' && t !== 'pump' && !need.includes(t)) {
-          need.push(t)
-          if (b.inp) for (const q of Object.keys(b.inp) as ItemId[]) add(q)
-        }
-    }
-    add(kind)
-    return need
-  }
-  const typeOf = (token: string) => token.split(':')[0] as BuildingId
-  /** Is this chain step built: the building, or a workshop set to that recipe? */
-  const built = (token: string) => {
-    const [t, r] = token.split(':')
-    return all().some((b) => b.type === t && (!r || b.recipe === r))
-  }
-  const inputsOf = (b: Building) => jobOf(b)?.inp
-
-  // ---------------------------------------------------------------- hands
-  function shearByHand() {
-    const s = S().flock.sheep.find((q) => q.state === 'pasture' && q.wool >= 1)
-    if (s) for (let i = 0; i < HAND.shearClicks; i++) handClick(w, s.px, s.py)
-  }
-  /** Load every open order's good there is in stock; sell what nothing here needs. */
-  function deliver() {
-    const os = openOrders(w)
-    for (const o of os) {
-      const d = all().find((b) => b.type === 'dock' && b.client === o.dock)
-      if (d && n(o.kind)) loadDock(w, d, n(o.kind))
-    }
-    if (!S().def.docks.some(([c]) => c === 'market')) return
-    const want = new Set<string>(os.flatMap((o) => [...chainFor(o.kind).flatMap((t) => Object.keys((t.includes(':') ? RECIPES[t.split(':')[1] as RecipeId].inp : BUILDINGS[t as BuildingId].inp) ?? {})), o.kind]))
-    for (const k of Object.keys(S().stock) as ItemId[]) if (!want.has(k) && k !== 'hay' && k !== 'water' && n(k) >= 6) sell(w, k, n(k))
-  }
-  function pickDye() {
-    if (all().some((b) => b.type === 'berry')) return
-    const dyer = all().find((b) => b.recipe === 'cyarn'),
-      o = openOrders(w).some((q) => q.kind === 'dye')
-    if (n('dye') && !o) return
-    if (!o && (!dyer || (dyer.inv.dye ?? 0) >= 2)) return
-    let left = 2
-    for (const [k, t] of S().field.terrain) {
-      const [x, y] = unkey(k)
-      if (t === 'bush' && owned(w, x, y) && left > 0) {
-        click(x, y)
-        left--
-      }
-    }
-  }
-  /** Every machine's pile into the stock: there is no limit. */
-  function piles() {
-    for (const b of all()) if (b.pile.length) click(b.pileX, b.pileY)
-  }
-  /** Hay and water from the stock into every pasture's feeder and trough, as a player does in their popups. */
-  function feedPasture() {
-    for (const p of S().flock.pastures)
-      for (const k of [p.feeder, p.trough]) {
-        const b = k ? S().b.get(k) : null
-        if (b) feed(w, b, BUILDINGS[b.type as BuildingId].takes!, capOf(b))
-      }
-  }
-  /** What a pasture's feeder or trough holds of its good, all pastures together. */
-  const stored = (k: 'hay' | 'water') => S().flock.pastures.reduce((a, p) => a + (storeOf(w, p, k)?.inv[k] ?? 0), 0)
-  /** Keep a little hay and water in the feeder and trough by hand while there is no producer for it. */
-  function feedByHand() {
-    const needs = S().def.needs
-    if (needs.food && stored('hay') + n('hay') < 3) {
-      let left = 2
-      for (const [k, t] of S().field.terrain) {
-        const [x, y] = unkey(k)
-        if (t === 'meadow' && owned(w, x, y) && left > 0) {
-          click(x, y)
-          left--
-        }
-      }
-    }
-    if (needs.water && stored('water') + n('water') < 3)
-      for (const [k, t] of S().field.terrain) {
-        const [x, y] = unkey(k)
-        if (t === 'water' && owned(w, x, y)) {
-          click(x, y)
-          click(x, y)
-          break
-        }
-      }
-  }
-  function returnWaiting() {
-    for (const s of S().flock.sheep)
-      if (s.state === 'waiting') {
-        pickSheep(w, s)
-        dropSheep(w, s, 11.5, 8.5)
-      }
-  }
-  function maybeBuySheep() {
-    const p = S().flock.pastures[0]!
-    if (S().gs.coins > 120 && S().flock.sheep.length < p.cap) buySheep(w, p)
-  }
-
-  // ---------------------------------------------------------------- plans
-  /** The sheep loop from the pasture exit: shearer, up and back in through the pasture's way in. */
-  function loop() {
-    const sh = shearer()
-    if (!sh || lines.loop) return
-    const p = S().flock.pastures[0]!,
-      ix = p.entry.x
-    const out = outCells(sh).find((c) => c.d === sh.dir)!
-    // up from the sheep output (or one cell further on, round a tree), along a row above the pasture, down into its way in
-    for (const step of [0, 1])
-      for (const top of [p.y - 1, p.y - 2]) {
-        const cx = out.x + step
-        const L: [number, number, Dir][] = step ? [[out.x, out.y, 0]] : []
-        for (let y = out.y; y > top; y--) L.push([cx, y, 3])
-        for (let x = cx; x > ix; x--) L.push([x, top, 2])
-        L.push([ix, top, 1])
-        for (let y = top + 1; y < p.y; y++) L.push([ix, y, 1])
-        if (!L.every(([x, y]) => get(w, x, y)?.type === 'belt' || freeCell(w, x, y))) continue
-        for (const [x, y, d] of L) if (!get(w, x, y)) place(w, 'belt', x, y, d)
-        lines.loop = { to: 'fixed', cells: L.map(([x, y]) => ({ x, y })) }
-        return
-      }
-  }
-  /** The shearer on the pasture's exit, its way in: placed if it isn't there yet. */
-  function shearer() {
-    const p = S().flock.pastures[0]!,
-      ex = p.exit
-    const q = get(w, ex.x, ex.y)
-    if (q?.type === 'shearer') return q
-    const [ax, ay] = anchorForInput('shearer', p.dir, ex.x, ex.y)
-    placeAt('shearer', ax, ay, p.dir)
-    return get(w, ex.x, ex.y)?.type === 'shearer' ? get(w, ex.x, ex.y) : null
-  }
-  const wool = (to: Cell) => {
-    const sh = shearer()
-    const c = sh && outCells(sh).find((o) => o.d !== sh.dir)
-    return c ? line('wool', { x: c.x, y: c.y }, to) : false
-  }
-
-  function bestSpot(t: BuildingId, rt: ResId) {
-    let best: [number, number, Dir, number] | null = null
-    for (let y = 0; y < GRID.roadY; y++)
-      for (let x = 0; x < GRID.cols; x++) {
-        for (const d of [0, 1, 2, 3] as Dir[]) {
-          if (whyNot(w, t, x, y, d)) continue
-          const o = outCells(blankBuilding(t, x, y, d))[0]!
-          if (!freeCell(w, o.x, o.y)) continue
-          const sc = reachStock(w, x, y, rt, ...dimsOf(t, d))
-          if (!best || sc > best[3]) best = [x, y, d, sc]
-        }
-      }
-    return best
-  }
-  /** Where a pump may stand: its tower on an owned water cell, its barrel on free land, its output cell free. */
-  function pumpSpot(): [number, number, Dir] | null {
-    for (const [k, t] of S().field.terrain) {
-      if (t !== 'water') continue
-      const [wx, wy] = unkey(k)
-      if (!owned(w, wx, wy)) continue
-      for (const d of [0, 1, 2, 3] as Dir[]) {
-        // the barrel cell lies one step along d from the tower; the footprint's top-left is the lesser of the two
-        const [bx, by] = [wx + (d === 0 ? 1 : d === 2 ? -1 : 0), wy + (d === 1 ? 1 : d === 3 ? -1 : 0)]
-        const x = Math.min(wx, bx),
-          y = Math.min(wy, by)
-        if (whyNot(w, 'pump', x, y, d)) continue
-        const o = outCells(blankBuilding('pump', x, y, d))[0]!
-        if (freeCell(w, o.x, o.y) && terr(w, o.x, o.y) === '') return [x, y, d]
-      }
-    }
+  // ---------------------------------------------------------------- building the plan
+  /** The next job of the plan open to build: its buildings open, its land risen. Null when there is none. */
+  function next() {
+    for (const j of PLAN) if (!done.has(j.id) && j.needs.every(has) && landReady(w, j)) return j
     return null
   }
-  /** The adjacent plot with the most cells of this resource per coin. */
-  function buyResPlot(rt: ResId) {
-    let best: [number, number, number] | null = null
-    for (let py = 0; py < 3; py++)
-      for (let px = 0; px < 4; px++) {
-        if (S().field.plots.has(key(px, py))) continue
-        const n = plotRes(w, px, py)[rt] ?? 0,
-          price = plotPrice(w, px, py)
-        if (!plotAdjacent(w, px, py) || !n || S().gs.coins < price) continue
-        if (!best || n / price > best[2]) best = [px, py, n / price]
-      }
-    return best ? buyPlot(w, best[0], best[1]) : false
-  }
-  const emptyT = new Map<string, number>()
-  /** One mower and one pump per 5 sheep; empty producers move; when nothing is in reach, buy land. */
-  function resources(thrift: boolean) {
-    const sh = S().flock.sheep.length,
-      dyeWanted = openOrders(w).some((q) => ['cyarn', 'sweater', 'valenki', 'dye'].includes(q.kind))
-    const plan: [BuildingId, ResId, number][] = [
-      ['mower', 'meadow', S().def.needs.food ? Math.ceil(sh / 5) : 0],
-      ['pump', 'water', S().def.needs.water ? Math.ceil(sh / 5) : 0],
-      ['berry', 'bush', dyeWanted ? 2 : 0],
-    ]
-    for (const [t, rt, want0] of plan) {
-      if (!has(t) || !want0) continue
-      const want = thrift ? 1 : want0
-      for (const m of all().filter((b) => b.type === t)) {
-        const k = key(m.x, m.y)
-        if (t !== 'pump' && m.status === 'empty' && reachStock(w, m.x, m.y, rt, m.w, m.h) === 0) {
-          emptyT.set(k, (emptyT.get(k) ?? 0) + 1)
-          if ((emptyT.get(k) ?? 0) > 6) {
-            remove(w, m.x, m.y)
-            emptyT.delete(k)
-          }
-        } else emptyT.delete(k)
-      }
-      if (all().filter((b) => b.type === t).length >= want) continue
-      if (t === 'pump') {
-        // a pump stands in the water and never runs dry: any owned pond will do, else buy one
-        const sp = pumpSpot()
-        if (sp) {
-          if (S().gs.coins >= BUILDINGS[t].cost + 10) place(w, t, sp[0], sp[1], sp[2])
-        } else buyResPlot(rt)
+  const progress = new Map<string, number>()
+  /**
+   * Build the next job the way a player does, a piece at a time as the coins come: its plots first, each next to land
+   * already owned, then its pieces in order (plan.ts). A few pieces a turn, like quick hands. Returns how many
+   * purchases it made.
+   */
+  function build() {
+    let n = 0
+    for (let turn = 0; turn < 6; turn++) {
+      const j = next()
+      if (!j) break
+      const plot = plotsToBuy(w, j).find(([px, py]) => plotAdjacent(w, px, py))
+      if (plot) {
+        if (!buyPlot(w, ...plot)) break
+        n++
         continue
       }
-      const sp = bestSpot(t, rt)
-      if (sp && sp[3] >= 6) {
-        if (S().gs.coins >= BUILDINGS[t].cost + 10) place(w, t, sp[0], sp[1], sp[2])
-      } else buyResPlot(rt)
+      const ps = pieces(j)
+      const i = progress.get(j.id) ?? 0
+      const p = ps[i]!
+      const c = pieceCost(w, p)
+      if (gs().coins < c) break
+      if (!p.every((s) => applyStep(w, s))) break
+      if (c >= 10) n++
+      if (i + 1 < ps.length) progress.set(j.id, i + 1)
+      else {
+        finishJob(w, j)
+        done.add(j.id)
+      }
+    }
+    return n
+  }
+
+  // ---------------------------------------------------------------- the hand
+  const asked = () => new Set(openAsks(w).map((a) => a.kind))
+  function gatherOwn(t: 'meadow' | 'bush', n: number) {
+    let left = n
+    for (const [k, r] of res(w, Field).res) {
+      if (left <= 0) break
+      if (r.t !== t) continue
+      const [x, y] = unkey(k)
+      if (!owned(w, x, y)) continue
+      while (left > 0 && res(w, Field).res.has(k) && gather(w, x, y)) left--
+    }
+    return n - left
+  }
+  function hand() {
+    const flock = res(w, Flock)
+    // shear by hand only a pen with nothing on its way out yet (no loop); feed where no feeder is on its loop
+    for (const s of flock.sheep) {
+      const p = flock.pastures.find((q) => q.id === s.home)!
+      // a sheep waiting beside a shearer with no belt yet: taken home by hand
+      if (s.state === 'waiting') {
+        pickSheep(w, s)
+        dropSheep(w, s, p.x + 1.5, p.y + 1.5)
+      }
+      if (s.state !== 'pasture') continue
+      const ex = get(w, p.exit.x, p.exit.y)
+      if (s.wool >= 1 && !ex) for (let i = s.clicks; i < 3; i++) shearClick(w, s)
+      if (hungry(s) && !loopHasFeeder(w, p)) {
+        if (!stockOf(w, 'hay') && !gatherOwn('meadow', 4) && gs().coins > 20) buy(w, 'hay', 6)
+        feedSheep(w, s)
+      }
+    }
+    // piles, and goods at the end of a belt that goes nowhere
+    for (const b of res(w, Plant).b.values()) {
+      if (b.pile.length) takePile(w, b)
+      if (isBeltLike(b) && b.item && !b.item.sheep && b.item.p >= 1 && b.type === 'belt' && !targetOk(w, b.x, b.y, b.dir)) {
+        toStock(w, b.item)
+        b.item = null
+      }
+    }
+    // docks: every open ask gets what the stock has of its good
+    for (const a of openAsks(w)) {
+      if (!stockOf(w, a.kind)) continue
+      const d = [...res(w, Plant).b.values()].find((q) => q.type === 'dock' && q.client === a.client)
+      if (d) loadDock(w, d, stockOf(w, a.kind))
+    }
+    // dye for a dye ask from the bushes; a good an ask wants and no line brings, picked off a belt by hand
+    if (asked().has('dye') && stockOf(w, 'dye') < 4) gatherOwn('bush', 4)
+    for (const a of openAsks(w)) {
+      let n = 0
+      for (const b of res(w, Plant).b.values()) {
+        if (n >= 4) break
+        if (b.type === 'belt' && b.item && b.item.kind === a.kind) {
+          toStock(w, b.item)
+          b.item = null
+          n++
+        }
+      }
+    }
+    // what nothing asks for goes to the market (hay and dye are kept for feeding and sowing)
+    const want = asked()
+    for (const k of Object.keys(ITEMS) as ItemId[]) {
+      const keep = k === 'hay' ? 30 : k === 'dye' ? 20 : 0
+      if (!want.has(k) && stockOf(w, k) > keep + 4) sell(w, k, stockOf(w, k) - keep)
+    }
+  }
+
+  // ---------------------------------------------------------------- the land: sow round each producer whose ground runs low
+  function sowing() {
+    if (!has('sow')) return
+    for (const b of res(w, Plant).b.values()) {
+      if (b.type !== 'mower' && b.type !== 'berry') continue
+      const t = BUILDINGS[b.type].near!
+      const left = reachCells(w, b.x, b.y, t, true, b.w, b.h).reduce((s, c) => s + c.r.left, 0)
+      const sprouts = [...res(w, Field).sprouts.values()].filter((q) => q.t === t).length
+      if (left + sprouts * 8 > 40) continue
+      const seed = SEED[t]
+      for (const c of sowable(w, b).slice(0, 3)) {
+        if (!stockOf(w, seed) && seed === 'hay' && gs().coins > 10) buy(w, 'hay', 6)
+        if (!stockOf(w, seed) && seed === 'dye') gatherOwn('bush', 2)
+        if (!stockOf(w, seed)) break
+        res(w, Ui).seed = t
+        if (!place(w, 'sow', c.x, c.y, 0)) break
+      }
     }
   }
 
   /**
-   * A free spot for a workshop facing east: its footprint and both front output cells free, and not on any other
-   * machine's output cells — so every machine keeps a pile cell and nothing pushes into the wrong neighbour.
+   * Lines set to what the village asks now, as a player would: A's wool goes to the carder only while the shop wants
+   * roving or the atelier yarn, the roving on to the spinner only while yarn is wanted. A dyer gets its dye only while
+   * pink is short: with the workshop holding pink yarn but no white yarn or felt, the dye goes to the dead end, so the
+   * next sheep shear white.
    */
-  function spotFor(t: BuildingId): [number, number] | null {
-    const taken = new Set<string>()
-    for (const m of all()) if (m.type !== 'belt' && m.type !== 'dock') for (const c of outCells(m)) taken.add(key(c.x, c.y))
-    for (let y = 5; y < GRID.roadY - 1; y++)
-      for (let x = 15; x < 23; x++) {
-        if (whyNot(w, t, x, y)) continue
-        if (footprint(x, y, ...dimsOf(t, 0)).some(([cx, cy]) => taken.has(key(cx, cy)))) continue
-        // its output cell, and the cell beside it (where a second line may start), free
-        const out = outCells(blankBuilding(t, x, y, 0))
-        const outs = out.flatMap((c) => [[c.x, c.y], [c.x, c.y - 1]])
-        if (outs.every(([ox, oy]) => freeCell(w, ox!, oy!) && !taken.has(key(ox!, oy!)))) return [x, y]
-      }
-    return null
-  }
-  function factory() {
-    loop()
-    if (!openOrders(w).length) return
-    const chain = () => [...new Set(openOrders(w).flatMap((q) => chainFor(q.kind)))]
-    const missing = chain().some((t) => t !== 'shearer' && has(typeOf(t)) && !BUILDINGS[typeOf(t)].gives && !built(t))
-    const urgent = stored('water') + n('water') < 2 || stored('hay') + n('hay') < 2
-    resources(missing && !urgent)
-    // one chain at a time: the cheapest order first, deepest machine first
-    const cost = (kind: ItemId) => chainFor(kind).reduce((a, t) => a + BUILDINGS[typeOf(t)].cost, 0)
-    outer: for (const q of openOrders(w).sort((a, b) => cost(a.kind) - cost(b.kind)))
-      for (const t of chainFor(q.kind).reverse()) {
-        const type = typeOf(t)
-        if (type === 'shearer' || !has(type) || built(t)) continue
-        const sp = spotFor(type)
-        if (!sp || !place(w, type, sp[0], sp[1], 0)) break outer
-        const r = t.split(':')[1] as RecipeId | undefined
-        if (r) setRecipe(w, get(w, sp[0], sp[1])!, r)
-      }
-    // piles → stock → machines → docks
-    for (let k = 0; k < 3; k++) {
-      piles()
-      const tokens = chain()
-      const ms = all().filter((b) => inputsOf(b) && (tokens.includes(b.type) || (b.recipe && tokens.includes('workshop:' + b.recipe))))
-      // one item at a time round the machines, like a splitter set to "any", so two machines share a good
-      let moved = true
-      while (moved) {
-        moved = false
-        for (const b of ms) {
-          // a machine whose good already lies in stock waits, so its inputs go where they're short (the stock has no
-          // limit, so nothing else stops it)
-          if (n(jobOf(b)!.out) >= 6) continue
-          const it = (Object.keys(inputsOf(b)!) as ItemId[]).find((q) => (b.inv[q] ?? 0) < 4 && n(q) > 0)
-          if (!it || !stockTake(w, it, 1)) continue
-          b.inv[it] = (b.inv[it] ?? 0) + 1
-          moved = true
-        }
-      }
-      deliver()
+  function adapt() {
+    const want = asked()
+    const set = (x: number, y: number, side: 'l' | 'f' | 'r', rule: 'any' | 'off') => {
+      const b = get(w, x, y)
+      if (b?.type === 'splitter' && b.rules) b.rules[side] = rule
+    }
+    set(14, 14, 'l', want.has('roving') || want.has('yarn') ? 'any' : 'off')
+    set(15, 17, 'l', want.has('yarn') ? 'any' : 'off')
+    set(15, 17, 'f', want.has('roving') || !want.has('yarn') ? 'any' : 'off')
+    // X's carder only while roving is wanted
+    set(34, 13, 'r', want.has('roving') ? 'any' : 'off')
+    // the dye splitters before the dyers (E at (24,8), W at (3,8)) and the workshops whose white input they starve
+    for (const [dye, shop, white] of [
+      [[24, 8], [26, 15], 'yarn'],
+      [[3, 8], [5, 15], 'felt'],
+    ] as const) {
+      const ws = get(w, shop[0], shop[1])
+      const whiteShort = !!ws && ws.type === 'workshop' && (ws.inv.pyarn ?? 0) >= 2 && (ws.inv[white] ?? 0) < 2
+      set(dye[0], dye[1], 'f', whiteShort ? 'off' : 'any')
     }
   }
-  const plans: Record<string, () => void> = {
-    m1() {
-      if (!has('shearer')) return shearByHand()
-      if (!shearer()) return
-      if (has('belt')) {
-        loop()
-        const o = openOrders(w)[0]
-        if (o) wool({ x: dockX(w, o.dock), y: GRID.roadY })
-      }
-    },
-    m2() {
-      loop()
-      const o = openOrders(w)[0]
-      if (o) wool({ x: dockX(w, o.dock), y: GRID.roadY })
-      resources(false)
-    },
-  }
-  for (const m of ['m3', 'm4', 'm5', 'm6', 'm7']) plans[m] = factory
 
-  /** One "turn" of the bot: about every 0.7 s of game time. */
-  function act() {
-    const s = S()
-    if (s.gs.finished) return
-    s.un.cardQ.length = 0
-    returnWaiting()
-    piles()
-    feedByHand()
-    feedPasture()
-    if (s.def.terrain.bush) {
-      const o = openOrders(w)[0]
-      if (o && ['dye', 'cyarn', 'sweater', 'valenki'].includes(o.kind)) pickDye()
-    }
-    deliver()
-    plans[s.gs.mission]?.()
-    maybeBuySheep()
+  /** A carder before there is a splitter: the wool line turns into it while the shop asks for roving. */
+  function carderToggle() {
+    if (done.has('A.split') || !done.has('A.carder')) return
+    const b = get(w, 14, 14)
+    if (!b || b.type !== 'belt') return
+    const want: Dir = asked().has('roving') ? 0 : 1
+    while (b.dir !== want) rotate(w, b)
   }
-  return { act }
+
+  /** Sheep for every pen with room, once sheep are for sale, keeping a little for the next building. Returns how many. */
+  function sheep() {
+    if (!has('sheep')) return 0
+    let n = 0
+    for (const p of res(w, Flock).pastures) while (residents(w, p) < p.cap && gs().coins >= SHEEP.price * 2) if (buySheep(w, p)) n++
+    else break
+    return n
+  }
+  const penRoom = () => has('sheep') && res(w, Flock).pastures.some((p) => residents(w, p) < p.cap)
+
+  /**
+   * One "turn" of the bot, about every 0.7 s of game time. Says what it was: buying (a job or sheep), saving up (there
+   * is something to buy, not the coins), or idle — nothing on the farm left to buy until the next level.
+   */
+  function act(): { buys: number; state: 'buy' | 'save' | 'idle' } {
+    un().cardQ.length = 0
+    hand()
+    const built = build()
+    carderToggle()
+    adapt()
+    sowing()
+    const buys = built + sheep()
+    return { buys, state: buys ? 'buy' : next() || penRoom() ? 'save' : 'idle' }
+  }
+  return { act, done }
 }
 
-export interface BotResult {
-  mission: string
-  t: number
-  finished: boolean
-  stars: number
+/** One level as the bot played it: how long, how often it bought, how long it saved up or had nothing to buy, the coins. */
+export interface LevelRun {
+  level: number
+  at: number
+  took: number
+  buys: number
+  /** The longest stretch without a purchase, seconds. */
+  gap: number
+  save: number
+  idle: number
+  earned: number
+  spent: number
   coins: number
+  sheep: number
+}
+export interface BotResult {
+  level: number
+  t: number
+  coins: number
+  sheep: number
   plots: number
-  orders: string
+  levels: LevelRun[]
+  /** The jobs of the plan as they were built, with the level each was built in. */
+  jobs: { id: string; level: number }[]
 }
 
-/** Play a mission headless for up to `seconds` of game time. */
-export function runBot(w: World, seconds = 1500): BotResult {
+/** Play the long game headless for up to `seconds` of game time, or until the level after `until` opens. */
+export function runBot(w: World, seconds = 3600, until = LEVELS.length): BotResult {
   const bot = createBot(w)
-  const gs = res(w, GameState)
+  const gs = res(w, GameState),
+    st = res(w, Stats)
   let t = 0,
     a = 0
-  while (t < seconds && !gs.finished) {
+  const levels: LevelRun[] = []
+  const jobs: BotResult['jobs'] = []
+  let last = gs.level
+  const fresh = () => ({ at0: gs.clock, buys: 0, gap: 0, lastBuy: gs.clock, save: 0, idle: 0, earned: st.earned, spent: st.spent })
+  let cur = fresh()
+  while (t < seconds && gs.level < until) {
     stepSimulation(w, FIXED_DT)
     t += FIXED_DT
     a -= FIXED_DT
     if (a <= 0) {
-      bot.act()
+      const n = bot.done.size
+      const r = bot.act()
       a = 0.7
+      if (bot.done.size > n) for (const id of [...bot.done].slice(n)) jobs.push({ id, level: gs.level + 1 })
+      if (r.buys) {
+        cur.buys += r.buys
+        cur.lastBuy = gs.clock
+      } else if (r.state === 'save') cur.save += 0.7
+      else cur.idle += 0.7
+      cur.gap = Math.max(cur.gap, gs.clock - cur.lastBuy)
+    }
+    if (gs.level !== last) {
+      last = gs.level
+      const r = Math.round
+      levels.push({ level: gs.level, at: r(gs.clock), took: r(gs.clock - cur.at0), buys: cur.buys, gap: r(cur.gap), save: r(cur.save), idle: r(cur.idle), earned: r(st.earned - cur.earned), spent: r(st.spent - cur.spent), coins: r(gs.coins), sheep: res(w, Flock).sheep.length })
+      cur = fresh()
     }
   }
-  return {
-    mission: gs.mission,
-    t: Math.round(gs.clock),
-    finished: gs.finished,
-    stars: gs.stars,
-    coins: gs.coins,
-    plots: gs.plotsBought,
-    orders: res(w, Market).orders.map((o) => o.id + ':' + o.have + '/' + o.total + (o.done ? '✓' : '')).join(' '),
-  }
+  return { level: gs.level + 1, t: Math.round(gs.clock), coins: Math.round(gs.coins), sheep: res(w, Flock).sheep.length, plots: gs.plotsBought, levels, jobs }
 }
+

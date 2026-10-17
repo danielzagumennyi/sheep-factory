@@ -63,6 +63,6 @@ export function collectFrame(world: World) {
   }
   for (const s of res(world, Flock).sheep) {
     if (frame.sheep.has(s)) continue
-    if (s.state === 'pasture' || s.state === 'waiting' || s.state === 'held') frame.sheep.set(s, { x: s.px, z: s.py, yaw: yawOfDir(s.face), inMachine: false })
+    if (s.state === 'pasture' || s.state === 'transit' || s.state === 'waiting' || s.state === 'held') frame.sheep.set(s, { x: s.px, z: s.py, yaw: yawOfDir(s.face), inMachine: false })
   }
 }

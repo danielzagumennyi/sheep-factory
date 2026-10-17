@@ -1,7 +1,7 @@
-import { GameState, Time, Unlocks, res, type World } from '../world'
+import { GameState, Time, Unlocks, isOn, res, type SystemId, type World } from '../world'
 import { beltSystem } from './belts'
-import { machineSystem } from './machines'
-import { resultSystem, truckSystem } from './orders'
+import { machineSystem, sproutSystem } from './machines'
+import { truckSystem } from './village'
 import { sheepSystem } from './sheep'
 import { landHintSystem } from './unlocks'
 
@@ -14,22 +14,24 @@ export function isFrozen(world: World) {
 }
 
 /**
- * Advance the world by one fixed step. The order matters and mirrors the prototype: trucks, sheep (they may step onto
- * the exit belt), the land hint, items on belts, then machines (they push onto belts that just moved on).
+ * The steps of one fixed step, each under its system's name (world.ts, `SYSTEMS`). The order matters and mirrors the
+ * prototype: trucks, sheep (they may step onto the exit belt), sprouts, the land hint, items on belts, then machines
+ * (they push onto belts that just moved on).
  */
+const STEPS: readonly (readonly [SystemId, (w: World, dt: number) => void])[] = [
+  ['trucks', truckSystem],
+  ['sheep', sheepSystem],
+  ['sprouts', sproutSystem],
+  ['hints', landHintSystem],
+  ['belts', beltSystem],
+  ['machines', machineSystem],
+]
+
+/** Advance the world by one fixed step: every step whose system is on. */
 export function stepSimulation(world: World, dt = FIXED_DT) {
   const time = res(world, Time)
   time.t += dt
   time.frame++
-  const gs = res(world, GameState)
-  if (gs.finished) {
-    resultSystem(world, dt)
-    return
-  }
-  gs.clock += dt
-  truckSystem(world, dt)
-  sheepSystem(world, dt)
-  landHintSystem(world, dt)
-  beltSystem(world, dt)
-  machineSystem(world, dt)
+  res(world, GameState).clock += dt
+  for (const [id, step] of STEPS) if (isOn(world, id)) step(world, dt)
 }

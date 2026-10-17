@@ -1,13 +1,39 @@
 /**
  * Single source of truth for every tunable number (CLAUDE.md: «все числа живут в balance.ts»). Texts live in
- * i18n/content.ts; this file names things only by id. Section numbers refer to docs/01-GDD.md.
+ * i18n/content.ts; this file names things only by id. Section numbers refer to docs/01-GDD.md. The numbers were
+ * checked by the economy model (docs/econ/model.mjs, docs/05-REWORK.md sections 6–7) before the code.
  */
-import { LAND, RECT, type Spot } from './land'
+import { RECT, type Spot } from './land'
 
 // ---------------------------------------------------------------- world (GDD 2)
 
-/** The field: 32×20 cells, cut into 8×5 plots; row ROAD_Y holds the docks, the two road lanes run below it. */
-export const GRID = { cols: 32, rows: 20, plotW: 8, plotH: 5, roadY: 15 } as const
+/**
+ * The field: 48×25 cells, cut into 8×5 plots; row ROAD_Y holds the docks, the two road lanes run below it. Only part
+ * of it is the island at the start (ISLAND_START): the rest is under the sky until the island grows (ISLAND_GROW).
+ */
+export const GRID = { cols: 48, rows: 25, plotW: 8, plotH: 5, roadY: 20 } as const
+/** The island at the start: the rows from `top` down, the columns left of `right`. */
+export const ISLAND_START = { top: GRID.plotH, right: 32 } as const
+/** One growth of the island: its new edge, and the docks that come with the land by the road. */
+export interface GrowDef {
+  level: number
+  top?: number
+  right?: number
+  docks?: readonly (readonly [ClientId, number])[]
+}
+/**
+ * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), at these village levels: twice
+ * a column of plots rises in the east, along the road, with docks of its own so a farm there has somewhere near to
+ * send its goods; then the far row. The new plots hold fresh deposits, for sale.
+ */
+export const ISLAND_GROW: readonly GrowDef[] = [
+  { level: 6, right: 40, docks: [['shop', 31], ['post', 33]] },
+  { level: 11, right: 48, docks: [['cobbler', 39], ['atelier', 41]] },
+  { level: 13, top: 0 },
+]
+
+/** The long game is kept as it goes (app/saves.ts): every this many seconds, besides when the page is hidden or left. */
+export const SAVE = { everySec: 5 } as const
 
 /** Directions in grid order: east, south, west, north. A building's `dir` indexes this table. */
 export const DIRS: readonly (readonly [number, number])[] = [
@@ -26,149 +52,194 @@ export const HAND = {
 } as const
 
 export const BELT = {
-  /** Cells per second an item travels along a belt. */
-  speed: 1.7,
+  /**
+   * Cells per second an item travels along a belt, one item a cell: 80 items a minute on one line, as in Tower Factory
+   * (the author, 17.10.2026). Machines make 20 or 40 a minute, so a line carries the output of two to four.
+   */
+  speed: 80 / 60,
   /** A machine holds this many of each input; more waits on the belt. */
   bufMax: 4,
   /** A machine with no belt at its output drops up to this many items beside itself. */
   pileMax: 3,
   /** A merger buffers this many items. */
   mergerBuf: 2,
-  /** An item stuck in front of the sheep's lane for this long jumps into the hand, so the loop never stops (GDD 4.4). */
+  /** A good stuck in front of the sheep's lane for this long jumps into the stock, so the loop never stops (GDD 4.4). */
   strayAfter: 1.2,
 } as const
 
-/** Upgrades: each level makes a machine this much faster, up to LVL_MAX. */
-export const UPGRADE = { speedPerLevel: 0.5, maxLevel: 3, priceAdd: 20 } as const
-/** The n-th copy of a machine costs base × (1 + escalate × n), rounded to 5. */
-export const ESCALATE = 0.25
-
-// ---------------------------------------------------------------- sheep (GDD 5)
+// ---------------------------------------------------------------- sheep and pens (GDD 5)
 
 export const SHEEP = {
-  price: 30,
-  /** Seconds a shorn sheep takes to grow a fleece once the pasture has paid for it (one hay, one water). */
-  grow: 40,
-  /** A pasture's walk speed, cells per second. */
+  price: 20,
+  /**
+   * Seconds a shorn sheep takes to grow a fleece once it has eaten (at a feeder, or fed by hand). With the ride round
+   * its loop and the shearing a sheep comes round about every 24 s: a pen of four gives some 20 wool a minute.
+   */
+  grow: 14,
+  /** A pen's walk speed, cells per second. */
   walk: 0.32,
-  /** Seconds between two sheep leaving through the pasture exit. */
-  exitGap: 1.4,
+  /** Seconds between two sheep leaving through a pen's exit. */
+  exitGap: 1,
   /** A click within this many cells of a sheep picks it (a fluffy one is bigger). */
   pickR: 0.55,
   pickRFluffy: 0.68,
-  /** Extra space for a pasture: +3 places for 60 + 40 per earlier expansion. */
-  roomAdd: 3,
-  roomBase: 60,
-  roomStep: 40,
+  /** Seconds a sheep with nothing to do here takes to pass through a station. */
+  pass: 0.3,
+  /** How fast a sheep crosses a pen that is not its own, cells per second, and how many may cross one at once. */
+  transit: 1.4,
+  transitMax: 2,
 } as const
+
+/**
+ * A pen is a building of its own (GDD 5): 3×3, any number of them, each for four sheep (the author, 17.10.2026: «в одном
+ * загоне до 4 животных»). Sheep are bought apart from pens and put into one by the player.
+ */
+export const PEN = { cost: 40, size: 3, cap: 4 } as const
 
 export const SHEEP_NAMES = ['Облачко', 'Зефирка', 'Ватрушка', 'Снежок', 'Пломбир', 'Пушок', 'Бяша', 'Кудряш', 'Мята', 'Лапка', 'Тучка', 'Пуговка', 'Хрум', 'Ириска', 'Сметанка', 'Бублик'] as const
 
 // ---------------------------------------------------------------- resources and land (GDD 6)
 
-export type ResId = 'meadow' | 'water' | 'bush'
-export type TerrainId = ResId | 'tree' | 'rock' | 'bridge'
+export type ResId = 'meadow' | 'bush'
+export type TerrainId = ResId | 'tree' | 'rock' | 'water' | 'sprout'
 
 /**
  * Resources as in Tower Factory (the author, 14.10.2026): a cell holds a stock, a producer takes from the nearest
- * owned cell within REACH, and an empty cell disappears for good — nothing regrows except the pasture's own grass.
+ * owned cell within REACH, and an empty cell disappears for good. Wild cells are the deposits of the map; sown ones
+ * (SOW) are smaller.
  */
 export const RES: Readonly<Record<ResId, { max: number; gives: ItemId; plotValue: number }>> = {
-  meadow: { max: 10, gives: 'hay', plotValue: 4 },
-  water: { max: 20, gives: 'water', plotValue: 2 },
-  bush: { max: 4, gives: 'dye', plotValue: 5 },
+  meadow: { max: 60, gives: 'hay', plotValue: 4 },
+  bush: { max: 24, gives: 'dye', plotValue: 5 },
 }
 /**
+ * Sowing (the author's idea, 16.10.2026): one seed — 1 hay or 1 dye — on an empty own cell sprouts and in `grow` s
+ * becomes a meadow cell of `meadow` hay or a bush of `bush` dye. Mown or picked bare it disappears like a wild one.
+ */
+export const SOW = { grow: 60, meadow: 30, bush: 12 } as const
+/** The seed each sown resource takes. */
+export const SEED: Readonly<Record<ResId, ItemId>> = { meadow: 'hay', bush: 'dye' }
+/**
  * A producer reaches the resource cells whose middle lies within this many cells of its own middle: a plain circle, as
- * drawn (the author: «сделай радиус не по клеткам, а просто круглый»).
+ * drawn (the author: «сделай радиус не по клеткам, а просто круглый»). The seeder sows within it too.
  */
 export const REACH = 3
 /** Terrain that no building may stand on. */
-export const BLOCKING: readonly TerrainId[] = ['rock', 'tree', 'water', 'bush', 'meadow']
+export const BLOCKING: readonly TerrainId[] = ['rock', 'tree', 'water', 'bush', 'meadow', 'sprout']
 
 /** A plot costs base + Σ cells × value, × (1 + step × plots bought so far), rounded to 5; an empty plot is not for sale. */
 export const PLOTS = { base: 10, step: 0.25 } as const
-/** The hint about buying land comes when an owned resource the mission needs falls to this many units. */
-export const LOW_LAND = 3
+/** The hint about land comes when an owned resource the farm needs falls to this many units. */
+export const LOW_LAND = 20
 
 // ---------------------------------------------------------------- goods and buildings (GDD 4)
 
-export type ItemId = 'wool' | 'roving' | 'yarn' | 'felt' | 'dye' | 'cyarn' | 'sweater' | 'valenki' | 'hay' | 'water'
+export type ItemId = 'wool' | 'pwool' | 'roving' | 'proving' | 'yarn' | 'pyarn' | 'felt' | 'dye' | 'sweater' | 'valenki' | 'hay'
 
-/** Base prices: the market pays a quarter, a dock outside its order pays one coin. */
+/**
+ * Base prices: each step of making is worth 1.3 × what goes into it (docs/05-REWORK.md), so making always beats selling
+ * the inputs. A dock pays the full price for its ask; the market pays a quarter.
+ */
 export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
-  wool: { price: 2 },
-  roving: { price: 8 },
-  yarn: { price: 20 },
-  felt: { price: 12 },
-  dye: { price: 3 },
-  cyarn: { price: 24 },
-  sweater: { price: 50 },
-  valenki: { price: 55 },
   hay: { price: 1 },
-  water: { price: 0 },
+  dye: { price: 2 },
+  wool: { price: 3 },
+  pwool: { price: 5 },
+  roving: { price: 8 },
+  proving: { price: 13 },
+  yarn: { price: 10 },
+  pyarn: { price: 17 },
+  felt: { price: 12 },
+  sweater: { price: 35 },
+  valenki: { price: 53 },
 }
+/** The pink goods and the white ones they are made like. */
+export const PINK: Readonly<Partial<Record<ItemId, ItemId>>> = { pwool: 'wool', proving: 'roving', pyarn: 'yarn' }
 export const MARKET_SHARE = 0.25
-/** The market sells anything at this many times a good's price, so buying never pays for an order (the author: «как продавать так и покупать»). */
+/** The market sells anything at this many times a good's price, so buying never pays for an ask (the author: «как продавать так и покупать»). */
 export const BUY_SHARE = 2
-/** A finished order keeps buying the same good for this share of a batch's pay (the author, 14.10.2026). */
-export const EXTRA_SHARE = 0.5
 
-export type BuildingId = 'belt' | 'shearer' | 'mower' | 'pump' | 'barn' | 'carder' | 'spinner' | 'splitter' | 'merger' | 'felter' | 'berry' | 'workshop' | 'feeder' | 'trough'
+export type BuildingId = 'belt' | 'pen' | 'sheep' | 'shearer' | 'feeder' | 'dyer' | 'mower' | 'berry' | 'seeder' | 'carder' | 'spinner' | 'felter' | 'workshop' | 'splitter' | 'merger' | 'sow'
+
+/** What a machine makes in one job: what it takes, what comes out, how long. */
+export interface Job {
+  inp: Partial<Record<ItemId, number>>
+  out: ItemId
+  time: number
+}
+/** A station on the sheep's loop: what it does to a sheep passing through. */
+export type StationId = 'shear' | 'feed' | 'dye'
 
 export interface BuildingDef {
   cost: number
-  /** Seconds of one job at level 1. */
+  /**
+   * What it makes. A carder or a spinner makes pink from pink, as it makes white from white (the author, v6: a pair of
+   * one colour gives the same colour): each kind is its own job, taken as its inputs come.
+   */
+  jobs?: readonly Job[]
+  /** A station on the loop: what it does to a passing sheep, how long, and the good it uses (by its second way in). */
+  station?: StationId
   time?: number
-  /** A workshop's recipe: what one job takes. */
-  inp?: Partial<Record<ItemId, number>>
-  out?: ItemId
+  uses?: ItemId
   /** A producer: the resource it takes and the item it gives. */
   near?: ResId
   gives?: ItemId
-  /** Its back cell stands in the water (the pump): no reach, the pond never runs dry (the author). */
-  onWater?: boolean
-  /** A store that only takes one good in — the pasture's feeder and trough — up to `cap` of it. */
-  takes?: ItemId
-  cap?: number
-  /** It may stand only with its resource in reach (bushes are few); a mower or a pump goes anywhere (the author). */
+  /** It may stand only with its resource in reach (bushes are few); a mower goes anywhere (the author). */
   needsNear?: boolean
-  /** Each further copy costs more (ESCALATE). */
-  escalate?: boolean
-  upgradable?: boolean
+  /** The seeder: sows what a belt brings it, around itself. */
+  sows?: boolean
   /** Placed onto a belt, replacing that belt cell. */
   onBelt?: boolean
   /**
-   * Footprint as [length along its output, width across it]. Workshops are 2×2 like Tower Factory's, producers 2×1
-   * with their one output on the narrow end (the author, 15.10.2026); the rest 1×1.
+   * Footprint as [length along its output, width across it]. Workshops and stations are 2×2 like Tower Factory's
+   * production, producers 2×1 with their one output on the narrow end (the author, 15.10.2026), a pen 3×3; the rest 1×1.
    */
   size?: readonly [number, number]
   /** Makes whichever of RECIPES the player picks, one at a time (the workshop). */
   recipes?: boolean
+  /** Stays in hand after it is placed, for the next one (a sheep: four go into a new pen). */
+  repeat?: boolean
 }
 
-/** Every building does exactly one thing (GDD 4.1). */
+/**
+ * Every building does exactly one thing (GDD 4.1). No copy costs more, and no machine is upgraded: it grows by copies.
+ * The prices climb with the step of making (the author, 17.10.2026: «постройки дороже»): what comes later costs as much as
+ * a level then brings in, so the coins always have somewhere to go and there is always something to save up for.
+ */
 export const BUILDINGS: Readonly<Record<BuildingId, BuildingDef>> = {
   belt: { cost: 2 },
-  shearer: { cost: 30, time: 2.5, escalate: true, upgradable: true, size: [2, 2] },
-  mower: { cost: 40, time: 6, near: 'meadow', gives: 'hay', escalate: true, upgradable: true, size: [2, 1] },
-  /** Its tower stands on a water cell, the barrel on the land beside it; water never runs out (the author, 16.10.2026). */
-  pump: { cost: 40, time: 5, gives: 'water', onWater: true, escalate: true, upgradable: true, size: [2, 1] },
-  /** Takes any good in from behind into the stock, so goods can be loaded on trucks by hand. */
-  barn: { cost: 25, size: [2, 2] },
-  carder: { cost: 60, time: 3, inp: { wool: 2 }, out: 'roving', escalate: true, upgradable: true, size: [2, 2] },
-  spinner: { cost: 90, time: 5, inp: { roving: 1 }, out: 'yarn', escalate: true, upgradable: true, size: [2, 2] },
-  splitter: { cost: 15, onBelt: true },
-  merger: { cost: 10, onBelt: true },
-  felter: { cost: 70, time: 4, inp: { wool: 3 }, out: 'felt', escalate: true, upgradable: true, size: [2, 2] },
-  berry: { cost: 40, time: 6, near: 'bush', gives: 'dye', needsNear: true, escalate: true, upgradable: true, size: [2, 1] },
-  workshop: { cost: 100, escalate: true, upgradable: true, size: [2, 2], recipes: true },
-  /**
-   * The pasture's feeder and trough (the author, 16.10.2026: «игрок подвозил сено и воду к пастбищу»): fixed 2×1 stores
-   * along the pasture's two free sides, each taking one good in from its outer side; the sheep eat and drink from them.
-   */
-  feeder: { cost: 0, size: [1, 2], takes: 'hay', cap: 8 },
-  trough: { cost: 0, size: [1, 2], takes: 'water', cap: 8 },
+  pen: { cost: PEN.cost, size: [PEN.size, PEN.size] },
+  /** A sheep bought into the pen the player clicks, while it has room (GDD 5). */
+  sheep: { cost: SHEEP.price, repeat: true },
+  shearer: { cost: 60, station: 'shear', time: 3, size: [2, 2] },
+  feeder: { cost: 80, station: 'feed', time: 1, uses: 'hay', size: [2, 2] },
+  dyer: { cost: 300, station: 'dye', time: 2, uses: 'dye', size: [2, 2] },
+  mower: { cost: 60, time: 3, near: 'meadow', gives: 'hay', size: [2, 1] },
+  berry: { cost: 200, time: 3, near: 'bush', gives: 'dye', needsNear: true, size: [2, 1] },
+  /** One sowing every `time` s, onto the nearest empty own cell in REACH, from the seeds a belt brings in. */
+  seeder: { cost: 200, time: 3, sows: true, size: [2, 1] },
+  carder: {
+    cost: 150,
+    jobs: [
+      { inp: { wool: 2 }, out: 'roving', time: 3 },
+      { inp: { pwool: 2 }, out: 'proving', time: 3 },
+    ],
+    size: [2, 2],
+  },
+  spinner: {
+    cost: 250,
+    jobs: [
+      { inp: { roving: 1 }, out: 'yarn', time: 3 },
+      { inp: { proving: 1 }, out: 'pyarn', time: 3 },
+    ],
+    size: [2, 2],
+  },
+  felter: { cost: 250, jobs: [{ inp: { wool: 3 }, out: 'felt', time: 3 }], size: [2, 2] },
+  workshop: { cost: 800, size: [2, 2], recipes: true },
+  splitter: { cost: 30, onBelt: true },
+  merger: { cost: 20, onBelt: true },
+  /** Sowing by hand: a click on an empty own cell puts a seed there from the stock (no coins). */
+  sow: { cost: 0 },
 }
 
 /** A building's footprint in cells along x and y when it faces `dir`: its length runs along dir, its width across. */
@@ -180,25 +251,41 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
 export const DOCK = { w: 2, h: 1 } as const
 export const MARKET = { w: 2, h: 2 } as const
 
-export type RecipeId = 'cyarn' | 'sweater' | 'valenki'
+export type RecipeId = 'sweater' | 'valenki'
 /**
  * The workshop's recipes: goods made of two different things (the author, 15.10.2026: «мы же не будем под каждую вещь
- * новое здание делать»). One workshop makes one recipe at a time, the one picked in its popup; a new good is a new
- * recipe, not a new building. Each opens with its own «Новое» card.
+ * новое здание делать»). One workshop makes one recipe at a time, the one picked in its popup. Each input has its own
+ * way in at the back (GDD 4.1), in the order written here: the first by the cell in line with the output.
  */
-export const RECIPES: Readonly<Record<RecipeId, { inp: Partial<Record<ItemId, number>>; out: ItemId; time: number }>> = {
-  cyarn: { inp: { yarn: 1, dye: 1 }, out: 'cyarn', time: 4 },
-  sweater: { inp: { yarn: 1, cyarn: 1 }, out: 'sweater', time: 6 },
-  valenki: { inp: { felt: 2, cyarn: 1 }, out: 'valenki', time: 6 },
+export const RECIPES: Readonly<Record<RecipeId, Job>> = {
+  sweater: { inp: { yarn: 1, pyarn: 1 }, out: 'sweater', time: 6 },
+  valenki: { inp: { felt: 2, pyarn: 1 }, out: 'valenki', time: 6 },
 }
-export const RECIPE_ORDER: readonly RecipeId[] = ['cyarn', 'sweater', 'valenki']
+export const RECIPE_ORDER: readonly RecipeId[] = ['sweater', 'valenki']
 /** Hotbar order; only unlocked tools are shown. */
-export const TOOL_ORDER: readonly BuildingId[] = ['belt', 'shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'berry', 'workshop']
-export const PRODUCERS: readonly BuildingId[] = ['mower', 'pump', 'berry']
-/** What a splitter's rule chip cycles through on click. */
-export const SPLIT_RULES = ['any', 'wool', 'roving', 'yarn', 'felt', 'dye', 'cyarn', 'hay', 'water', 'sheep', 'off'] as const
+export const TOOL_ORDER: readonly BuildingId[] = [
+  'shearer',
+  'belt',
+  'pen',
+  'sheep',
+  'carder',
+  'mower',
+  'feeder',
+  'splitter',
+  'spinner',
+  'merger',
+  'felter',
+  'sow',
+  'berry',
+  'dyer',
+  'seeder',
+  'workshop',
+]
+export const PRODUCERS: readonly BuildingId[] = ['mower', 'berry']
+/** What a splitter's rule chip cycles through on click; the popup shows only goods the farm has met. */
+export const SPLIT_RULES = ['any', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'dye', 'hay', 'sweater', 'valenki', 'sheep', 'off'] as const
 
-// ---------------------------------------------------------------- road and orders (GDD 7)
+// ---------------------------------------------------------------- road (GDD 7)
 
 export const ROAD = {
   /** Lane centres (grid rows): trucks park on A beside the docks and drive on B. */
@@ -209,9 +296,6 @@ export const ROAD = {
   leaveSpeed: 5,
   laneSpeed: 2,
 } as const
-
-/** Stars by time: ≤ par → ★★★, ≤ par × twoStar → ★★, else ★. */
-export const STARS = { twoStar: 1.5 } as const
 
 // ---------------------------------------------------------------- camera and look (render only)
 
@@ -242,10 +326,10 @@ export const ISLAND = {
 
 /**
  * The ponds and the canal (Water.tsx): the field's samples a cell, the blur (cells), the iso-line of the shore; the
- * surface's level and the kerb's top; a pumped-out cell's weight; where the colour steps (cells from the shore: foam,
- * shallows, deep); the drifting dashes.
+ * surface's level and the kerb's top; where the colour steps (cells from the shore: foam, shallows, deep); the drifting
+ * dashes.
  */
-export const WATER = { R: 8, blur: 0.5, iso: 0.56, level: 0.035, kerbTop: 0.075, drained: 0.35, foam: 0.05, shallow: 0.16, deep: 1.2, dashLife: 2.5, dashDrift: 0.08 } as const
+export const WATER = { R: 8, blur: 0.5, iso: 0.56, level: 0.035, kerbTop: 0.075, foam: 0.05, shallow: 0.16, deep: 1.2, dashLife: 2.5, dashDrift: 0.08 } as const
 
 /** Light of the scene: a warm sun and a sky fill (toon bands come from the sun). */
 /**
@@ -259,7 +343,7 @@ export const LIGHT = { sun: 1.9, hemi: 1.0, sunFrom: [-9, 26, -5] } as const
  * The lawn (Grass.tsx): leaves per tuft, a leaf's size, tufts per cell side (a jittered grid, so no bald patches: the
  * author, «не должно быть проплешин»), how low it bows while building, how far it shortens by what stands there.
  */
-export const GRASS = { leaves: 8, height: 0.14, width: 0.12, grid: 6, cap: 34000, inset: 0.5 } as const
+export const GRASS = { leaves: 8, height: 0.14, width: 0.12, grid: 6, cap: 48000, inset: 0.5 } as const
 
 /** The sun's shadow map, texels a side: 2048 over the 48-cell frustum is ~0.02 of a cell, soft and cheap. */
 export const SHADOW = { map: 2048 } as const
@@ -269,19 +353,21 @@ export const CONTACT = { building: 0.32, belt: 0.16, blur: 6 } as const
 /** Each building's own colour: its roof in the field and its stripe on the build tile. */
 export const ROOF: Readonly<Record<BuildingId, string>> = {
   belt: '#5b6577',
+  pen: '#a98a55',
+  sheep: '#f6c4d3',
   shearer: '#f2668b',
+  feeder: '#e9a23b',
+  dyer: '#d4458a',
   mower: '#f3bd3c',
-  pump: '#3d9be9',
-  barn: '#c8463c',
+  berry: '#c2477f',
+  seeder: '#6fb64a',
   carder: '#de8a4e',
   spinner: '#a368dd',
   splitter: '#4a5568',
   merger: '#4a5568',
   felter: '#3fb6a0',
-  berry: '#c2477f',
   workshop: '#e5503f',
-  feeder: '#c9935a',
-  trough: '#6aa8d8',
+  sow: '#6fb64a',
 }
 
 /** Colours of the 3D scene; the HUD has its own CSS variables. */
@@ -314,6 +400,9 @@ export const LOOK = {
   blockBadFloor: '#f07070',
   arrowIn: '#f5a3a8',
   arrowOut: '#a9c6ff',
+  /** The ring round a way in's and a way out's icon (render/iconSprite.ts): their arrows' colours, deeper so they show on grass. */
+  arrowInRing: '#e7738f',
+  arrowOutRing: '#6f97e6',
   reachDash: '#eeffbb',
   reachEdge: '#fff89a',
   reachTint: '#5f7fd0',
@@ -369,7 +458,7 @@ export const LOOK = {
   waterShallow: '#8fdcfb',
   waterFoam: '#e8f8ff',
   waterDeep: '#55b8f4',
-  /** The bank round the water: a lighter green kerb, an earthy hairline at the water; mud where a pond was pumped. */
+  /** The bank round the water: a lighter green kerb, an earthy hairline at the water. */
   kerb: '#8cc63b',
   kerbShade: '#6ba028',
   kerbEdge: '#8b6b4f',
@@ -409,522 +498,239 @@ export const LOOK = {
   yarn: '#fff6e8',
   felt: '#b8aa98',
   dye: '#7b4bb3',
-  cyarn: '#d4458a',
+  /** Pink goods: a dyed fleece and what is made of it (the dyer, GDD 5). */
+  pwool: '#ffb6d5',
+  proving: '#ffc9df',
+  pyarn: '#f2669f',
+  /** A sheep's fleece after the dyer, as an instance tint over the white fleece. */
+  pinkFleece: '#ffb0d2',
+  /** A sown cell while it grows: little shoots on dark soil. */
+  sprout: '#8fd65a',
+  sproutSoil: '#b48857',
   sweater: '#d95454',
   valenki: '#6f7a88',
   truck: '#f1f4f8',
   truckCab: '#dd4379',
 } as const
 
-// ---------------------------------------------------------------- missions (GDD 8)
+// ---------------------------------------------------------------- the village (GDD 7–8)
 
-export type ClientId = 'post' | 'school' | 'fair' | 'market' | 'bakery' | 'atelier' | 'smithy' | 'shop'
-export type CardId =
-  | 'shear'
-  | 'shearer'
-  | 'belt'
-  | 'needs'
-  | 'hay'
-  | 'mower'
-  | 'water'
-  | 'pump'
-  | 'barn'
-  | 'carder'
-  | 'spinner'
-  | 'splitter'
-  | 'merger'
-  | 'felter'
-  | 'dye'
-  | 'berry'
-  | 'extra'
-  | 'land'
-  | 'market'
-  | 'workshop'
-  | 'sweater'
-  | 'valenki'
-/** Cards shown once per game, not once per mission. */
-export const ONCE_CARDS: readonly CardId[] = ['land', 'extra']
+export type ClientId = 'market' | 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fair'
+/**
+ * Where each client's dock stands on the dock row. A dock appears when its client first asks; the market stands apart
+ * on the left, without a truck, once its level opens it.
+ */
+/** The clients with a truck, in the order the village meets them. */
+export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
+export const DOCK_X: Readonly<Record<ClientId, number>> = { market: 9, post: 13, shop: 15, atelier: 19, cobbler: 4, school: 28, fair: 25 }
 
-export interface OrderDef {
-  id: string
-  dock: ClientId
-  kind: ItemId
-  total: number
-  batch: number
-  pay: number
-  /** Opened by the n-th paid batch. */
-  unlocks?: readonly { at: number; id: BuildingId }[]
-}
-export interface PastureDef {
-  x: number
-  y: number
-  w: number
-  h: number
-  dir: Dir
-}
-export type EventWhen = 'lowhay' | 'lowwater' | 'lowland' | `placed:${BuildingId}`
-export interface MissionDef {
-  id: MissionId
-  /** ★★★ time, seconds. */
-  par: number
-  coins: number
-  plots: readonly Spot[]
-  needs: { food: boolean; water: boolean }
-  pastures: readonly PastureDef[]
-  sheep: number
-  /** What the barn's stock holds at the start. */
-  stock?: Partial<Record<ItemId, number>>
-  /** Dock row positions. The market stands apart on the left with no truck; truck docks stand together on the right. */
-  docks: readonly (readonly [ClientId, number])[]
-  terrain: Partial<Record<TerrainId, readonly Spot[]>>
-  start: readonly BuildingId[]
-  /** Recipes the workshop knows in this mission (in the order they were learnt). */
-  recipes: readonly RecipeId[]
-  cards: readonly CardId[]
-  orders: readonly OrderDef[]
-  events: readonly { when: EventWhen; unlock?: BuildingId; card?: CardId }[]
-}
-export type MissionId = 'm1' | 'm2' | 'm3' | 'm4' | 'm5' | 'm6' | 'm7'
-
-/** The four central plots every mission starts with. */
-const CENTRAL: readonly Spot[] = [
-  [1, 1],
-  [2, 1],
-  [1, 2],
-  [2, 2],
-]
-const HOME_MEADOW: readonly Spot[] = [
-  [8, 5],
-  [9, 5],
-  [10, 5],
-  [8, 6],
-  [9, 6],
-  [10, 6],
-]
-const pasture = (w: number, extra: Partial<PastureDef> = {}): PastureDef => ({ x: 10, y: 7, w, h: 3, dir: 0, ...extra })
+/** «Новое» cards: one per thing a level opens (its id), and a few hints. */
+export type CardId = BuildingId | 'valenki' | 'market' | 'land' | 'island' | 'chapter'
+/** Cards shown once per game, not once per run. */
+export const ONCE_CARDS: readonly CardId[] = ['land']
 
 /**
- * The campaign. Every mission opens new things one at a time (the author: «каждый продукт открывается отдельно»); all
- * orders are open from the start and the mission ends when every one is done. Outer plots each hold a deposit
- * (`LAND`), so buying land is a choice between near and small, far and rich.
+ * The village, level by level (docs/05-REWORK.md, section 6): what opens at its start — one thing, with its card — and
+ * what the clients ask. A level is done when every ask is (the economy model showed why: by coins alone raw wool
+ * would do). A client whose ask is done takes more of anything at the market's price.
+ *
+ * Every part of the game comes in its turn (the author, 17.10.2026): the first level teaches shearing only — the
+ * shearer, and once it stands the belt that brings the sheep back (`after`); no food and no market yet. Pens and sheep
+ * come apart, the market later, and food only with the feeder: until then a shorn sheep grows its fleece by itself.
  */
-export const MISSIONS: readonly MissionDef[] = [
+export interface LevelDef {
+  open: readonly (BuildingId | 'valenki' | 'market')[]
+  /** One more thing within the level, once the player has placed the first (the belt, after the shearer). */
+  after?: { placed: BuildingId; open: BuildingId }
+  asks: readonly (readonly [ClientId, ItemId, number])[]
+}
+export const LEVELS: readonly LevelDef[] = [
+  { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, asks: [['post', 'wool', 10]] },
+  { open: ['pen'], asks: [['post', 'wool', 30]] },
+  { open: ['sheep'], asks: [['post', 'wool', 40]] },
   {
-    id: 'm1',
-    par: 270,
-    coins: 50,
-    plots: CENTRAL,
-    needs: { food: false, water: false },
-    pastures: [pasture(3)],
-    sheep: 5,
-    docks: [
-      ['post', 16],
-    ],
-    terrain: {
-      tree: [
-        [9, 5],
-        [21, 6],
-        [14, 12],
-      ],
-      rock: [[18, 11]],
-    },
-    start: [],
-    recipes: [],
-    cards: ['shear'],
-    orders: [{ id: 'o1', dock: 'post', kind: 'wool', total: 48, batch: 8, pay: 20, unlocks: [{ at: 1, id: 'shearer' }] }],
-    events: [{ when: 'placed:shearer', unlock: 'belt' }],
-  },
-  {
-    id: 'm2',
-    par: 450,
-    coins: 60,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(3)],
-    stock: { hay: 10, water: 10 },
-    sheep: 6,
-    docks: [
-      ['market', 9],
-      ['fair', 19],
-    ],
-    terrain: LAND(
-      {
-        meadow: [
-          [17, 6],
-          [18, 6],
-          [19, 6],
-          [17, 7],
-          [18, 7],
-        ],
-        water: [
-          [8, 11],
-          [9, 11],
-          [10, 11],
-        ],
-        tree: [
-          [9, 5],
-          [22, 5],
-          [15, 12],
-        ],
-        rock: [[20, 11]],
-      },
-      {
-        '1,0': [['meadow', 8]],
-        '2,0': [
-          ['water', 5],
-          ['meadow', 5],
-        ],
-        '0,1': [['meadow', 6]],
-        '3,1': [['meadow', 10]],
-        '0,2': [['water', 8]],
-        '3,2': [
-          ['meadow', 4],
-          ['water', 4],
-        ],
-        '0,0': [['meadow', 14]],
-        '3,0': [['water', 12]],
-      },
-    ),
-    start: ['belt', 'shearer'],
-    recipes: [],
-    cards: ['needs', 'market'],
-    orders: [
-      {
-        id: 'o1',
-        dock: 'fair',
-        kind: 'wool',
-        total: 90,
-        batch: 10,
-        pay: 25,
-        unlocks: [
-          { at: 1, id: 'pump' },
-          { at: 2, id: 'mower' },
-        ],
-      },
-    ],
-    events: [
-      { when: 'lowhay', card: 'hay' },
-      { when: 'lowwater', card: 'water' },
-      { when: 'lowland', card: 'land' },
+    open: ['carder'],
+    asks: [
+      ['post', 'wool', 40],
+      ['shop', 'roving', 12],
     ],
   },
   {
-    id: 'm3',
-    par: 570,
-    coins: 180,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(3)],
-    stock: { hay: 8, water: 8 },
-    sheep: 7,
-    docks: [
-      ['market', 9],
-      ['bakery', 16],
-      ['smithy', 18],
-      ['atelier', 20],
+    open: ['market'],
+    asks: [
+      ['post', 'wool', 60],
+      ['shop', 'roving', 16],
     ],
-    terrain: LAND(
-      {
-        meadow: HOME_MEADOW,
-        water: [...RECT(8, 12, 15, 12), [17, 12], [18, 12], [20, 12], [21, 12], [22, 12], [23, 12]],
-        bridge: [
-          [16, 12],
-          [19, 12],
-        ],
-        tree: [
-          [16, 6],
-          [22, 6],
-        ],
-        rock: [
-          [13, 13],
-          [21, 13],
-        ],
-      },
-      {
-        '1,0': [['meadow', 10]],
-        '2,0': [['meadow', 6]],
-        '0,1': [['meadow', 8]],
-        '3,1': [['meadow', 12]],
-        '0,2': [['meadow', 5]],
-        '3,2': [['meadow', 7]],
-        '0,0': [['meadow', 16]],
-        '3,0': [['meadow', 14]],
-      },
-    ),
-    start: ['belt', 'shearer', 'mower', 'pump', 'barn'],
-    recipes: [],
-    cards: ['carder'],
-    orders: [
-      { id: 'o1', dock: 'bakery', kind: 'roving', total: 25, batch: 5, pay: 30, unlocks: [{ at: 1, id: 'spinner' }] },
-      { id: 'o2', dock: 'atelier', kind: 'yarn', total: 25, batch: 5, pay: 75, unlocks: [{ at: 1, id: 'splitter' }] },
-      { id: 'o3', dock: 'smithy', kind: 'wool', total: 30, batch: 10, pay: 20, unlocks: [{ at: 1, id: 'merger' }] },
-    ],
-    events: [{ when: 'lowland', card: 'land' }],
   },
   {
-    id: 'm4',
-    par: 540,
-    coins: 200,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(3)],
-    stock: { hay: 8, water: 8 },
-    sheep: 8,
-    docks: [
-      ['market', 9],
-      ['post', 16],
-      ['atelier', 18],
+    open: ['mower'],
+    asks: [
+      ['post', 'wool', 70],
+      ['shop', 'hay', 40],
     ],
-    terrain: LAND(
-      {
-        meadow: HOME_MEADOW,
-        water: [
-          [20, 11],
-          [21, 11],
-          [22, 11],
-        ],
-        tree: [
-          [16, 6],
-          [23, 6],
-          [9, 13],
-        ],
-        rock: [[17, 12]],
-      },
-      {
-        '1,0': [['meadow', 8]],
-        '2,0': [
-          ['meadow', 6],
-          ['water', 4],
-        ],
-        '0,1': [['meadow', 10]],
-        '3,1': [['water', 8]],
-        '0,2': [
-          ['water', 5],
-          ['meadow', 5],
-        ],
-        '3,2': [['meadow', 6]],
-        '0,0': [['meadow', 15]],
-        '3,0': [
-          ['meadow', 9],
-          ['water', 6],
-        ],
-      },
-    ),
-    start: ['belt', 'shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger'],
-    recipes: [],
-    cards: ['felter'],
-    orders: [
-      { id: 'o1', dock: 'post', kind: 'felt', total: 30, batch: 5, pay: 45 },
-      { id: 'o2', dock: 'atelier', kind: 'yarn', total: 25, batch: 5, pay: 75 },
-    ],
-    events: [{ when: 'lowland', card: 'land' }],
   },
   {
-    id: 'm5',
-    par: 420,
-    coins: 460,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(3)],
-    stock: { hay: 8, water: 8 },
-    sheep: 8,
-    docks: [
-      ['market', 9],
-      ['school', 16],
-      ['shop', 18],
+    open: ['feeder'],
+    asks: [
+      ['post', 'wool', 80],
+      ['shop', 'roving', 20],
     ],
-    terrain: LAND(
-      {
-        meadow: HOME_MEADOW,
-        water: [...RECT(8, 12, 14, 12), [16, 12], [17, 12], [18, 12], [20, 12], [21, 12], [22, 12], [23, 12]],
-        bridge: [
-          [15, 12],
-          [19, 12],
-        ],
-        bush: [
-          [19, 6],
-          [20, 6],
-          [19, 7],
-          [20, 7],
-          [21, 7],
-          [21, 6],
-        ],
-        tree: [
-          [23, 6],
-          [13, 13],
-        ],
-      },
-      {
-        '1,0': [['meadow', 8]],
-        '2,0': [['bush', 6]],
-        '0,1': [['meadow', 10]],
-        '3,1': [['bush', 8]],
-        '0,2': [
-          ['meadow', 5],
-          ['bush', 4],
-        ],
-        '3,2': [['bush', 5]],
-        '0,0': [['meadow', 14]],
-        '3,0': [['bush', 12]],
-      },
-    ),
-    start: ['belt', 'shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter'],
-    recipes: ['cyarn'],
-    cards: ['dye'],
-    orders: [
-      {
-        id: 'o1',
-        dock: 'school',
-        kind: 'dye',
-        total: 20,
-        batch: 4,
-        pay: 10,
-        unlocks: [
-          { at: 1, id: 'workshop' },
-          { at: 3, id: 'berry' },
-        ],
-      },
-      { id: 'o2', dock: 'shop', kind: 'cyarn', total: 60, batch: 5, pay: 90 },
-    ],
-    events: [{ when: 'lowland', card: 'land' }],
   },
   {
-    id: 'm6',
-    par: 620,
-    coins: 540,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(4)],
-    stock: { hay: 8, water: 8 },
-    sheep: 9,
-    docks: [
-      ['market', 9],
-      ['atelier', 16],
-      ['school', 18],
-      ['fair', 20],
+    open: ['splitter'],
+    asks: [
+      ['post', 'wool', 100],
+      ['shop', 'roving', 24],
     ],
-    terrain: LAND(
-      {
-        meadow: HOME_MEADOW,
-        water: [
-          [8, 11],
-          [9, 11],
-          [8, 12],
-          [9, 12],
-        ],
-        bush: [
-          [21, 7],
-          [22, 7],
-          [21, 8],
-        ],
-        tree: [
-          [16, 6],
-          [22, 5],
-          [14, 13],
-        ],
-        rock: [[19, 11]],
-      },
-      {
-        '1,0': [['meadow', 9]],
-        '2,0': [
-          ['bush', 5],
-          ['meadow', 5],
-        ],
-        '0,1': [
-          ['meadow', 7],
-          ['water', 4],
-        ],
-        '3,1': [['bush', 9]],
-        '0,2': [['water', 8]],
-        '3,2': [
-          ['bush', 4],
-          ['water', 4],
-        ],
-        '0,0': [['meadow', 15]],
-        '3,0': [['bush', 12]],
-      },
-    ),
-    start: ['belt', 'shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'berry', 'workshop'],
-    recipes: ['cyarn', 'sweater'],
-    cards: ['sweater'],
-    orders: [
-      { id: 'o1', dock: 'atelier', kind: 'sweater', total: 18, batch: 3, pay: 110 },
-      { id: 'o2', dock: 'school', kind: 'cyarn', total: 16, batch: 4, pay: 70 },
-      { id: 'o3', dock: 'fair', kind: 'felt', total: 16, batch: 4, pay: 35 },
-    ],
-    events: [{ when: 'lowland', card: 'land' }],
   },
   {
-    id: 'm7',
-    par: 560,
-    coins: 620,
-    plots: CENTRAL,
-    needs: { food: true, water: true },
-    pastures: [pasture(4)],
-    stock: { hay: 8, water: 8 },
-    sheep: 12,
-    docks: [
-      ['market', 9],
-      ['post', 16],
-      ['school', 18],
-      ['atelier', 20],
+    open: ['spinner'],
+    asks: [
+      ['shop', 'roving', 30],
+      ['atelier', 'yarn', 16],
     ],
-    terrain: LAND(
-      {
-        meadow: HOME_MEADOW,
-        water: [...RECT(8, 12, 17, 12), [19, 12], [20, 12], [21, 12], [23, 12]],
-        bridge: [
-          [18, 12],
-          [22, 12],
-        ],
-        bush: [
-          [21, 7],
-          [22, 7],
-        ],
-        tree: [
-          [16, 6],
-          [23, 5],
-        ],
-        rock: [
-          [14, 13],
-          [21, 13],
-        ],
-      },
-      {
-        '1,0': [['meadow', 10]],
-        '2,0': [['bush', 7]],
-        '0,1': [
-          ['meadow', 6],
-          ['bush', 4],
-        ],
-        '3,1': [['bush', 9]],
-        '0,2': [
-          ['water', 6],
-          ['meadow', 6],
-        ],
-        '3,2': [
-          ['bush', 5],
-          ['water', 5],
-        ],
-        '0,0': [['meadow', 16]],
-        '3,0': [
-          ['bush', 8],
-          ['meadow', 8],
-        ],
-      },
-    ),
-    start: ['belt', 'shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'berry', 'workshop'],
-    recipes: ['cyarn', 'sweater', 'valenki'],
-    cards: ['valenki'],
-    orders: [
-      { id: 'o1', dock: 'post', kind: 'valenki', total: 12, batch: 2, pay: 85 },
-      { id: 'o2', dock: 'atelier', kind: 'sweater', total: 10, batch: 2, pay: 75 },
-      { id: 'o3', dock: 'school', kind: 'cyarn', total: 15, batch: 5, pay: 90 },
+  },
+  {
+    open: ['merger'],
+    asks: [
+      ['post', 'wool', 150],
+      ['atelier', 'yarn', 24],
     ],
-    events: [{ when: 'lowland', card: 'land' }],
+  },
+  {
+    open: ['felter'],
+    asks: [
+      ['shop', 'roving', 40],
+      ['cobbler', 'felt', 16],
+    ],
+  },
+  {
+    open: ['sow'],
+    asks: [
+      ['post', 'wool', 160],
+      ['atelier', 'yarn', 30],
+      ['cobbler', 'felt', 20],
+    ],
+  },
+  {
+    open: ['berry'],
+    asks: [
+      ['school', 'dye', 24],
+      ['shop', 'roving', 40],
+    ],
+  },
+  {
+    open: ['dyer'],
+    asks: [
+      ['school', 'pwool', 30],
+      ['atelier', 'yarn', 30],
+    ],
+  },
+  {
+    open: ['seeder'],
+    asks: [
+      ['school', 'pyarn', 12],
+      ['cobbler', 'felt', 16],
+      ['post', 'wool', 120],
+    ],
+  },
+  {
+    open: ['workshop'],
+    asks: [
+      ['atelier', 'sweater', 8],
+      ['school', 'pyarn', 14],
+    ],
+  },
+  {
+    open: ['valenki'],
+    asks: [
+      ['cobbler', 'valenki', 5],
+      ['shop', 'roving', 40],
+    ],
+  },
+  {
+    open: [],
+    asks: [
+      ['fair', 'sweater', 10],
+      ['cobbler', 'valenki', 8],
+      ['post', 'wool', 200],
+    ],
   },
 ]
+/** Chapter 1 ends with the last level of the table; after it the same clients ask again, `grow` times more each level. */
+export const AFTER = { grow: 1.3 } as const
 
-export function missionDef(id: string): MissionDef {
-  return MISSIONS.find((m) => m.id === id) ?? MISSIONS[0]!
+// ---------------------------------------------------------------- the long game's map (GDD 2, 6.2)
+
+/**
+ * How the game starts: coins for the shearer and the belt loop that brings its sheep back, the first pen with four
+ * fluffy sheep in it, and the four central plots.
+ */
+export const START = {
+  coins: 80,
+  sheep: 4,
+  pen: { x: 11, y: 11, dir: 0 as Dir },
+  plots: [
+    [1, 2],
+    [2, 2],
+    [1, 3],
+    [2, 3],
+  ] as readonly Spot[],
+} as const
+
+/** Cells of several inclusive rectangles. */
+const RECTS = (...r: [number, number, number, number][]) => r.flatMap(([x0, y0, x1, y1]) => RECT(x0, y0, x1, y1))
+
+/**
+ * The terrain, placed by hand so the farm has room to grow the way the bot builds it (game/plan.ts): a small meadow by
+ * the first pen, every outer plot with its own deposit so each one is worth buying (the author, 14.10.2026: «какой
+ * смысл от остальных»), a pond and a few trees. The east columns and the top row are the land that rises as the island
+ * grows (ISLAND_GROW).
+ */
+export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
+  meadow: RECTS(
+    // the centre: below the first pen's loop, where its second pen leaves room
+    [17, 14, 20, 14],
+    [15, 13, 15, 13],
+    // north: left of the middle (below the west loop's second pen), right of the middle
+    [8, 9, 10, 10],
+    [13, 6, 14, 8],
+    [16, 6, 19, 8],
+    // north-east
+    [31, 6, 31, 9],
+    [29, 9, 30, 9],
+    // west and east
+    [0, 13, 1, 14],
+    [29, 11, 31, 13],
+    // south-west, south-east
+    [0, 16, 2, 18],
+    [29, 19, 31, 19],
+    // the east, under the sky until the island grows there: beside each pen, and by the mower of its loop
+    [32, 6, 33, 8],
+    [35, 15, 37, 16],
+    [40, 6, 41, 8],
+    [44, 15, 46, 16],
+    // the far row, under the sky until the island grows: clear of the row the west and north-east loops come back by
+    [1, 0, 4, 1],
+    [9, 0, 12, 1],
+    [17, 1, 21, 2],
+    [25, 1, 27, 2],
+    [33, 1, 36, 2],
+    [45, 1, 47, 3],
+  ),
+  bush: RECTS([22, 9, 23, 11], [0, 9, 2, 11], [30, 16, 31, 18], [13, 2, 14, 3], [28, 0, 31, 1], [32, 10, 33, 11], [40, 10, 41, 11], [41, 1, 43, 2]),
+  tree: [
+    [9, 12],
+    [23, 18],
+    [12, 16],
+    [3, 15],
+    [38, 17],
+    [45, 18],
+  ],
+  rock: [
+    [10, 18],
+    [29, 15],
+    [47, 11],
+  ],
+  water: RECTS([21, 16, 22, 17]),
 }

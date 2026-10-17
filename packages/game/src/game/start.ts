@@ -1,10 +1,9 @@
-import type { CardId, MissionId } from './balance'
-import { res, Mission, createGameWorld, type World, type WorldOptions } from './world'
-import { queueCard } from './systems/unlocks'
+import { createGameWorld, type World, type WorldOptions } from './world'
+import { startVillage } from './systems/village'
 
-/** A world ready to play: `createGameWorld` plus the mission's opening cards. */
-export function startWorld(id: MissionId, opts: WorldOptions = {}): World {
-  const world = createGameWorld(id, opts)
-  for (const c of res(world, Mission).def.cards) queueCard(world, c as CardId)
+/** A world ready to play: `createGameWorld` plus the village's first level, which opens the shearer with its card. */
+export function startWorld(opts: WorldOptions = {}): World {
+  const world = createGameWorld(opts)
+  startVillage(world)
   return world
 }

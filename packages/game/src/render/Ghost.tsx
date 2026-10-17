@@ -1,12 +1,13 @@
 import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Vector2, Vector3, type Group, type Mesh } from 'three'
-import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, RES, type BuildingId, type Dir, dimsOf } from '@/game/balance'
+import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Sprite, Vector2, Vector3, type Group, type Mesh } from 'three'
+import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { anchorAt, buildPrice, footprint, get, inCells, inGrid, outCells, pastureAt, reachCells, whyNot } from '@/game/grid'
+import { anchorAt, buildPrice, footprint, get, inCells, inGood, inGrid, onIsland, outCells, outGood, pastureAt, reachCells, whyNot } from '@/game/grid'
 import { pathDirs, routeCells } from '@/game/actions/path'
-import { Field, Flock, GameState, Plant, Ui, blankBuilding, key, res, unkey } from '@/game/world'
+import { Field, Flock, GameState, Plant, Ui, blankBuilding, entryOf, exitOf, isOn, key, res, stockOf, unkey } from '@/game/world'
+import { RING_IN, RING_OUT, badgeMaterial } from './iconSprite'
 import { useT } from '@/i18n'
 import { UI } from '@/i18n/ui'
 import { RES_NAMES, WHY_TEXT } from '@/i18n/content'
@@ -28,7 +29,8 @@ import { markOutlined, unmarkOutlined } from '@kit/outline'
  * border, and thin lemon dashes run from the resources it takes. Where it can't stand, or there aren't the coins for
  * it, the block and the outline go red, the model reddens a little, and the reason shows above it.
  */
-const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45 } as const
+/** `chip`: the icon badge beside an arrow, its size and how far past the arrow it sits (cells). */
+const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45, chip: 0.42, chipGap: 0.4, chips: 48 } as const
 /**
  * What is held keeps its own colours, outside a producer's reach tint (a critic: the tint greyed the mower in hand);
  * where it can't stand, it only reddens a little: the red block and line say it.
@@ -150,6 +152,18 @@ export function Ghost() {
   const dashes = useInstanced(GEO.box(), DASH_MAT, 900, 'ghost_reach_dashes', false)
   const belt = useBeltPieces(160, 'ghost_belt', false)
   const b = useMemo(() => ({ frame: new Batch(frameM), inArrows: new Batch(inArrows), outArrows: new Batch(outArrows), dashes: new Batch(dashes) }), [frameM, inArrows, outArrows, dashes])
+  // the icon beside each arrow: what goes in or comes out there (the `portIcons` system)
+  const chips = useMemo(
+    () =>
+      Array.from({ length: PLACE.chips }, () => {
+        const c = new Sprite()
+        c.renderOrder = 31
+        c.visible = false
+        c.scale.setScalar(PLACE.chip)
+        return c
+      }),
+    [],
+  )
   dashes.renderOrder = 20
   inArrows.renderOrder = outArrows.renderOrder = 30
   // the line of belt in hand is outlined as one thing, as a building in hand is
@@ -165,6 +179,8 @@ export function Ghost() {
       h = ui.hover,
       time = state.clock.elapsedTime
     for (const q of [...Object.values(b), ...Object.values(belt)]) q.begin()
+    let nChip = 0
+    const icons = isOn(world, 'portIcons')
     let lab: typeof label = null
     if (ghost.current) ghost.current.visible = false
     if (block.current) block.current.visible = false
@@ -190,26 +206,32 @@ export function Ghost() {
     // up the screen, along the ground: an arrow beyond an edge facing that way stands further out, clear of the model
     const fx = -Math.sin(cam.yaw),
       fz = -Math.cos(cam.yaw)
-    /** An arrow just outside the edge (ex, ez), along d: into it (the way in) or out of it. */
-    const arrow = (ex: number, ez: number, d: number, into: boolean, y: number) => {
+    /** An arrow just outside the edge (ex, ez), along d: into it (the way in) or out of it; past it, the icon of what goes through. */
+    const arrow = (ex: number, ez: number, d: number, into: boolean, y: number, kind?: string | null) => {
       const [dx, dz] = DIRS[d]!,
         side = into ? -1 : 1,
         away = (dx * fx + dz * fz) * side > 0.5
       const k = side * (away ? PLACE.arrowFar : PLACE.arrowOut)
       ;(into ? b.inArrows : b.outArrows).put(ex + dx * k, y, ez + dz * k, yawOf(d))
+      if (!kind || !icons || nChip >= chips.length) return
+      const c = chips[nChip++]!,
+        far = k + side * PLACE.chipGap
+      c.material = badgeMaterial(kind, into ? RING_IN : RING_OUT)
+      c.position.set(ex + dx * far, y + 0.2, ez + dz * far)
+      c.visible = true
     }
     // every way in and out of a building, at height `at` — the same for every building, from the rules (inCells,
     // outCells)
     const showFlow = (type: BuildingId | 'dock', x: number, y: number, dir: Dir, at: number, probe = blankBuilding(type, x, y, dir)) => {
-      for (const c of outCells(probe)) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, at)
-      for (const i of inCells(world, probe)) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, at)
+      for (const c of outCells(probe)) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, at, outGood(probe, c))
+      for (const i of inCells(world, probe)) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, at, inGood(probe, i))
     }
     // a pasture's way out and way in, the same way
     const showPasture = (pa: (typeof flock.pastures)[number], at: number, exit = true, entry = true) => {
       const [dx, dz] = DIRS[pa.dir]!
-      if (exit) arrow(pa.exit.x + 0.5 - dx * 0.5, pa.exit.y + 0.5 - dz * 0.5, pa.dir, false, at)
+      if (exit) arrow(pa.exit.x + 0.5 - dx * 0.5, pa.exit.y + 0.5 - dz * 0.5, pa.dir, false, at, 'sheep')
       const [ix, iz] = DIRS[pa.entry.d]!
-      if (entry) arrow(pa.entry.x + 0.5 + ix * 0.5, pa.entry.y + 0.5 + iz * 0.5, pa.entry.d, true, at)
+      if (entry) arrow(pa.entry.x + 0.5 + ix * 0.5, pa.entry.y + 0.5 + iz * 0.5, pa.entry.d, true, at, 'sheep')
     }
     const flock = res(world, Flock)
     /**
@@ -222,8 +244,8 @@ export function Ghost() {
       for (const [x, y] of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) near.add(key(x + dx, y + dy))
       for (const nb of res(world, Plant).b.values()) {
         if (nb.type === 'belt') continue
-        for (const c of outCells(nb)) if (near.has(key(c.x, c.y))) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, 0.3)
-        for (const i of inCells(world, nb)) if (near.has(key(i.x, i.y))) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, 0.3)
+        for (const c of outCells(nb)) if (near.has(key(c.x, c.y))) arrow(c.sx + 0.5 + DIRS[c.d]![0] * 0.5, c.sy + 0.5 + DIRS[c.d]![1] * 0.5, c.d, false, 0.3, outGood(nb, c))
+        for (const i of inCells(world, nb)) if (near.has(key(i.x, i.y))) arrow(i.sx + 0.5 - DIRS[i.d]![0] * 0.5, i.sy + 0.5 - DIRS[i.d]![1] * 0.5, i.d, true, 0.3, inGood(nb, i))
       }
       for (const pa of flock.pastures) showPasture(pa, 0.3, near.has(key(pa.exit.x, pa.exit.y)), near.has(key(pa.entry.x, pa.entry.y)))
     }
@@ -275,9 +297,11 @@ export function Ghost() {
         const pa = hb ? null : pastureAt(world, h.x, h.y)
         if (pa) showPasture(pa, 0.3)
         // a resource says what it is and how much is left in it (the author), on any land
-        const rc = hb || pa || h.sheep !== null ? null : res(world, Field).res.get(key(h.x, h.y))
-        // water never runs out, so a pond has no count
-        if (rc) lab = { x: h.x + 0.5, y: rc.t === 'water' ? 0.45 : 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + (rc.t === 'water' ? '' : ' · ' + rc.left + '/' + RES[rc.t].max), tone: 'ink', icon: rc.t === 'water' ? 'pond' : rc.t }
+        const rc = hb || pa || h.sheep !== null || !onIsland(world, h.x, h.y) ? null : res(world, Field).res.get(key(h.x, h.y))
+        if (rc) lab = { x: h.x + 0.5, y: 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + ' · ' + rc.left + '/' + rc.max, tone: 'ink', icon: rc.t }
+        // a seed says what it grows into and how long it still takes
+        const sp = hb || pa || rc || h.sheep !== null ? null : res(world, Field).sprouts.get(key(h.x, h.y))
+        if (sp) lab = { x: h.x + 0.5, y: 0.6, z: h.y + 0.5, text: t(RES_NAMES.sprout) + ' · ' + Math.ceil(sp.left) + 's', tone: 'ink', icon: sp.t }
       } else if (tool === 'erase') {
         const hb = hovered ?? get(world, h.x, h.y)
         if (hb && !hb.fixed) {
@@ -334,6 +358,14 @@ export function Ghost() {
             if (short) lab = { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
           }
         }
+      } else if (tool === 'sow') {
+        // a seed in hand: the cell it would go on, the seed and how many are in stock, or why not
+        const why = whyNot(world, 'sow', h.x, h.y)
+        const seed = SEED[ui.seed]
+        showBlock([[h.x, h.y]], lift, !!why || !stockOf(world, seed))
+        lab = why
+          ? { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(WHY_TEXT[why]), tone: 'bad' }
+          : { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: String(stockOf(world, seed)), tone: stockOf(world, seed) ? 'ink' : 'bad', icon: seed }
       } else {
         const type = tool as BuildingId
         // centred on the pointer and turned as the player chose (a 2×1 lies along its output)
@@ -365,6 +397,16 @@ export function Ghost() {
           if (short) lab = { x: ax + bw / 2, y: over, z: ay + bh / 2, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
           showFlow(type, ax, ay, ui.rot, lift)
           showNear(footprint(ax, ay, bw, bh))
+          if (type === 'pen') {
+            // a pen's way out and way in, as the built one shows them
+            const pen = { x: ax, y: ay, w: bw, h: bh, dir: ui.rot }
+            const ex = exitOf(pen),
+              en = entryOf(pen)
+            const [dx, dz] = DIRS[ui.rot]!,
+              [ix, iz] = DIRS[en.d]!
+            arrow(ex.x + 0.5 - dx * 0.5, ex.y + 0.5 - dz * 0.5, ui.rot, false, lift, 'sheep')
+            arrow(en.x + 0.5 + ix * 0.5, en.y + 0.5 + iz * 0.5, en.d, true, lift, 'sheep')
+          }
         }
       }
     }
@@ -389,6 +431,7 @@ export function Ghost() {
       }
     }
     for (const q of [...Object.values(b), ...Object.values(belt)]) q.end()
+    for (let i = nChip; i < chips.length; i++) chips[i]!.visible = false
     // nothing in hand: its outline goes
     if (!held && tint.current && body.current) {
       unmarkOutlined(body.current)
@@ -416,6 +459,9 @@ export function Ghost() {
       <mesh ref={stray} geometry={GEO.box()} material={flat(LOOK.bad, 0.6)} visible={false} />
       {Object.values(b).map((q) => (
         <primitive key={q.mesh.name} object={q.mesh} />
+      ))}
+      {chips.map((c, i) => (
+        <primitive key={'chip' + i} object={c} />
       ))}
       <group ref={beltLine}>
         {Object.values(belt).map((q) => (

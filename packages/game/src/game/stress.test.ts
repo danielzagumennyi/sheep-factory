@@ -10,14 +10,14 @@ import { Flock, Plant, res } from './world'
  * become quadratic, not a few percent.
  */
 it('a big factory steps in well under a millisecond and keeps flowing', () => {
-  const w = startWorld('m7', { seed: 4 })
+  const w = startWorld({ seed: 4 })
   buildStress(w)
   const plant = [...res(w, Plant).b.values()]
   const belts = plant.filter((b) => b.type === 'belt')
   const machines = plant.filter((b) => b.type !== 'belt' && b.type !== 'dock')
-  expect(belts.length).toBeGreaterThan(180)
+  expect(belts.length).toBeGreaterThan(150)
   expect(machines.length).toBeGreaterThanOrEqual(30)
-  expect(res(w, Flock).sheep.length).toBeGreaterThanOrEqual(48)
+  expect(res(w, Flock).sheep.length).toBeGreaterThanOrEqual(60)
   // where every good on a belt is now, and how many jobs are done so far
   const at = new Map(belts.filter((b) => b.item).map((b) => [b.item!, b.x + ',' + b.y]))
   const jobs = machines.reduce((s, m) => s + m.count, 0)
@@ -28,10 +28,10 @@ it('a big factory steps in well under a millisecond and keeps flowing', () => {
     if (i % 300 === 0) feedStress(w)
   }
   const ms = (performance.now() - t0) / STEPS
-  // goods moved round their loops, the machines kept working
-  let moved = 0
-  for (const b of res(w, Plant).b.values()) if (b.item && at.has(b.item) && at.get(b.item) !== b.x + ',' + b.y) moved++
-  expect(moved).toBeGreaterThan(at.size * 0.5)
+  // goods moved on — round their loops, or into a machine or a dock — and the machines kept working
+  let stuck = 0
+  for (const b of res(w, Plant).b.values()) if (b.item && at.get(b.item) === b.x + ',' + b.y) stuck++
+  expect(stuck).toBeLessThan(at.size * 0.5)
   expect(machines.reduce((s, m) => s + m.count, 0) - jobs).toBeGreaterThan(machines.length * 3)
   expect(ms).toBeLessThan(1)
   w.destroy()

@@ -1,5 +1,5 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, MARKET, DOCK, GRID, RES, SHEEP_NAMES, missionDef, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type MissionDef, type MissionId, type OrderDef, type RecipeId, type ResId, type TerrainId } from './balance'
+import { dimsOf, DOCK, DOCK_X, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -39,10 +39,10 @@ export interface Building {
   /** A belt or splitter carries one item; a merger buffers a few. */
   item: Item | null
   buf: Item[]
-  /** A workshop's input store, by item. */
+  /** A machine's input store, by item (a station's good, a seeder's seeds). */
   inv: Partial<Record<ItemId, number>>
-  /** The current job: a sheep in the shearer, or a workshop's batch. */
-  slot: { sheep?: SheepT; pass?: boolean } | null
+  /** The current job: a sheep in a station, or a machine's batch (which of its jobs). */
+  slot: { sheep?: SheepT; pass?: boolean; job?: Job } | null
   timer: number
   total: number
   /** Finished outputs waiting for room. */
@@ -56,9 +56,10 @@ export interface Building {
   h: number
   /** What a workshop makes now (null for every other building). */
   recipe: RecipeId | null
-  lvl: number
+  /** What a seeder sows (null for every other building). */
+  seed: ResId | null
   count: number
-  /** A producer's progress towards the next take, seconds. */
+  /** A producer's (or a seeder's) progress towards the next take, seconds. */
   prog: number
   status: MachineStatus
   rules: SplitRules | null
@@ -72,12 +73,16 @@ export interface Building {
   phase: number
 }
 
-export type SheepState = 'pasture' | 'belt' | 'machine' | 'waiting' | 'held'
+/** `transit`: crossing a pen that is not its own, from its way in to its way out, on the way home round a shared loop. */
+export type SheepState = 'pasture' | 'belt' | 'machine' | 'waiting' | 'held' | 'transit'
 export interface SheepT {
   id: number
   name: string
   wool: number
+  /** The pen it lives in (its id). */
   home: number
+  /** The pen it is crossing on its way home (state `transit`), or null. */
+  via: number | null
   state: SheepState
   /** Position in cells (floats). */
   px: number
@@ -86,14 +91,15 @@ export interface SheepT {
   ty: number
   wanderT: number
   clicks: number
-  /** This fleece is paid for: the pasture took its hay and water from the stock, and it grows. */
+  /** It has eaten (at a feeder, or from the hand): its next fleece grows. */
   fed: boolean
-  /** Seconds it has waited in the pasture for its hay and water: the longest wait is fed first. */
-  waitT: number
+  /** Its fleece went through the dyer: it shears pink. */
+  pink: boolean
   face: Dir
   waitAt: string | null
 }
 
+/** A pen (GDD 5): a 3×3 building of its own, with a way out and a way in, for PEN.cap sheep. */
 export interface PastureT {
   id: number
   x: number
@@ -102,30 +108,25 @@ export interface PastureT {
   h: number
   dir: Dir
   cap: number
-  grown: number
   exitT: number
-  /** What its hungry sheep wait for that the stock hasn't got: shown once over the pasture. */
-  want: ItemId[]
   exit: { x: number; y: number }
   /** The cell just outside where sheep come back in, and the way they move as they come in. */
   entry: { x: number; y: number; d: Dir }
-  /** Its feeder and trough (keys into Plant.b), fixed 2×1 stores on its two free sides; null where the mission needs none. */
-  feeder: string | null
-  trough: string | null
+  paid: number
 }
 
-export interface OrderT extends OrderDef {
-  idx: number
-  done: boolean
+/** A client's ask (GDD 7): this many of a good. It pays the good's price for each one as it comes. */
+export interface AskT {
+  id: number
+  client: ClientId
+  kind: ItemId
+  total: number
   have: number
-  paid: number
-  /** Items delivered after the order was done (GDD 7.3). */
-  extra: number
 }
 
 export type TruckState = 'arrive' | 'in' | 'park' | 'out' | 'leave'
 export interface TruckT {
-  order: string
+  ask: number
   x: number
   tx: number
   state: TruckState
@@ -136,6 +137,8 @@ export interface TruckT {
 export interface ResCell {
   t: ResId
   left: number
+  /** What it held when it was new: a wild cell more, a sown one less (SOW). */
+  max: number
 }
 
 /** Something for the view to show once: a number floating up, a puff, a sound. Drained every frame. */
@@ -154,18 +157,17 @@ export type Selection = { kind: 'b'; key: string } | { kind: 'plot'; px: number;
 export const Time = trait(() => ({ t: 0, dt: 1 / 60, frame: 0, alpha: 0 }))
 
 export const GameState = trait(() => ({
-  mission: 'm1' as MissionId,
-  /** Seconds of mission time (stars count from it). */
+  /** Seconds of game time. */
   clock: 0,
   coins: 0,
   /** 0 = pause; 1, 2, 4 = speed. */
   speed: 1,
-  finished: false,
-  stars: 0,
-  finishT: 0,
-  /** A short beat between the last batch and the result screen. */
-  resultT: 0,
-  showResult: false,
+  /** The village level open now, from 0 (LEVELS[level], or past the table). */
+  level: 0,
+  /** The first chapter's last level is done (its card shown once). */
+  chapterDone: false,
+  /** Sheep need food (from the feeder's level on): until then a shorn sheep grows its fleece by itself. */
+  food: false,
   /** While true, deliveries don't float their own numbers (a hand delivery floats one total). */
   quiet: false,
   strayT: 0,
@@ -183,33 +185,36 @@ export const GameState = trait(() => ({
   plantVersion: 0,
 }))
 
-export const Mission = trait(() => ({ def: missionDef('m1') as MissionDef }))
-
 export const Field = trait(() => ({
   terrain: new Map<string, TerrainId>(),
   res: new Map<string, ResCell>(),
+  /** Seeds growing: what they will be and the seconds left (GDD 6.1). */
+  sprouts: new Map<string, { t: ResId; left: number }>(),
   plots: new Set<string>(),
-  /** Plots that held anything at the start: for sale even once picked bare by hand (an empty one never is). */
+  /** Plots that held anything at the start: for sale (an empty one never is). */
   forSale: new Set<string>(),
+  /** The island's first row and the column past its east edge: the rest is under the sky until it rises (ISLAND_GROW). */
+  top: ISLAND_START.top as number,
+  right: ISLAND_START.right as number,
 }))
 
 /** Buildings by their top-left cell; `occ` maps every other cell a 2×2 building covers to that cell. */
 export const Plant = trait(() => ({ b: new Map<string, Building>(), occ: new Map<string, string>() }))
 
-export const Flock = trait(() => ({ sheep: [] as SheepT[], pastures: [] as PastureT[] }))
+export const Flock = trait(() => ({ sheep: [] as SheepT[], pastures: [] as PastureT[], penUid: 0 }))
 
-export const Market = trait(() => ({ orders: [] as OrderT[], trucks: [] as TruckT[] }))
+export const Market = trait(() => ({ asks: [] as AskT[], trucks: [] as TruckT[], askUid: 0 }))
 
 /**
- * The barn's stock, which is the hand too (the author: «этот склад и рука одно и тоже»): what the player gathers,
- * shears and picks up, and what belts bring into a barn, all counts here with no limit. The sheep eat and drink from
- * it, docks are loaded and the market trades from it.
+ * The stock, which is the hand too (the author: «этот склад и рука одно и тоже»): what the player gathers, shears and
+ * picks up counts here with no limit. Docks are loaded and the market trades from it, the hand feeds sheep and sows
+ * from it; machines take only from belts (docs/05-REWORK.md).
  */
 export const Stock = trait(() => ({ n: {} as Partial<Record<ItemId, number>> }))
 
 export const Unlocks = trait(() => ({
   unlocked: new Set<BuildingId>(),
-  /** Recipes the workshop knows in this mission. */
+  /** Recipes the workshop knows. */
   recipes: new Set<RecipeId>(),
   /** Tools that glow on the hotbar until first picked. */
   fresh: new Set<BuildingId>(),
@@ -228,7 +233,9 @@ export const Ui = trait(() => ({
   tool: 'hand' as Tool,
   rot: 0 as Dir,
   /** The recipe a newly placed workshop starts with: the last one picked, or the newest learnt. */
-  recipe: 'cyarn' as RecipeId,
+  recipe: 'sweater' as RecipeId,
+  /** What the hand sows, and what a new seeder starts with. */
+  seed: 'meadow' as ResId,
   sel: null as Selection,
   pending: null as { x: number; y: number } | null,
   /** The cell and ground point under the pointer, and the sheep or building it is over (picked by its model, the nearest one). */
@@ -240,9 +247,50 @@ export const Ui = trait(() => ({
 
 export const Fx = trait(() => ({ q: [] as FxEvent[] }))
 
-export const Stats = trait(() => ({ earned: 0, spent: 0, handShear: 0 }))
+export const Stats = trait(() => ({ earned: 0, spent: 0, handShear: 0, handSow: 0 }))
 
 export const Rng = trait(() => ({ next: makeRng(1) }))
+
+// ---------------------------------------------------------------- switches
+
+/**
+ * The game's systems by name, each of which can be switched off (the author, 17.10.2026: «игра должна быть разбита на
+ * системы и их легко должно быть отключать»). A world keeps the set that is on (`Systems`); the simulation's steps, the
+ * effects, the keys and the views each look up their own. The main menu's farm is the game with most of them off
+ * (DEMO): only to look at.
+ */
+export const SYSTEMS = [
+  // the simulation's steps (systems/index.ts), in their order
+  'trucks', // trucks drive to their docks and away
+  'sheep', // sheep walk their loops, eat, grow their wool
+  'sprouts', // sown cells grow
+  'hints', // the land hint: its card when the owned land runs low
+  'belts', // goods ride the belts
+  'machines', // machines and stations work
+  // what the farm tells the player
+  'village', // asks are counted, a done level opens the next with its cards, the island grows
+  'floats', // numbers float up from the field
+  'sound',
+  // the player's hands and what shows them
+  'keys', // the keyboard on the field: tools, rotate, erase, pause, the camera
+  'pointer', // the mouse and touchpad on the field: the hand, building, the camera
+  'ghost', // what is in hand: its preview, the cell grid, the reach
+  'hover', // the outline and the label under the pointer
+  'tags', // labels on the field: plots' prices, docks' signs, trucks' and pens' counts, the signs over machines and sheep
+  'portIcons', // beside every way in and out, while building or pointing at it: what goes through it
+  'hud', // the screen's panels, fed a few times a second
+  'fps', // the frame rate panel
+  'orbit', // the camera turning slowly round the farm by itself
+] as const
+export type SystemId = (typeof SYSTEMS)[number]
+/** The game as played: everything but the camera's own turning. */
+export const PLAY: readonly SystemId[] = SYSTEMS.filter((s) => s !== 'orbit')
+/**
+ * The main menu's farm (the author: «в демо на главном меню должно быть только визуально»): the farm works and the
+ * camera turns round it; no hands, no grid, no numbers, no sound, no levels.
+ */
+export const DEMO: readonly SystemId[] = ['trucks', 'sheep', 'sprouts', 'belts', 'machines', 'orbit']
+export const Systems = trait(() => ({ on: new Set<SystemId>(PLAY) }))
 
 // ---------------------------------------------------------------- access
 
@@ -259,7 +307,11 @@ export const unkey = (k: string): [number, number] => {
   return [Number(k.slice(0, i)), Number(k.slice(i + 1))]
 }
 
+/** Is this system of the world on? */
+export const isOn = (world: World, id: SystemId) => res(world, Systems).on.has(id)
+
 export function emit(world: World, e: FxEvent) {
+  if ((e.kind === 'float' && !isOn(world, 'floats')) || (e.kind === 'sound' && !isOn(world, 'sound'))) return
   const q = res(world, Fx).q
   // headless runs never drain the queue: keep it bounded
   if (q.length < 400) q.push(e)
@@ -274,67 +326,70 @@ export interface WorldOptions {
   seed?: number
   /** Once-per-game cards already seen in earlier runs. */
   seenEver?: Iterable<CardId>
+  /** The systems that are on (PLAY when not given). */
+  systems?: readonly SystemId[]
 }
 
-/** A fresh world for one mission: terrain, plots, the pasture with its flock, docks with their trucks, opening cards. */
-export function createGameWorld(id: MissionId = 'm1', opts: WorldOptions = {}): World {
+/** A world with every resource and nothing in it yet: what a fresh game and a loaded one start from. */
+export function emptyWorld(opts: WorldOptions = {}): World {
   const world = createWorld()
-  for (const t of [Time, GameState, Mission, Field, Plant, Flock, Market, Stock, Unlocks, Ui, Fx, Stats, Rng]) world.add(t)
-  const def = missionDef(id)
-  res(world, Mission).def = def
+  for (const t of [Time, GameState, Field, Plant, Flock, Market, Stock, Unlocks, Ui, Fx, Stats, Rng, Systems]) world.add(t)
   res(world, Rng).next = makeRng(opts.seed ?? 1)
-  const gs = res(world, GameState)
-  gs.mission = def.id
-  gs.coins = def.coins
+  if (opts.systems) res(world, Systems).on = new Set(opts.systems)
   const un = res(world, Unlocks)
-  for (const b of def.start) un.unlocked.add(b)
-  for (const r of def.recipes) un.recipes.add(r)
-  res(world, Ui).recipe = def.recipes[def.recipes.length - 1] ?? 'cyarn'
   for (const c of opts.seenEver ?? []) un.seenEver.add(c)
+  return world
+}
+
+/**
+ * A fresh long game (docs/05-REWORK.md): the map's terrain, the four central plots, the first pen with its fluffy
+ * sheep, the market. The village's first level (asks, docks, cards) is opened by `startWorld`.
+ */
+export function createGameWorld(opts: WorldOptions = {}): World {
+  const world = emptyWorld(opts)
+  res(world, GameState).coins = START.coins
   const f = res(world, Field)
-  for (const [px, py] of def.plots) f.plots.add(key(px, py))
-  for (const [t, cells] of Object.entries(def.terrain) as [TerrainId, readonly (readonly [number, number])[]][])
+  for (const [px, py] of START.plots) f.plots.add(key(px, py))
+  for (const [t, cells] of Object.entries(MAP_TERRAIN) as [TerrainId, readonly (readonly [number, number])[]][])
     for (const [x, y] of cells) {
       f.terrain.set(key(x, y), t)
-      if (t === 'meadow' || t === 'water' || t === 'bush') f.res.set(key(x, y), { t, left: RES[t].max })
+      if (t === 'meadow' || t === 'bush') f.res.set(key(x, y), { t, left: RES[t].max, max: RES[t].max })
     }
   for (const k of f.res.keys()) {
     const [x, y] = unkey(k)
     f.forSale.add(key(Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)))
   }
-  const flock = res(world, Flock)
-  const plant = res(world, Plant)
-  def.pastures.forEach((q, i) => {
-    const p: PastureT = { id: i, x: q.x, y: q.y, w: q.w, h: q.h, dir: q.dir, cap: q.w * q.h, grown: 0, exitT: 0, want: [], exit: exitOf(q), entry: entryOf(q), feeder: null, trough: null }
-    flock.pastures.push(p)
-    // its trough on the side right of the exit, its feeder on the back side — where the mission feeds and waters
-    if (def.needs.water) p.trough = key(...standBy(world, 'trough', p, ((p.dir + 1) % 4) as Dir))
-    if (def.needs.food) p.feeder = key(...standBy(world, 'feeder', p, ((p.dir + 2) % 4) as Dir))
-  })
-  for (let i = 0; i < def.sheep; i++) flock.sheep.push(makeSheep(world, 0, true))
-  Object.assign(res(world, Stock).n, def.stock ?? {})
-  // docks are 2×1 on the dock row; the market is a 2×2 stall reaching up into the row above
-  for (const [client, x] of def.docks) {
-    const m = client === 'market',
-      y = m ? GRID.roadY - MARKET.h + 1 : GRID.roadY
-    const d: Building = { ...blankBuilding('dock', x, y, 3), client, fixed: true, ...(m ? { w: MARKET.w, h: MARKET.h } : {}) }
-    plant.b.set(key(x, y), d)
-    for (let dy = 0; dy < d.h; dy++) for (let dx = 0; dx < d.w; dx++) if (dx || dy) plant.occ.set(key(x + dx, y + dy), key(x, y))
-  }
-  const market = res(world, Market)
-  def.orders.forEach((o, i) => {
-    const q: OrderT = { ...o, idx: i, done: false, have: 0, paid: 0, extra: 0 }
-    market.orders.push(q)
-    market.trucks.push({ order: q.id, x: -2 - market.trucks.length * 2, tx: dockXOf(def, o.dock) + (DOCK.w - 1) / 2, state: 'arrive', lane: 1 })
-  })
+  const p = makePen(world, START.pen.x, START.pen.y, START.pen.dir)
+  res(world, Flock).pastures.push(p)
+  for (let i = 0; i < START.sheep; i++) res(world, Flock).sheep.push(makeSheep(world, p.id, true))
   return world
 }
 
-function dockXOf(def: MissionDef, client: ClientId) {
-  return def.docks.find(([c]) => c === client)?.[1] ?? 0
+/**
+ * A client's dock on the dock row (the market's stall reaches up into the row above); nothing if it stands already.
+ * Away from DOCK_X it is one more dock of that client, on land the island grew (no truck parks there).
+ */
+export function addDock(world: World, client: ClientId, x: number = DOCK_X[client]) {
+  const plant = res(world, Plant)
+  for (const b of plant.b.values()) if (b.type === 'dock' && b.client === client && b.x === x) return b
+  const m = client === 'market',
+    y = m ? GRID.roadY - MARKET.h + 1 : GRID.roadY
+  const d: Building = { ...blankBuilding('dock', x, y, 3), client, fixed: true, ...(m ? { w: MARKET.w, h: MARKET.h } : {}) }
+  plant.b.set(key(x, y), d)
+  for (let dy = 0; dy < d.h; dy++) for (let dx = 0; dx < d.w; dx++) if (dx || dy) plant.occ.set(key(x + dx, y + dy), key(x, y))
+  return d
 }
 
-/** The cell just outside the pasture where its sheep leave (the middle of the side it faces). */
+/** A pen standing at (x, y), facing `dir` (its way out): not yet on the field. */
+export function makePen(world: World, x: number, y: number, dir: Dir, paid = 0): PastureT {
+  const [w, h] = dimsOf('pen', dir)
+  const q = { x, y, w, h, dir }
+  return { id: ++res(world, Flock).penUid, ...q, cap: PEN.cap, exitT: 0, exit: exitOf(q), entry: entryOf(q), paid }
+}
+/** A pen by its id. */
+export const penOf = (world: World, id: number) => res(world, Flock).pastures.find((p) => p.id === id) ?? null
+
+/** The cell just outside the pen where its sheep leave (the middle of the side it faces). */
 export function exitOf(p: { x: number; y: number; w: number; h: number; dir: Dir }) {
   const mx = p.x + Math.floor((p.w - 1) / 2),
     my = p.y + Math.floor((p.h - 1) / 2)
@@ -342,9 +397,9 @@ export function exitOf(p: { x: number; y: number; w: number; h: number; dir: Dir
 }
 
 /**
- * The cell just outside the pasture where sheep come back in (the author: «у загона нет понятного входа и выхода»): the
- * middle of the side a quarter turn left of the exit — so the loop from the shearer on the exit comes round and down
- * in — and the way they move as they come in.
+ * The cell just outside the pen where sheep come back in (the author: «у загона нет понятного входа и выхода»): the
+ * middle of the side a quarter turn left of the exit — so a loop from the exit comes round and down in — and the way
+ * they move as they come in.
  */
 export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Dir }) {
   const side = ((p.dir + 3) % 4) as Dir
@@ -352,50 +407,29 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
   return { ...e, d: ((side + 2) % 4) as Dir }
 }
 
-/**
- * Where a pasture's 2×1 store stands on side `s`: the last two cells along that side, just outside the fence, turned to
- * face the pasture, so its way in is from the open side away from the pen.
- */
-export function storeSpot(p: { x: number; y: number; w: number; h: number }, s: Dir): { x: number; y: number; dir: Dir } {
-  const along = s === 0 || s === 2 ? p.h : p.w,
-    i = along - 2
-  if (s === 0) return { x: p.x + p.w, y: p.y + i, dir: 2 }
-  if (s === 2) return { x: p.x - 1, y: p.y + i, dir: 0 }
-  if (s === 1) return { x: p.x + i, y: p.y + p.h, dir: 3 }
-  return { x: p.x + i, y: p.y - 1, dir: 1 }
-}
-/** Set a fixed store (a feeder or a trough) down by a pasture's side `s`; its top-left cell. */
-function standBy(world: World, type: 'feeder' | 'trough', p: PastureT, s: Dir): [number, number] {
-  const at = storeSpot(p, s)
-  const b: Building = { ...blankBuilding(type, at.x, at.y, at.dir), fixed: true }
-  const plant = res(world, Plant)
-  plant.b.set(key(b.x, b.y), b)
-  for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
-  return [at.x, at.y]
-}
-
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
   const [w, h] = type === 'dock' ? [DOCK.w, DOCK.h] : dimsOf(type, dir)
-  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, lvl: 1, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
+  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
 }
 
-/** A random spot inside a pasture where a sheep may stand (clear of the fence). */
+/** A random spot inside a pen where a sheep may stand (clear of the fence). */
 export function pastureSpot(world: World, p: PastureT) {
   const rnd = res(world, Rng).next
-  return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 1.15) }
+  return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
 }
 
-export function makeSheep(world: World, home: number, start = false): SheepT {
+/** A new sheep in pen `home`: fluffy (the flock a game starts with, a bought one) or shorn; hungry only once sheep need food. */
+export function makeSheep(world: World, home: number, fluffy = true): SheepT {
   const gs = res(world, GameState),
-    flock = res(world, Flock),
-    rnd = res(world, Rng).next
-  const p = flock.pastures[home]!
+    flock = res(world, Flock)
+  const p = penOf(world, home)!
   const at = pastureSpot(world, p)
   return {
     id: ++gs.uid,
     name: SHEEP_NAMES[flock.sheep.length % SHEEP_NAMES.length]!,
-    wool: start ? 0.4 + rnd() * 0.6 : 0,
+    wool: fluffy ? 1 : 0,
     home,
+    via: null,
     state: 'pasture',
     px: at.x,
     py: at.y,
@@ -403,9 +437,9 @@ export function makeSheep(world: World, home: number, start = false): SheepT {
     ty: at.y,
     wanderT: 0,
     clicks: 0,
-    // the flock a mission starts with has its first fleece paid for, so wool comes from the first minute
-    fed: start,
-    waitT: 0,
+    // before food comes into the game every sheep counts as fed, so its fleece grows by itself
+    fed: !gs.food,
+    pink: false,
     face: 0,
     waitAt: null,
   }
