@@ -400,6 +400,9 @@ export const LOOK = {
   blockBadFloor: '#f07070',
   arrowIn: '#f5a3a8',
   arrowOut: '#a9c6ff',
+  /** The ring round a way in's and a way out's icon (render/iconSprite.ts): their arrows' colours, deeper so they show on grass. */
+  arrowInRing: '#e7738f',
+  arrowOutRing: '#6f97e6',
   reachDash: '#eeffbb',
   reachEdge: '#fff89a',
   reachTint: '#5f7fd0',

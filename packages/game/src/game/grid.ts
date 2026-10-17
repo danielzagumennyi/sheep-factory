@@ -262,6 +262,25 @@ export function entersAt(t: Building, tx: number, ty: number, d: Dir): InCell | 
   if (t.type === 'dock') return true
   return machineIns(t).find((c) => c.sx === tx && c.sy === ty && c.d === d) ?? null
 }
+/**
+ * What goes in by a way in, for its icon (the author: «нет нормальной индикации куда подсоединять овцу, а куда другой
+ * ресурс»): a sheep or the station's good, a workshop's input for that hatch, the first good of a machine's jobs (a
+ * carder shows wool though it takes pink too). Nothing for a belt, a splitter, a merger or a dock: they take anything.
+ */
+export function inGood(b: Pick<Building, 'type' | 'recipe'>, c: InCell): ItemId | 'sheep' | null {
+  if (c.takes) return c.takes
+  if (b.type === 'dock' || b.type === 'belt' || BUILDINGS[b.type].onBelt) return null
+  const j = jobsOf(b)[0]
+  return j ? (Object.keys(j.inp)[0] as ItemId) : null
+}
+/** What comes out by a way out, for its icon: the sheep from a station (the shearer's wool to its right), a producer's good, a machine's product. */
+export function outGood(b: Pick<Building, 'type' | 'recipe' | 'dir'>, c: OutCell): ItemId | 'sheep' | null {
+  if (b.type === 'dock' || b.type === 'belt' || BUILDINGS[b.type].onBelt) return null
+  const def = BUILDINGS[b.type]
+  if (def.station) return c.d === b.dir ? 'sheep' : 'wool'
+  if (def.gives) return def.gives
+  return jobsOf(b)[0]?.out ?? null
+}
 /** Where to put a building so that its way in is the footprint cell (x, y). */
 export function anchorForInput(type: BuildingId, dir: Dir, x: number, y: number): [number, number] {
   const [w, h] = dimsOf(type, dir)

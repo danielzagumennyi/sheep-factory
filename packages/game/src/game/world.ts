@@ -277,6 +277,7 @@ export const SYSTEMS = [
   'ghost', // what is in hand: its preview, the cell grid, the reach
   'hover', // the outline and the label under the pointer
   'tags', // labels on the field: plots' prices, docks' signs, trucks' and pens' counts, the signs over machines and sheep
+  'portIcons', // beside every way in and out, while building or pointing at it: what goes through it
   'hud', // the screen's panels, fed a few times a second
   'fps', // the frame rate panel
   'orbit', // the camera turning slowly round the farm by itself

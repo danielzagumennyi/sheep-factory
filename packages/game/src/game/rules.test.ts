@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, PEN, RECIPE_ORDER, SHEEP, SOW, TOOL_ORDER, type BuildingId, type Dir } from './balance'
-import { anchorForInput, get, inCells, outCells, plotPrice, reachOf, whyNot } from './grid'
+import { anchorForInput, get, inCells, inGood, outCells, outGood, plotPrice, reachOf, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setRecipe, setSeed } from './actions/build'
 import { dropSheep, gather, handClick, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
@@ -542,5 +542,26 @@ describe('systems (TDD 3)', () => {
     for (let i = 0; i < 60; i++) stepSimulation(w)
     expect(get(w, 13, 15)!.item).toBe(it)
     expect(it.p).toBe(p)
+  })
+})
+
+describe('what each way in and out shows (GDD 4.1)', () => {
+  it('a station takes its sheep from behind and its good from the side; a shearer gives the sheep on and the wool aside', () => {
+    const w = world()
+    const ins = (b: ReturnType<typeof blankBuilding>) => inCells(w, b).map((c) => inGood(b, c))
+    const outs = (b: ReturnType<typeof blankBuilding>) => outCells(b).map((c) => outGood(b, c))
+    const feeder = blankBuilding('feeder', 12, 15, 0)
+    expect(ins(feeder)).toEqual(['sheep', 'hay'])
+    expect(outs(feeder)).toEqual(['sheep'])
+    expect(ins(blankBuilding('dyer', 12, 15, 1))).toEqual(['sheep', 'dye'])
+    expect(outs(blankBuilding('shearer', 12, 15, 2)).sort()).toEqual(['sheep', 'wool'])
+    const ws = blankBuilding('workshop', 12, 15, 1)
+    ws.recipe = 'valenki'
+    expect(ins(ws)).toEqual(['felt', 'pyarn'])
+    expect(outs(ws)).toEqual(['valenki'])
+    expect(ins(blankBuilding('carder', 12, 15, 0))).toEqual(['wool'])
+    expect(outs(blankBuilding('mower', 12, 15, 0))).toEqual(['hay'])
+    // a splitter or a belt takes anything: no icon
+    expect(ins(blankBuilding('splitter', 12, 15, 0))).toEqual([null])
   })
 })

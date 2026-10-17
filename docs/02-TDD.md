@@ -80,6 +80,7 @@
 | `hover` | обводка и подпись под курсором | `Scene` |
 | `tags` | подписи на поле: цены участков, таблички площадок, счёт у грузовиков и загонов, значки над машинами и овцами | `Scene`, `Road`, `Pastures`, `Machines`, `SheepView` |
 | `hud` | панели экрана | `GameLoop` |
+| `portIcons` | значок у каждой стрелки входа и выхода (`inGood`, `outGood` в `grid.ts`, `badgeMaterial` в `render/iconSprite.ts`) | `Ghost` |
 | `fps` | счётчик кадров | `Scene` |
 | `orbit` | камера сама медленно облетает ферму | `Scene` |
 
