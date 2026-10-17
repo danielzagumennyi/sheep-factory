@@ -36,9 +36,11 @@ export function Nature() {
   const batches = useMemo(() => meshes.map((m) => new Batch(m)), [meshes])
   useFrame(() => {
     for (const b of batches) b.begin()
-    for (const [k, kind] of res(world, Field).terrain) {
+    const f = res(world, Field)
+    for (const [k, kind] of f.terrain) {
       if (kind !== 'tree' && kind !== 'rock') continue
       const [x, y] = unkey(k)
+      if (y < f.top || x >= f.right) continue
       const j = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453,
         rnd = j - Math.floor(j)
       const set = SETS[kind]

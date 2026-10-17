@@ -1,5 +1,6 @@
 import { CAMERA, GRID } from '@/game/balance'
 import { Field, res, unkey, type World } from '@/game/world'
+import { island } from './island'
 
 /**
  * The camera looks down at the field from the south at CAMERA.pitch to begin with; the player pans it (drag the empty
@@ -11,7 +12,7 @@ export const cam = { x: 16, z: 10, dist: CAMERA.distance as number, yaw: 0, pitc
 
 export function clampCam() {
   cam.dist = Math.min(CAMERA.maxDistance, Math.max(CAMERA.minDistance, cam.dist))
-  cam.x = Math.min(GRID.cols, Math.max(0, cam.x))
+  cam.x = Math.min(island.right, Math.max(0, cam.x))
   cam.z = Math.min(GRID.rows, Math.max(0, cam.z))
 }
 

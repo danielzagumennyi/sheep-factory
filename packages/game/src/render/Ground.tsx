@@ -4,25 +4,27 @@ import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, SRGBColorSpace } from 'three'
 import { CONTACT, GRID, ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { Field, Flock, GameState, Plant, Ui, key, res, unkey, type World } from '@/game/world'
+import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { mat, softMat, toonBands } from './kit'
 import { rb } from './models'
 import { withReach } from './reach'
+import { island } from './island'
 
 /** Pixels per cell of the ground texture; vertices per cell of the ground mesh. */
 const PX = 32
 const SUB = 6
 const M = ISLAND.margin
 const X0 = -M,
-  X1 = GRID.cols + M,
-  Z0 = -M,
   Z1 = GRID.rows + M
+/** The island's far and east edges: its first row and last column (island.ts) with the margin. */
+const Z0 = () => island.top - M
+const X1 = () => island.right + M
 
 /**
  * The board as a diorama island, like the author's reference scenes (15.10.2026): a grass top with a rounded lip over
  * thick soil sides, floating on the sky. The top is one flat mesh with a painted texture — one green with faint patches,
- * the dock row paved, the road in two lanes, mud under the ponds; the water lies on it as a surface of its own.
+ * the dock row paved, the road in two lanes; the water lies on it as a surface of its own.
  * The cell grid is a second, transparent layer shown only while building. All of it is rebuilt only when the land
  * changes (`fieldVersion`).
  */
@@ -37,7 +39,7 @@ export function Ground() {
   const groundMat = useMemo(() => withReach(new MeshToonMaterial({ map: ground.tex, gradientMap: toonBands })), [ground])
   useEffect(() => () => groundMat.dispose(), [groundMat])
   useFrame(() => {
-    if (gridMesh.current) gridMesh.current.visible = res(world, Ui).tool !== 'hand'
+    if (gridMesh.current) gridMesh.current.visible = isOn(world, 'ghost') && res(world, Ui).tool !== 'hand'
     const plant = res(world, Plant)
     const v = res(world, GameState).fieldVersion + ':' + plant.b.size + ':' + plant.occ.size + ':' + res(world, Flock).pastures.length + ':' + res(world, Field).plots.size
     if (v === ver.current) return
@@ -64,8 +66,8 @@ export function Ground() {
 function useCanvasTexture(mips: boolean) {
   const out = useMemo(() => {
     const c = document.createElement('canvas')
-    c.width = Math.round((X1 - X0) * PX)
-    c.height = Math.round((Z1 - Z0) * PX)
+    c.width = Math.round((X1() - X0) * PX)
+    c.height = Math.round((Z1 - Z0()) * PX)
     const t = new CanvasTexture(c)
     t.colorSpace = SRGBColorSpace
     t.magFilter = LinearFilter
@@ -83,8 +85,8 @@ function useCanvasTexture(mips: boolean) {
 /** A point of the top pulled onto the rounded corner when it lies outside it. */
 function inCorner(x: number, z: number): [number, number] {
   const R = ISLAND.corner
-  const cx = Math.min(X1 - R, Math.max(X0 + R, x)),
-    cz = Math.min(Z1 - R, Math.max(Z0 + R, z))
+  const cx = Math.min(X1() - R, Math.max(X0 + R, x)),
+    cz = Math.min(Z1 - R, Math.max(Z0() + R, z))
   const dx = x - cx,
     dz = z - cz,
     d = Math.hypot(dx, dz)
@@ -93,18 +95,18 @@ function inCorner(x: number, z: number): [number, number] {
 
 /** The top: a grid of SUB vertices per cell over the island, corners rounded, UVs from world position. */
 function topGeometry() {
-  const nx = Math.round((X1 - X0) * SUB),
-    nz = Math.round((Z1 - Z0) * SUB)
+  const nx = Math.round((X1() - X0) * SUB),
+    nz = Math.round((Z1 - Z0()) * SUB)
   const pos = new Float32Array((nx + 1) * (nz + 1) * 3),
     uv = new Float32Array((nx + 1) * (nz + 1) * 2)
   for (let j = 0; j <= nz; j++)
     for (let i = 0; i <= nx; i++) {
-      const [x, z] = inCorner(X0 + i / SUB, Z0 + j / SUB)
+      const [x, z] = inCorner(X0 + i / SUB, Z0() + j / SUB)
       const v = j * (nx + 1) + i
       pos[v * 3] = x
       pos[v * 3 + 2] = z
-      uv[v * 2] = (x - X0) / (X1 - X0)
-      uv[v * 2 + 1] = 1 - (z - Z0) / (Z1 - Z0)
+      uv[v * 2] = (x - X0) / (X1() - X0)
+      uv[v * 2 + 1] = 1 - (z - Z0()) / (Z1 - Z0())
     }
   const idx: number[] = []
   for (let j = 0; j < nz; j++)
@@ -143,9 +145,9 @@ function rounded(x0: number, z0: number, x1: number, z1: number, r: number) {
  * never covers the ponds' hollows.
  */
 function slab(depth: number, bevel: number, topY: number, inset: number, width = 1) {
-  const outer = rounded(X0 + inset, Z0 + inset, X1 - inset, Z1 - inset, ISLAND.corner - inset)
+  const outer = rounded(X0 + inset, Z0() + inset, X1() - inset, Z1 - inset, ISLAND.corner - inset)
   const w = inset + width
-  outer.holes.push(rounded(X0 + w, Z0 + w, X1 - w, Z1 - w, Math.max(0.2, ISLAND.corner - w)))
+  outer.holes.push(rounded(X0 + w, Z0() + w, X1() - w, Z1 - w, Math.max(0.2, ISLAND.corner - w)))
   const g = new ExtrudeGeometry(outer, {
     depth,
     bevelEnabled: true,
@@ -166,8 +168,8 @@ function islandBody() {
   const lip = slab(0.12, 0.14, -0.006, 0.02, 0.6)
   const soil = slab(ISLAND.soil, 0.3, -0.3, 0.2, 1.2)
   // stone curbs along both sides of the road
-  const len = X1 - X0 - 0.5
-  const curb = (z: number) => rb(len, 0.07, 0.12, 0.03).translate((X0 + X1) / 2, 0.035, z)
+  const len = X1() - X0 - 0.5
+  const curb = (z: number) => rb(len, 0.07, 0.12, 0.03).translate((X0 + X1()) / 2, 0.035, z)
   const curbs = mergeGeometries([curb(GRID.roadY + 1.03), curb(GRID.roadY + 2.97)])!
   // the rounded sides in bands blended smoothly, so the corners don't show as stripes
   return { lip, soil, curbs, lipMat: softMat(LOOK.lip), soilMat: softMat(LOOK.soil) }
@@ -176,7 +178,7 @@ function islandBody() {
 // ---------------------------------------------------------------- the painted top
 
 const wx = (x: number) => (x - X0) * PX
-const wz = (z: number) => (z - Z0) * PX
+const wz = (z: number) => (z - Z0()) * PX
 
 /** A stable pseudo-random number for a seed. */
 const hash = (n: number) => {
@@ -243,15 +245,15 @@ function paint(world: World, c: HTMLCanvasElement) {
   // the dock row: grout under the pastel paving tiles (Props.tsx); the road in two lanes
   const rowY = wz(GRID.roadY)
   g.fillStyle = LOOK.dockTile
-  g.fillRect(wx(X0 + 0.2), rowY, (X1 - X0 - 0.4) * PX, PX)
+  g.fillRect(wx(X0 + 0.2), rowY, (X1() - X0 - 0.4) * PX, PX)
   g.fillStyle = LOOK.road
-  g.fillRect(wx(X0), rowY + PX, (X1 - X0) * PX, 2 * PX)
+  g.fillRect(wx(X0), rowY + PX, (X1() - X0) * PX, 2 * PX)
   g.strokeStyle = LOOK.roadLine
   g.lineWidth = 3
   g.setLineDash([16, 14])
   g.beginPath()
   g.moveTo(wx(X0), rowY + 2 * PX)
-  g.lineTo(wx(X1), rowY + 2 * PX)
+  g.lineTo(wx(X1()), rowY + 2 * PX)
   g.stroke()
   g.setLineDash([])
   // parking bays under the docks
@@ -275,22 +277,6 @@ function paint(world: World, c: HTMLCanvasElement) {
     }
     g.stroke()
   }
-  paintMud(world, g)
-}
-
-/**
- * Mud under the water: hidden while a pond is full, it shows as the water draws back when the pond is pumped (the
- * surface shrinks with what is left in each cell, Water.tsx).
- */
-function paintMud(world: World, g: CanvasRenderingContext2D) {
-  g.filter = 'blur(4px)'
-  g.fillStyle = LOOK.mud
-  for (const [k, t] of res(world, Field).terrain) {
-    if (t !== 'water' && t !== 'bridge') continue
-    const [x, y] = unkey(k)
-    g.fillRect(wx(x + 0.04), wz(y + 0.04), 0.92 * PX, 0.92 * PX)
-  }
-  g.filter = 'none'
 }
 
 /** The cell grid over owned plots: thin lines on a transparent layer. */
@@ -302,7 +288,7 @@ function paintGrid(world: World, c: HTMLCanvasElement) {
   g.lineWidth = 1
   g.beginPath()
   for (let py = 0; py * GRID.plotH < GRID.roadY; py++)
-    for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
+    for (let px = 0; px * GRID.plotW < island.right; px++) {
       if (!plots.has(key(px, py))) continue
       const x = wx(px * GRID.plotW),
         y = wz(py * GRID.plotH)

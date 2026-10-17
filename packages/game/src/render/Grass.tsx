@@ -12,6 +12,7 @@ import { cam } from './camera'
 import { toonBands } from './kit'
 import { withReach } from './reach'
 import { frame } from './frame'
+import { island } from './island'
 
 /** A stable pseudo-random number in [0, 1) for a seed. */
 const hash = (n: number) => {
@@ -176,18 +177,18 @@ const _c = new Color()
  */
 function grows(w: World, x: number, y: number, bare: Set<string>) {
   if (y >= GRID.roadY && y <= GRID.roadY + 2) return false
-  const inside = x >= 0 && y >= 0 && x < GRID.cols && y < GRID.rows
+  const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
   if (!inside) return true
   const t = res(w, Field).terrain.get(key(x, y))
-  if (t === 'water' || t === 'bridge' || t === 'meadow') return false
+  if (t === 'water' || t === 'meadow' || t === 'sprout') return false
   return !get(w, x, y) && !pastureAt(w, x, y) && !bare.has(key(x, y))
 }
 
 /** Inside the island's rounded top. */
 function onIsland(px: number, pz: number) {
   const x0 = -ISLAND.margin + 0.25,
-    z0 = -ISLAND.margin + 0.25,
-    x1 = GRID.cols + ISLAND.margin - 0.25,
+    z0 = island.top - ISLAND.margin + 0.25,
+    x1 = island.right + ISLAND.margin - 0.25,
     z1 = GRID.rows + ISLAND.margin - 0.25
   if (px < x0 || pz < z0 || px > x1 || pz > z1) return false
   const R = ISLAND.corner - 0.25
@@ -203,9 +204,9 @@ function lay(w: World, put: (k: number, x: number, z: number, yaw: number, s: nu
   for (const b of res(w, Plant).b.values()) if (b.pile.length) bare.add(key(b.pileX, b.pileY))
   const m = Math.ceil(ISLAND.margin)
   const spots: [number, number, number, number, number, number, Color][] = []
-  for (let y = -m; y < GRID.rows + m; y++)
-    for (let x = -m; x < GRID.cols + m; x++) {
-      const inside = x >= 0 && y >= 0 && x < GRID.cols && y < GRID.rows
+  for (let y = island.top - m; y < GRID.rows + m; y++)
+    for (let x = -m; x < island.right + m; x++) {
+      const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
       if (!grows(w, x, y, bare)) continue
       // land for sale grows a deeper green
       const mine = !inside || owned(w, x, y)

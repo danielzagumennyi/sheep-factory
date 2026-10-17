@@ -2,11 +2,11 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Vector2, Vector3, type Group, type Mesh } from 'three'
-import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, RES, type BuildingId, type Dir, dimsOf } from '@/game/balance'
+import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { anchorAt, buildPrice, footprint, get, inCells, inGrid, outCells, pastureAt, reachCells, whyNot } from '@/game/grid'
+import { anchorAt, buildPrice, footprint, get, inCells, inGrid, onIsland, outCells, pastureAt, reachCells, whyNot } from '@/game/grid'
 import { pathDirs, routeCells } from '@/game/actions/path'
-import { Field, Flock, GameState, Plant, Ui, blankBuilding, key, res, unkey } from '@/game/world'
+import { Field, Flock, GameState, Plant, Ui, blankBuilding, entryOf, exitOf, key, res, stockOf, unkey } from '@/game/world'
 import { useT } from '@/i18n'
 import { UI } from '@/i18n/ui'
 import { RES_NAMES, WHY_TEXT } from '@/i18n/content'
@@ -275,9 +275,11 @@ export function Ghost() {
         const pa = hb ? null : pastureAt(world, h.x, h.y)
         if (pa) showPasture(pa, 0.3)
         // a resource says what it is and how much is left in it (the author), on any land
-        const rc = hb || pa || h.sheep !== null ? null : res(world, Field).res.get(key(h.x, h.y))
-        // water never runs out, so a pond has no count
-        if (rc) lab = { x: h.x + 0.5, y: rc.t === 'water' ? 0.45 : 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + (rc.t === 'water' ? '' : ' · ' + rc.left + '/' + RES[rc.t].max), tone: 'ink', icon: rc.t === 'water' ? 'pond' : rc.t }
+        const rc = hb || pa || h.sheep !== null || !onIsland(world, h.x, h.y) ? null : res(world, Field).res.get(key(h.x, h.y))
+        if (rc) lab = { x: h.x + 0.5, y: 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + ' · ' + rc.left + '/' + rc.max, tone: 'ink', icon: rc.t }
+        // a seed says what it grows into and how long it still takes
+        const sp = hb || pa || rc || h.sheep !== null ? null : res(world, Field).sprouts.get(key(h.x, h.y))
+        if (sp) lab = { x: h.x + 0.5, y: 0.6, z: h.y + 0.5, text: t(RES_NAMES.sprout) + ' · ' + Math.ceil(sp.left) + 's', tone: 'ink', icon: sp.t }
       } else if (tool === 'erase') {
         const hb = hovered ?? get(world, h.x, h.y)
         if (hb && !hb.fixed) {
@@ -334,6 +336,14 @@ export function Ghost() {
             if (short) lab = { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
           }
         }
+      } else if (tool === 'sow') {
+        // a seed in hand: the cell it would go on, the seed and how many are in stock, or why not
+        const why = whyNot(world, 'sow', h.x, h.y)
+        const seed = SEED[ui.seed]
+        showBlock([[h.x, h.y]], lift, !!why || !stockOf(world, seed))
+        lab = why
+          ? { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(WHY_TEXT[why]), tone: 'bad' }
+          : { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: String(stockOf(world, seed)), tone: stockOf(world, seed) ? 'ink' : 'bad', icon: seed }
       } else {
         const type = tool as BuildingId
         // centred on the pointer and turned as the player chose (a 2×1 lies along its output)
@@ -365,6 +375,16 @@ export function Ghost() {
           if (short) lab = { x: ax + bw / 2, y: over, z: ay + bh / 2, text: t(UI.noCoins), tone: 'bad', icon: 'coin' }
           showFlow(type, ax, ay, ui.rot, lift)
           showNear(footprint(ax, ay, bw, bh))
+          if (type === 'pen') {
+            // a pen's way out and way in, as the built one shows them
+            const pen = { x: ax, y: ay, w: bw, h: bh, dir: ui.rot }
+            const ex = exitOf(pen),
+              en = entryOf(pen)
+            const [dx, dz] = DIRS[ui.rot]!,
+              [ix, iz] = DIRS[en.d]!
+            arrow(ex.x + 0.5 - dx * 0.5, ex.y + 0.5 - dz * 0.5, ui.rot, false, lift)
+            arrow(en.x + 0.5 + ix * 0.5, en.y + 0.5 + iz * 0.5, en.d, true, lift)
+          }
         }
       }
     }

@@ -74,7 +74,7 @@ const ray = new Raycaster(),
   turn = new Matrix4()
 /** A machine's whole model, put where one stands, for the ray to be tested against. */
 const body = new Mesh(undefined, vmat())
-const pickable = (s: SheepT) => s.state === 'pasture' || s.state === 'waiting' || s.state === 'belt'
+const pickable = (s: SheepT) => s.state === 'pasture' || s.state === 'transit' || s.state === 'waiting' || s.state === 'belt'
 
 /** What the pointer is over: a sheep or a building, and whether the ray met its model or only the ground under it. */
 export interface Picked {

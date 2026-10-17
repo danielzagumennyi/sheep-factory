@@ -3,7 +3,7 @@ import { BUILDINGS, LIGHT, LOOK, ROOF, type BuildingId, type ItemId } from '@/ga
 import { RENDERED_ICONS, type RenderedIcon } from '@/ui/iconKinds'
 import { model, vmat } from './kit'
 import { machineBody } from './machineModels'
-import { METAL, ball, bushBody, cyl, fleece, good, grassClump, put, rb, ring, sheepHead, sheepLegs, shade } from './models'
+import { METAL, WOOD, ball, bushBody, cyl, good, grassClump, put, rb, ring, sheepModel, shade } from './models'
 
 /** A straight piece of belt: the bed, three planks and the two walls with their caps. */
 const belt = () =>
@@ -12,20 +12,6 @@ const belt = () =>
     ...[-0.32, 0, 0.32].map((x) => put(rb(0.13, 0.035, 0.6, 0.015), LOOK.beltSlat, [x, 0.115, 0])),
     ...[-0.42, 0.42].flatMap((z) => [put(rb(1, 0.2, 0.12, 0.04), LOOK.beltWall, [0, 0.12, z]), put(rb(1, 0.04, 0.14, 0.02), LOOK.beltWallTop, [0, 0.225, z])]),
   ])
-
-/** A sheep in full fleece: legs, the woolly body, the small head. */
-const sheep = () => {
-  const head = sheepHead().clone()
-  head.scale(0.78, 0.78, 0.78)
-  head.translate(0.34, 0.45, 0)
-  const body = fleece().clone()
-  body.scale(1.12, 1.12, 1.12)
-  body.translate(-0.02, 0.35, 0)
-  const g = model([sheepLegs().clone(), body, head])
-  // facing a little towards the camera
-  g.rotateY(-0.5)
-  return g
-}
 
 /** A gold coin standing up, with a rim and a raised middle. */
 const coin = () =>
@@ -44,19 +30,30 @@ const shears = () => {
   return model([...blade(1), ...blade(-1), put(cyl(0.05, 0.16, 10), LOOK.machineEdge, [0.02, 0, 0], [Math.PI / 2, 0, 0])])
 }
 
-/** A little pond as the field draws one: candy-blue water with a pale edge, in a green kerb, a lily pad on it. */
-const pond = () =>
+/** Sowing by hand: a mound of earth with a young shoot, a seed bale beside it. */
+const sow = () =>
   model([
-    put(cyl(0.46, 0.1, 28), LOOK.kerb, [0, 0.05, 0]),
-    put(cyl(0.4, 0.03, 28), LOOK.waterFoam, [0, 0.105, 0]),
-    put(cyl(0.36, 0.035, 28), LOOK.water, [0, 0.11, 0]),
-    put(cyl(0.11, 0.02, 14), LOOK.lily, [0.12, 0.13, 0.08]),
+    put(ball(0.3), LOOK.sproutSoil, [0, 0, 0], [0, 0, 0], [1.2, 0.35, 1.2]),
+    put(cyl(0.025, 0.2, 8), LOOK.sprout, [0, 0.16, 0]),
+    put(ball(0.08), LOOK.sprout, [0.07, 0.25, 0], [0, 0, 0.6], [1.4, 0.5, 0.8]),
+    put(ball(0.08), LOOK.sprout, [-0.07, 0.22, 0], [0, 0, -0.6], [1.4, 0.5, 0.8]),
+    good('hay').clone().translate(0.36, 0, 0.18),
+  ])
+
+/** The stock: an open crate of what the farm has gathered — hay, a fleece, a ball of yarn. */
+const stock = () =>
+  model([
+    put(rb(0.62, 0.34, 0.46, 0.04), WOOD, [0, 0.17, 0]),
+    ...[-0.12, 0.12].map((y) => put(rb(0.64, 0.05, 0.48, 0.02), shade(WOOD, 0.8), [0, 0.17 + y, 0])),
+    good('hay').clone().translate(-0.14, 0.3, 0),
+    good('wool').clone().translate(0.14, 0.28, -0.04),
+    good('yarn').clone().translate(0.06, 0.28, 0.12),
   ])
 
 /** A berry bush, its berries on. */
 const bush = () => model([bushBody().clone(), ...[[0.12, 0.38, 0.2], [-0.16, 0.33, 0.18], [0.02, 0.48, 0.12], [0.24, 0.26, 0.05], [-0.04, 0.28, 0.27]].map((c) => put(ball(0.05), LOOK.berry, c as [number, number, number]))])
 
-const MACHINES: BuildingId[] = ['shearer', 'mower', 'pump', 'barn', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'berry', 'workshop']
+const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'mower', 'berry', 'seeder', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'workshop']
 function geometryOf(kind: RenderedIcon): BufferGeometry {
   if ((MACHINES as string[]).includes(kind)) {
     // a 2×1 lies along z; for its icon it is turned to lie across the frame, machine on the left
@@ -67,13 +64,15 @@ function geometryOf(kind: RenderedIcon): BufferGeometry {
     case 'belt':
       return belt()
     case 'sheep':
-      return sheep()
+      return sheepModel()
     case 'coin':
       return coin()
     case 'shear':
       return shears()
-    case 'pond':
-      return pond()
+    case 'sow':
+      return sow()
+    case 'stock':
+      return stock()
     case 'meadow':
       return grassClump(0)
     case 'bush':
