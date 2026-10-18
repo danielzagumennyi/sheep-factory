@@ -1,10 +1,11 @@
 import { create } from 'zustand'
 import { TOOL_ORDER, type BuildingId, type CardId } from '@/game/balance'
+import type { Mode } from './saves'
 
 /**
  * The app around the game: which screen is up (the title over a big farm, or the long game), the once-per-game cards
  * already seen, the quick bar's slots, the switches. Saved in localStorage under `ovf.*` (inside try/catch: private
- * mode just forgets on reload). The long game itself is kept by app/saves.ts: «Продолжить» goes on with it.
+ * mode just forgets on reload). The games themselves are kept by app/saves.ts, one per mode: «Продолжить» goes on with one.
  */
 type Screen = 'title' | 'run'
 /** The quick bar: ten slots, keys 1–9 and 0 (the clearing tool stands apart, on X). */
@@ -31,8 +32,9 @@ interface AppState {
   screen: Screen
   /** Bumped on every start, so «again» builds a fresh world. */
   runId: number
-  /** How the run screen gets its world: a new game, or the kept one. */
+  /** How the run screen gets its world: a new game, or the kept one; of the long game or the endless mode. */
   from: 'new' | 'save'
+  mode: Mode
   /** True while the menu is open over the running game. */
   menuOver: boolean
   seenEver: CardId[]
@@ -44,10 +46,10 @@ interface AppState {
   /** The book of buildings and goods is open (the game waits), and the building the pointer is over in it. */
   book: boolean
   bookHover: BuildingId | null
-  /** A new game: it takes the kept game's place. */
-  start: () => void
-  /** Go on with the kept game. */
-  cont: () => void
+  /** A new game of a mode (the one played last, by default): it takes that mode's kept game's place. */
+  start: (mode?: Mode) => void
+  /** Go on with a mode's kept game. */
+  cont: (mode?: Mode) => void
   toTitle: () => void
   setBook: (open: boolean) => void
   setBookHover: (id: BuildingId | null) => void
@@ -64,6 +66,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   screen: 'title',
   runId: 0,
   from: 'new',
+  mode: 'story',
   menuOver: false,
   seenEver: load('ovf.seen', []),
   sound: load('ovf.sound', true),
@@ -71,8 +74,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   bar: load<Bar>('ovf.bar', []),
   book: false,
   bookHover: null,
-  start: () => set({ screen: 'run', from: 'new', runId: get().runId + 1, menuOver: false, book: false }),
-  cont: () => set({ screen: 'run', from: 'save', runId: get().runId + 1, menuOver: false, book: false }),
+  start: (mode = get().mode) => set({ screen: 'run', from: 'new', mode, runId: get().runId + 1, menuOver: false, book: false }),
+  cont: (mode = get().mode) => set({ screen: 'run', from: 'save', mode, runId: get().runId + 1, menuOver: false, book: false }),
   toTitle: () => set({ screen: 'title', menuOver: false, book: false, runId: get().runId + 1 }),
   setBook: (open) => set({ book: open, bookHover: null }),
   setBookHover: (id) => set({ bookHover: id }),

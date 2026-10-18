@@ -33,4 +33,11 @@ describe('balance bot', () => {
     console.log(`chapter 1 ${r.level > LEVELS.length ? 'closed' : 'open'} at ${fmt(r.t)}: ${r.sheep} sheep, ${r.plots} plots bought, ${r.coins} coins; nothing to buy for ${fmt(idle)}`)
     expect(r.level, 'level reached').toBeGreaterThan(LEVELS.length)
   }, 120_000)
+  it('plays the endless mode on past the chapter, everything open from the start', () => {
+    const w = startWorld({ seed: 7, endless: true })
+    const r = runBot(w, 70 * 60, 1000)
+    w.destroy()
+    console.log(`endless: level ${r.level} at ${Math.floor(r.t / 60)} min, ${r.coins} coins, ${r.sheep} sheep`)
+    expect(r.level, 'level reached').toBeGreaterThan(LEVELS.length + 1)
+  }, 120_000)
 })

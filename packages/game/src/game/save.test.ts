@@ -96,6 +96,14 @@ describe('saves (TDD 3.5)', () => {
     expect([...res(l, Plant).b.values()].filter((q) => q.part === 'row').length).toBe(1)
   })
 
+  it('the endless mode is kept as the endless mode', () => {
+    const w = keep(startWorld({ seed: 4, endless: true }))
+    runBot(w, 3 * 60)
+    const l = keep(loadGame(stored(saveGame(w))))
+    expect(res(l, GameState).endless).toBe(true)
+    expect(state(l)).toBe(state(w))
+  })
+
   it('a broken save, another game’s or a newer one is not loaded', () => {
     const w = keep(startWorld({ seed: 3 }))
     const d = saveGame(w)

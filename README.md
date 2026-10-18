@@ -42,7 +42,7 @@ pnpm dev
 В дев-сборке есть `window.__game`:
 - `__game.autoplay(true, 4)` — бот играет вживую на ×4;
 - `__game.simulate()` — та же таблица в браузере;
-- `__game.start()` — новая игра (или адрес `?play`, сразу без меню);
+- `__game.start()` — новая игра (или адрес `?play`, сразу без меню; `?play&endless` — бесконечный режим);
 - `__game.showcase()` — достроить готовую ферму главы;
 - `__game.coins(500)`, `__game.unlockAll()`.
 

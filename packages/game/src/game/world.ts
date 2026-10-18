@@ -178,6 +178,8 @@ export const GameState = trait(() => ({
   level: 0,
   /** The first chapter's last level is done (its card shown once). */
   chapterDone: false,
+  /** The endless mode: everything open from the start, no chapter (village.ts `openEverything`). */
+  endless: false,
   /** Sheep need food (from the feeder's level on): until then a shorn sheep grows its fleece by itself. */
   food: false,
   /** Trade is open (from its level on): the market's trading post buys from the stock and sells into it. */

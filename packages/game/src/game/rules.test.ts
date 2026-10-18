@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, RECIPE_ORDER, SHEEP, SOW, TOOL_ORDER, type BuildingId, type Dir } from './balance'
+import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, RECIPE_ORDER, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
 import { anchorForInput, get, inCells, inGood, outCells, outGood, plotPrice, reachOf, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setRecipe, setSeed } from './actions/build'
 import { dropSheep, gather, handClick, shearClick } from './actions/hand'
@@ -572,6 +572,29 @@ describe('the village (GDD 7–8)', () => {
     m.trucks.push({ ask: 999, x: t.tx - 1.6, tx: t.tx, state: 'arrive', lane: 1 })
     run(w, 10)
     expect(m.trucks.find((q) => q.ask === 999)!.state).toBe('park')
+  })
+  it('the endless mode: everything open from the start, the island whole, no card; coins and asks as in the long game, without end', () => {
+    const w = startWorld({ seed: 1, endless: true })
+    worlds.push(w)
+    const un = res(w, Unlocks),
+      gs = res(w, GameState),
+      f = res(w, Field)
+    expect(gs.endless).toBe(true)
+    for (const t of TOOL_ORDER) expect(un.unlocked.has(t), t).toBe(true)
+    expect([...un.recipes].sort()).toEqual([...RECIPE_ORDER].sort())
+    expect(gs.trade && gs.food).toBe(true)
+    expect([f.top, f.right]).toEqual([0, GRID.cols])
+    expect(row(w).w).toBe(GRID.cols)
+    expect(part(w, 'buy').length).toBe(1)
+    expect(un.cardQ).toEqual([])
+    expect(gs.coins).toBe(START.coins)
+    expect(gs.level).toBe(0)
+    // the levels go on past the table, and no card comes — the chapter's neither
+    while (gs.level <= LEVELS.length) {
+      fillAll(w)
+      expect(un.cardQ).toEqual([])
+    }
+    expect(openAsks(w).length).toBeGreaterThan(0)
   })
   it('the trading post buys from the stock for a quarter and sells at twice the price', () => {
     const w = world()

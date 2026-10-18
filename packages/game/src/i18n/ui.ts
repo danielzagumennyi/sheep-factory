@@ -62,6 +62,7 @@ export const UI = {
   newGame: { ru: 'Новая игра', en: 'New game' },
   /** The second press of «Новая игра» while a game is kept: it replaces that game. */
   sure: { ru: 'Точно заново?', en: 'Start over?' },
+  endless: { ru: 'Бесконечный режим', en: 'Endless mode' },
   settings: { ru: 'Настройки', en: 'Settings' },
   toTitle: { ru: 'Главное меню', en: 'Main menu' },
   soundOn: { ru: 'Звук', en: 'Sound' },

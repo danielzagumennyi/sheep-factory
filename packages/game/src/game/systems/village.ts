@@ -1,4 +1,4 @@
-import { AFTER, BUY_SHARE, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, ROAD, type GrowDef, type ItemId, type LevelDef } from '../balance'
+import { AFTER, BUILDINGS, BUY_SHARE, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, ROAD, type CardId, type GrowDef, type ItemId, type LevelDef } from '../balance'
 import { Field, GameState, Market, Stats, Unlocks, addMarket, emit, float, isOn, res, stockAdd, stockOf, stockTake, type AskT, type Building, type Item, type TruckT, type World } from '../world'
 import { queueCard, unlock } from './unlocks'
 
@@ -87,6 +87,28 @@ export function growIsland(w: World, g: GrowDef) {
 /** The game's first level, at the start. */
 export function startVillage(w: World) {
   openLevel(w, 0)
+}
+
+/** Every card the game can show: the buildings, the felt boots, trade, the hints, the chapter. */
+const ALL_CARDS: readonly CardId[] = [...(Object.keys(BUILDINGS) as CardId[]), 'valenki', 'market', 'land', 'island', 'chapter']
+
+/**
+ * The endless mode (the author, 19.10.2026: «бесконечный режим где сразу всё доступно»): all that the levels open is
+ * open from the start — every building and recipe, trade, sheep that eat — and the island stands whole; no card comes.
+ * Coins, plots and the asks go as in the long game (the author: «обычные» coins), and the asks grow without end: there
+ * is no chapter to close. Before the first level opens.
+ */
+export function openEverything(w: World) {
+  res(w, GameState).endless = true
+  for (const L of LEVELS) {
+    for (const id of L.open) unlock(w, id)
+    if (L.after) unlock(w, L.after.open)
+  }
+  for (const g of ISLAND_GROW) growIsland(w, g)
+  const un = res(w, Unlocks)
+  un.cardQ.length = 0
+  un.fresh.clear()
+  for (const id of ALL_CARDS) un.seen.add(id)
 }
 
 /** An ask is done: its truck leaves; when it was the level's last, the next level opens. */
