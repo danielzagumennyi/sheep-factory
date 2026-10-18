@@ -178,7 +178,7 @@ export function Pointer() {
         // that machine, wherever on it; anything else to the ground point
         const pk = under(e)
         if (pk.sheep) handClick(world, pk.sheep.px, pk.sheep.py)
-        else if (pk.b && pk.exact) clickBuilding(world, pk.b, p.x)
+        else if (pk.b && pk.exact) clickBuilding(world, pk.b)
         else handClick(world, p.x, p.y)
       }
       else if (ui.tool === 'belt') {

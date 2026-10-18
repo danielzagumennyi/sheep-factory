@@ -445,7 +445,7 @@ button:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* the market: one row per good — stock, sell price, buy price */
+/* the trading post: one row per good — stock, sell price, buy price */
 .trade {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -516,11 +516,6 @@ button:focus-visible {
 }
 .pop__st--bad::before {
   background: var(--bad);
-}
-.pop__ask + .pop__ask {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
 }
 .pop__rows {
   display: flex;

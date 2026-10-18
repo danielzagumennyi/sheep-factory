@@ -291,9 +291,9 @@ export function Ghost() {
         if (hb) {
           if (hb.type !== 'dock' && BUILDINGS[hb.type].near) lab = showReach(hb.type, hb.x, hb.y, hb.w, hb.h)
           // every building the same: its ways in and out, above the belts that may run up to it; the market's row
-          // (one dock along the whole road) only the way in where the pointer is
-          if (hb.type === 'dock') arrow(h.x + 0.5, GRID.roadY, 1, true, 0.3)
-          else showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
+          // (one dock along the whole field) only the way in where the pointer is, its stalls and trading post nothing
+          if (hb.part === 'row') arrow(h.x + 0.5, GRID.roadY, 1, true, 0.3)
+          else if (hb.type !== 'dock') showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
         }
         // a pasture shows its way out and its way in the same way
         const pa = hb ? null : pastureAt(world, h.x, h.y)

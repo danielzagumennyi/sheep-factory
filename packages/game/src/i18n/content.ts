@@ -63,11 +63,10 @@ export const RES_NAMES: Readonly<Record<ResId | 'sprout', Text>> = {
   sprout: { ru: 'всходы', en: 'sprouts' },
 }
 
-/** The village's clients: the popup's title and the book (docks themselves show only the good). */
+/** The village's clients: the stall's popup and sign, and the book. */
 export const CLIENT_NAMES: Readonly<Record<ClientId, Text>> = {
-  market: { ru: 'Рынок', en: 'Market' },
   post: { ru: 'Почта', en: 'Post office' },
-  shop: { ru: 'Лавка', en: 'Shop' },
+  shop: { ru: 'Магазин', en: 'Shop' },
   atelier: { ru: 'Ателье', en: 'Atelier' },
   cobbler: { ru: 'Сапожник', en: 'Cobbler' },
   school: { ru: 'Школа', en: 'School' },
@@ -93,7 +92,7 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
   seeder: { title: { ru: 'Сеялка', en: 'Seeder' }, text: { ru: 'Сеет вокруг себя то, что привезла лента', en: 'Sows round itself what the belt brings' } },
   workshop: { title: { ru: 'Мастерская', en: 'Workshop' }, text: { ru: 'Свитер: пряжа и розовая, два входа', en: 'Sweater: yarn and pink, two ways in' } },
   valenki: { title: { ru: 'Рецепт: валенки', en: 'Recipe: felt boots' }, text: { ru: 'Выбери его в окне мастерской', en: 'Pick it in a workshop popup' } },
-  market: { title: { ru: 'Торговля', en: 'Trade' }, text: { ru: 'Продавай и покупай на рынке', en: 'Sell and buy at the market' } },
+  market: { title: { ru: 'Закупка', en: 'Trading post' }, text: { ru: 'Покупай и продавай товар со склада', en: 'Buy and sell goods from the stock' } },
   land: { title: { ru: 'Участки', en: 'Land' }, text: { ru: 'Покос кончается? Купи соседний участок', en: 'Running out? Buy the next plot' } },
   island: { title: { ru: 'Остров растёт', en: 'The island grows' }, text: { ru: 'Новые участки на краю острова', en: 'New plots at the island’s edge' } },
   chapter: { title: { ru: 'Глава 1', en: 'Chapter 1' }, text: { ru: 'Деревня довольна. Просьбы растут дальше', en: 'The village is happy. Asks grow on' } },

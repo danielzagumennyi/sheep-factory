@@ -21,7 +21,7 @@ const LOAD_SPOTS: [number, number, number][] = [
   [0.02, 0.56, 0.02],
 ]
 
-/** The market and its row (Market.tsx), and the trucks that come for each ask and park at the market. */
+/** The market (Market.tsx), and the trucks that come for each ask and park at its stall. */
 export function Road() {
   return (
     <group>
@@ -47,7 +47,7 @@ function Trucks() {
   )
 }
 
-/** A small lorry: drives along lane B, parks on lane A at its bay in front of the market and shows the ask's count while parked. */
+/** A small lorry: drives along lane B, parks on lane A in front of its stall and shows the ask's count while parked. */
 function Truck({ id }: { id: number }) {
   const { world } = useGame()
   const g = useRef<Group>(null)

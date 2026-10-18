@@ -137,7 +137,7 @@ export type ItemId = 'wool' | 'pwool' | 'roving' | 'proving' | 'yarn' | 'pyarn' 
 
 /**
  * Base prices: each step of making is worth 1.3 × what goes into it (docs/05-REWORK.md), so making always beats selling
- * the inputs. A dock pays the full price for its ask; the market pays a quarter.
+ * the inputs. A truck pays the full price for its ask; the market pays a quarter.
  */
 export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
   hay: { price: 1 },
@@ -154,8 +154,9 @@ export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
 }
 /** The pink goods and the white ones they are made like. */
 export const PINK: Readonly<Partial<Record<ItemId, ItemId>>> = { pwool: 'wool', proving: 'roving', pyarn: 'yarn' }
+/** What the trading post pays for a good from the stock, as a share of its price. */
 export const MARKET_SHARE = 0.25
-/** The market sells anything at this many times a good's price, so buying never pays for an ask (the author: «как продавать так и покупать»). */
+/** The trading post sells anything at this many times a good's price, so buying never pays for an ask (the author: «как продавать так и покупать»). */
 export const BUY_SHARE = 2
 
 export type BuildingId = 'belt' | 'pen' | 'sheep' | 'shearer' | 'feeder' | 'dyer' | 'mower' | 'berry' | 'seeder' | 'carder' | 'spinner' | 'felter' | 'workshop' | 'splitter' | 'merger' | 'sow'
@@ -247,12 +248,16 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
   return dir % 2 === 0 ? [l, w] : [w, l]
 }
 /**
- * The market (the author, 18.10.2026: «пусть рынок будет как основная точка куда игрок приносит товар»): the whole row
- * beside the road takes goods in — a belt brought to any of its cells hands them over, and a little bridge carries them
- * over the road into a long market on the island's near edge, `rows` deep past the road. It gives each client what
- * it asks for; trucks park at their bays in front of it and drive off full.
+ * The market (the author, 18.10.2026: «пусть рынок будет как основная точка куда игрок приносит товар», then «поменяй
+ * местами дорогу с лавками … лавок где-то 4, и не как один объект, а 4 разных»): the row beside the field takes goods
+ * in — a belt brought to any of its cells hands them over, and they ride its chute to a stall. Past the chute, `rows`
+ * deep, stand four stalls (their left columns), each a bay where one truck parks and is loaded, and the trading post
+ * at the west end, where the player buys; the road runs past them along the island's edge. A good no truck takes waits
+ * in the stock (the author: «ждёт машину») while it holds fewer than `keep` of it — past that the market sells it for a
+ * quarter, so a farm is never left without coins before trade opens. A parked truck takes its good from the stock at
+ * `loadRate` a second.
  */
-export const MARKET = { row: GRID.roadY, rows: 2, gap: 3 } as const
+export const MARKET = { row: GRID.roadY, rows: 2, stalls: [8, 14, 20, 26], stallW: 3, buyX: 2, buyW: 3, loadRate: 6, keep: 40 } as const
 
 export type RecipeId = 'sweater' | 'valenki'
 /**
@@ -291,9 +296,10 @@ export const SPLIT_RULES = ['any', 'wool', 'pwool', 'roving', 'proving', 'yarn',
 // ---------------------------------------------------------------- road (GDD 7)
 
 export const ROAD = {
-  /** Lane centres (grid rows): trucks park on A, by the market past the road, and drive on B, by the field. */
-  laneA: GRID.roadY + 2.5,
-  laneB: GRID.roadY + 1.5,
+  /** The road's first row, past the stalls; lane centres (grid rows): trucks park on A, by the stalls, and drive on B, by the island's edge. */
+  row: MARKET.row + 1 + MARKET.rows,
+  laneA: MARKET.row + 1 + MARKET.rows + 0.5,
+  laneB: MARKET.row + 1 + MARKET.rows + 1.5,
   gap: 1.6,
   arriveSpeed: 4,
   leaveSpeed: 5,
@@ -518,11 +524,9 @@ export const LOOK = {
 
 // ---------------------------------------------------------------- the village (GDD 7–8)
 
-export type ClientId = 'market' | 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fair'
-/** The clients with a truck, in the order the village meets them; `market` is the market itself. */
+export type ClientId = 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fair'
+/** The clients, each with its truck, in the order the village meets them. */
 export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
-/** Where each client's truck parks in front of the market (its bay), MARKET.gap cells apart from the next. */
-export const BAY_X: Readonly<Record<Exclude<ClientId, 'market'>, number>> = { post: 11, shop: 14, atelier: 17, cobbler: 20, school: 23, fair: 26 }
 
 /** «Новое» cards: one per thing a level opens (its id), and a few hints. */
 export type CardId = BuildingId | 'valenki' | 'market' | 'land' | 'island' | 'chapter'

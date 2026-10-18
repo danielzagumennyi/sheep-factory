@@ -1,5 +1,6 @@
-import { BUILDINGS, LEVELS, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import { BUILDINGS, LEVELS, MARKET, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
 import { sendHome } from './systems/sheep'
+import { stallX } from './systems/village'
 import {
   Field,
   Flock,
@@ -37,7 +38,7 @@ import {
  */
 
 /** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 2
+export const SAVE_VERSION = 3
 /** The level the market starts trading at (a version-1 save knew no `trade`). */
 const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
@@ -47,6 +48,19 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
     const s = g as GameSave
     s.plant = s.plant.filter((b) => b.type !== 'dock')
     s.gs = { ...s.gs, trade: s.gs.level >= TRADE_LEVEL }
+    return s
+  },
+  // 3: four stalls past the row and the road along the island's edge (18.10.2026); each ask has the stall its truck parks at
+  2: (g) => {
+    const s = g as GameSave
+    s.plant = s.plant.filter((b) => b.type !== 'dock')
+    s.market.asks.forEach((a, i) => (a.stall = i % MARKET.stalls.length))
+    for (const t of s.market.trucks) {
+      const a = s.market.asks.find((q) => q.id === t.ask)
+      if (!a) continue
+      t.tx = stallX(a.stall) - 0.5
+      if (t.state !== 'arrive' && t.state !== 'leave') t.x = t.tx
+    }
     return s
   },
 }
@@ -208,7 +222,7 @@ export function loadGame(data: unknown, opts: WorldOptions = {}): World | null {
 function fill(w: World, g: GameSave) {
   Object.assign(res(w, Time), { t: g.time.t, frame: g.time.frame })
   const gs = res(w, GameState)
-  Object.assign(gs, g.gs, { quiet: false })
+  Object.assign(gs, g.gs)
   // a game saved on pause (the menu pauses it) comes back running
   if (!gs.speed) gs.speed = 1
   const f = res(w, Field)
@@ -251,7 +265,7 @@ function fill(w: World, g: GameSave) {
     plant.b.set(key(b.x, b.y), b)
     for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
   }
-  // the market's row, as wide as the island (a save from before it had none)
+  // the market's parts, the row as wide as the island (a save from before them had none)
   addMarket(w)
   const market = res(w, Market)
   market.asks = g.market.asks

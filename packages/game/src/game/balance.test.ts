@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BAY_X, CLIENT_ORDER, ITEMS, LEVELS, MARKET, RECIPES, TOOL_ORDER, type BuildingId } from './balance'
+import { ISLAND_START, ITEMS, LEVELS, MARKET, RECIPES, TOOL_ORDER, type BuildingId } from './balance'
 import { jobsOf } from './grid'
 
 describe('the village (GDD 7–8)', () => {
@@ -22,9 +22,12 @@ describe('the village (GDD 7–8)', () => {
     expect(at('market')).toBeGreaterThan(at('sheep'))
     expect(at('feeder')).toBeGreaterThan(at('mower'))
   })
-  it('the clients park at bays of their own in front of the market, a truck length apart', () => {
-    const xs = CLIENT_ORDER.map((c) => BAY_X[c as keyof typeof BAY_X]).sort((a, b) => a - b)
-    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MARKET.gap)
+  it('the market has a stall for every ask of a level and one more; stalls and trading post stand apart on the first island', () => {
+    expect(Math.max(...LEVELS.map((L) => L.asks.length))).toBeLessThan(MARKET.stalls.length)
+    const spans = [[MARKET.buyX, MARKET.buyW] as const, ...MARKET.stalls.map((x) => [x, MARKET.stallW] as const)].sort((a, b) => a[0] - b[0])
+    for (let i = 1; i < spans.length; i++) expect(spans[i]![0] - (spans[i - 1]![0] + spans[i - 1]![1]), 'a truck length between').toBeGreaterThanOrEqual(2)
+    expect(spans[0]![0]).toBeGreaterThanOrEqual(0)
+    expect(spans.at(-1)![0] + spans.at(-1)![1]).toBeLessThanOrEqual(ISLAND_START.right)
   })
 })
 

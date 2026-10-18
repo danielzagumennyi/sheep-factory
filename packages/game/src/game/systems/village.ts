@@ -1,27 +1,47 @@
-import { AFTER, BAY_X, BUY_SHARE, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, ROAD, type ClientId, type GrowDef, type ItemId, type LevelDef } from '../balance'
-import { Field, GameState, Market, Plant, Stats, Unlocks, addMarket, emit, float, isOn, newItem, res, stockAdd, stockTake, type AskT, type Building, type Item, type World } from '../world'
+import { AFTER, BUY_SHARE, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, ROAD, type GrowDef, type ItemId, type LevelDef } from '../balance'
+import { Field, GameState, Market, Stats, Unlocks, addMarket, emit, float, isOn, res, stockAdd, stockOf, stockTake, type AskT, type Building, type Item, type TruckT, type World } from '../world'
 import { queueCard, unlock } from './unlocks'
 
 /**
  * The village (GDD 7–8): one long game, no missions. A level is a set of asks, one per client; each ask pays its good's
  * price for every one that comes. When all of a level's asks are done the next level opens one new thing (its card)
  * and new asks; at the levels of ISLAND_GROW the island grows. After the table the same clients ask again, more each time.
- * Every good goes to the market, by the row beside the road: it fills the asks and sells the rest at a quarter of its
- * price, so no line jams. From the stock the player loads an ask or trades in the market's popup (the author: «он
- * выбирает что и/или сколько»).
+ * Every good goes to the market, by the row beside the field, and rides its chute to a stall: into the truck parked
+ * there if it wants it, else into the stock, where it waits for a truck that does (the author: «ждёт машину»). So no
+ * line jams. At the trading post the player buys and sells from the stock.
  */
 
-/** What the market pays for one good, and what it asks for one. */
+/** What the trading post pays for one good, and what it asks for one. */
 export const sellPrice = (k: ItemId) => Math.max(1, Math.round(ITEMS[k].price * MARKET_SHARE))
 export const buyPrice = (k: ItemId) => Math.max(1, Math.ceil(ITEMS[k].price * BUY_SHARE))
 
 export const openAsks = (w: World) => res(w, Market).asks.filter((a) => a.have < a.total)
-export const askFor = (w: World, client: ClientId) => res(w, Market).asks.find((a) => a.client === client && a.have < a.total) ?? null
+/** The open ask at stall i, if any. */
+export const askAt = (w: World, i: number) => openAsks(w).find((a) => a.stall === i) ?? null
 
-/** Where a client's truck parks in front of the market, and where the market's numbers for it float up. */
-export const bayX = (client: ClientId) => (client === 'market' ? 0 : BAY_X[client]) + 0.5
-/** The market's front, past the road, where its numbers float up. */
-const FRONT = MARKET.row + 3.3
+/** The middle of stall i (along x), where its truck parks. */
+export const stallX = (i: number) => MARKET.stalls[i]! + MARKET.stallW / 2
+/** The stall nearest to column x: where a good no truck takes there is stored. */
+export function nearestStall(x: number) {
+  let best = 0
+  for (let i = 1; i < MARKET.stalls.length; i++) if (Math.abs(stallX(i) - x - 0.5) < Math.abs(stallX(best) - x - 0.5)) best = i
+  return best
+}
+/** The stalls' front, by the road, where their numbers float up; the trading post's middle. */
+const FRONT = MARKET.row + 1 + MARKET.rows - 0.2
+const BUY_X = MARKET.buyX + MARKET.buyW / 2
+/** Is the ask's truck parked at its stall? Only then it takes goods. */
+const parked = (w: World, a: AskT) => res(w, Market).trucks.some((t) => t.ask === a.id && t.state === 'park')
+/** The stall a truck parks at, by where it parks. */
+const stallOf = (t: TruckT) => MARKET.stalls.findIndex((_, i) => stallX(i) - 0.5 === t.tx)
+
+/** A stall for a new ask: the first that no open ask has and no truck stands at; else the first no open ask has. */
+function freeStall(w: World) {
+  const taken = new Set(openAsks(w).map((a) => a.stall))
+  const standing = new Set(res(w, Market).trucks.filter((t) => t.state !== 'leave').map(stallOf))
+  const all = MARKET.stalls.map((_, i) => i)
+  return all.find((i) => !taken.has(i) && !standing.has(i)) ?? all.find((i) => !taken.has(i)) ?? 0
+}
 
 export function earn(w: World, n: number) {
   res(w, GameState).coins += n
@@ -45,9 +65,9 @@ export function openLevel(w: World, i: number) {
   for (const id of L.open) unlock(w, id)
   for (const g of ISLAND_GROW) if (g.level === i + 1) growIsland(w, g)
   for (const [client, kind, total] of L.asks) {
-    const a: AskT = { id: ++market.askUid, client, kind, total, have: 0 }
+    const a: AskT = { id: ++market.askUid, client, kind, total, have: 0, stall: freeStall(w) }
     market.asks.push(a)
-    market.trucks.push({ ask: a.id, x: -2 - market.trucks.filter((t) => t.state === 'arrive').length * 2, tx: bayX(client) - 0.5, state: 'arrive', lane: 1 })
+    market.trucks.push({ ask: a.id, x: -2 - market.trucks.filter((t) => t.state === 'arrive').length * 2, tx: stallX(a.stall) - 0.5, state: 'arrive', lane: 1 })
   }
 }
 
@@ -84,69 +104,52 @@ function askDone(w: World, a: AskT) {
 }
 
 /**
- * A good handed to the market at column x (TDD 3): the view carries it over the road on that column's bridge. The
- * market gives it to the open ask that wants it, at its full price; one nobody asks for it sells at once, for a quarter
- * (the author: «рынок сам раздаёт клиентам»). So no line ever jams at the road.
+ * A good handed to the market's row at column x (TDD 3.4.1): it rides the chute to a stall. A truck parked there for
+ * it takes it, at the good's full price; any other goes into the stock and waits for a truck that wants it (the author:
+ * «ждёт машину»), up to MARKET.keep of a kind — the rest the market sells for a quarter. So no line ever jams at the
+ * market and no farm runs out of coins.
  */
 export function dockAccept(w: World, _d: Building, it: Item, x = 0): boolean {
   if (it.kind === 'sheep') return false
-  const gs = res(w, GameState),
-    kind = it.kind
-  if (!gs.quiet) emit(w, { kind: 'deliver', x, good: kind })
+  const kind = it.kind
   // with the village switched off the market only takes what comes: nothing is counted, no level opens (the menu's farm)
-  if (!isOn(w, 'village')) return true
-  const a = openAsks(w).find((q) => q.kind === kind)
-  if (a) {
-    a.have++
-    const g = ITEMS[kind].price
+  const on = isOn(w, 'village')
+  const a = on ? openAsks(w).find((q) => q.kind === kind && parked(w, q)) : undefined
+  const stall = a ? a.stall : nearestStall(x)
+  emit(w, { kind: 'deliver', x, good: kind, stall, truck: !!a })
+  if (!on) return true
+  if (a) fillAsk(w, a)
+  else if (stockOf(w, kind) < MARKET.keep) stockAdd(w, kind)
+  else {
+    // the stock holds enough of it for the trucks: the market sells this one at once, for a quarter
+    const g = sellPrice(kind)
     earn(w, g)
-    if (!gs.quiet) float(w, bayX(a.client), FRONT, '+' + g + ' · ' + a.have + '/' + a.total, 'good')
-    if (a.have >= a.total) askDone(w, a)
-    return true
+    float(w, stallX(stall), FRONT, '+' + g)
   }
-  const g = sellPrice(kind)
-  earn(w, g)
-  if (!gs.quiet) float(w, x + 0.5, FRONT, '+' + g)
   return true
 }
 
-/**
- * Load up to n of what an ask wants from the stock (the market's popup): each one counts as delivered, the market floats
- * one total for the lot at the client's bay. Returns how many went.
- */
-export function loadAsk(w: World, a: AskT, n: number) {
-  if (a.have >= a.total) return 0
-  const gs = res(w, GameState)
-  const c0 = gs.coins,
-    h0 = a.have,
-    kind = a.kind,
-    total = a.total
-  const got = stockTake(w, kind, Math.min(n, a.total - a.have))
-  gs.quiet = true
-  const d = marketDock(w)!
-  for (let i = 0; i < got; i++) dockAccept(w, d, newItem(kind))
-  gs.quiet = false
-  const x = bayX(a.client)
-  if (gs.coins > c0) float(w, x, FRONT - 0.35, '+' + (gs.coins - c0), 'good')
-  if (got) float(w, x, FRONT, '+' + got + ' · ' + Math.min(total, h0 + got) + '/' + total)
-  return got
+/** One good into an ask's truck: it pays the good's price; the last one sends the truck off. */
+function fillAsk(w: World, a: AskT) {
+  a.have++
+  const g = ITEMS[a.kind].price
+  earn(w, g)
+  float(w, stallX(a.stall), FRONT, '+' + g + ' · ' + a.have + '/' + a.total, 'good')
+  if (a.have >= a.total) askDone(w, a)
 }
 
-/** The market's row (one dock along the road, world.ts `addMarket`). */
-export const marketDock = (w: World) => [...res(w, Plant).b.values()].find((b) => b.type === 'dock') ?? null
-
-/** Sell up to n of a good from the stock at the market (none before it opens). Returns how many were sold. */
+/** Sell up to n of a good from the stock at the trading post (none before it opens). Returns how many were sold. */
 export function sell(w: World, k: ItemId, n: number) {
   if (!res(w, GameState).trade) return 0
   const p = sellPrice(k)
   const got = stockTake(w, k, n)
   if (!got) return 0
   earn(w, got * p)
-  float(w, res(w, Field).right / 2, FRONT, '+' + got * p, 'good')
+  float(w, BUY_X, FRONT, '+' + got * p, 'good')
   return got
 }
 
-/** Buy up to n of a good into the stock at the market, as many as the coins allow. Returns how many were bought. */
+/** Buy up to n of a good into the stock at the trading post, as many as the coins allow. Returns how many were bought. */
 export function buy(w: World, k: ItemId, n: number) {
   if (!res(w, GameState).trade) return 0
   const gs = res(w, GameState),
@@ -159,10 +162,14 @@ export function buy(w: World, k: ItemId, n: number) {
   gs.coins -= got * p
   res(w, Stats).spent += got * p
   stockAdd(w, k, got)
+  float(w, BUY_X, FRONT, '−' + got * p, 'soft')
   return got
 }
 
-/** Trucks: arrive on the far lane keeping their distance, park on the near lane at their dock, leave by the far lane. */
+/**
+ * Trucks: arrive on the drive lane keeping their distance, park on the near lane at their stall, leave by the drive
+ * lane. A parked truck takes its good from the stock, MARKET.loadRate a second (the author: «он сам грузится в неё»).
+ */
 export function truckSystem(w: World, dt: number) {
   const market = res(w, Market)
   const onB = (t: (typeof market.trucks)[number]) => t.lane > 0.5
@@ -177,8 +184,22 @@ export function truckSystem(w: World, dt: number) {
     } else if (t.state === 'in') {
       t.lane = Math.max(0, t.lane - dt * ROAD.laneSpeed)
       if (t.lane === 0) t.state = 'park'
+    } else if (t.state === 'park') {
+      const a = market.asks.find((q) => q.id === t.ask)
+      if (!a || a.have >= a.total || !isOn(w, 'village') || !stockOf(w, a.kind)) {
+        t.load = 0
+        continue
+      }
+      t.load = (t.load ?? 0) + dt * MARKET.loadRate
+      while (t.load >= 1 && a.have < a.total && stockTake(w, a.kind, 1)) {
+        t.load--
+        emit(w, { kind: 'load', stall: a.stall, good: a.kind })
+        fillAsk(w, a)
+      }
     } else if (t.state === 'out') {
-      if (t.lane === 0 && market.trucks.some((q) => q !== t && onB(q) && Math.abs(q.x - t.x) < ROAD.gap)) continue
+      // it pulls out once the drive lane is clear beside it; one waiting just a gap behind for its stall doesn't hold it
+      // (the gap less a hair: the two would wait for each other forever over a rounding)
+      if (t.lane === 0 && market.trucks.some((q) => q !== t && onB(q) && Math.abs(q.x - t.x) < ROAD.gap - 0.01)) continue
       t.lane = Math.min(1, t.lane + dt * ROAD.laneSpeed)
       if (t.lane === 1) t.state = 'leave'
     } else if (t.state === 'leave') t.x = Math.min(ahead(t) - ROAD.gap, t.x + dt * ROAD.leaveSpeed)

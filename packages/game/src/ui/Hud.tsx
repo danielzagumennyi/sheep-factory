@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BELT, BUILDINGS, RECIPES, RECIPE_ORDER, SEED, type BuildingId, type CardId, type ItemId, type RecipeId, type ResId } from '@/game/balance'
+import { BELT, BUILDINGS, MARKET, RECIPES, RECIPE_ORDER, SEED, type BuildingId, type CardId, type ItemId, type RecipeId, type ResId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { jobOf, jobsOf, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
 import { buyPlot, cycleRule, liftUp, remove, setRecipe, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
-import { buy, buyPrice, loadAsk, openAsks, sell, sellPrice } from '@/game/systems/village'
-import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type AskT, type Building, type SplitRules, type World } from '@/game/world'
+import { askAt, buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
+import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type Building, type SplitRules, type World } from '@/game/world'
 import { useAppStore } from '@/app/store'
 import { NewGame } from './Title'
 import { setSoundOn } from '@/audio'
@@ -385,39 +385,12 @@ function Amount({ n, max, set }: { n: number; max: number; set: (n: number) => v
   )
 }
 
-/** Giving an ask its good from the stock, in the market's popup: how many (the author: «он выбирает … сколько»). */
-function LoadRow({ ask, kind, refresh }: { ask: AskT; kind: ItemId; refresh: () => void }) {
-  const { world } = useGame()
-  const { t } = useT()
-  const have = stockOf(world, kind)
-  const [n, setN] = useState(99)
-  if (!have) return <div className="pop__st pop__st--plain">{t(UI.nothingHere)}</div>
-  const k = Math.min(n, have)
-  return (
-    <>
-      <Amount n={k} max={have} set={setN} />
-      <div className="pop__acts">
-        <button
-          type="button"
-          onClick={() => {
-            loadAsk(world, ask, k)
-            refresh()
-          }}
-        >
-          {t(UI.load)} <Icon kind={kind} size={16} />
-          {k}
-        </button>
-      </div>
-    </>
-  )
-}
-
 /** The goods the market deals in: those the farm has met, and whatever is in stock. */
 function marketGoods(w: World, met: readonly ItemId[]): ItemId[] {
   return STOCK_ORDER.filter((k) => met.includes(k) || stockOf(w, k) > 0)
 }
 
-/** The market (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
+/** The trading post (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
 function MarketBody({ refresh }: { refresh: () => void }) {
   const { world } = useGame()
   const { t } = useT()
@@ -539,29 +512,48 @@ function Popup() {
   if (sel.kind === 'b') {
     const b = res(world, Plant).b.get(sel.key)
     if (!b) return null
-    if (b.type === 'dock') {
-      // the market: every open ask, with what the stock can give it; trading once its level has opened it
+    if (b.part === 'buy') {
+      // the trading post: buying into the stock and selling from it
       body = (
         <>
           <h3>
             <Icon kind="coin" size={20} />
-            {t(CLIENT_NAMES.market)}
+            {t(UI.tradePost)}
           </h3>
-          {openAsks(world).map((a) => (
-            <div key={a.id} className="pop__ask">
-              <div className="pop__rows">
-                <div>
-                  <Icon kind={a.kind} size={20} /> {t(CLIENT_NAMES[a.client])} {a.have} / {a.total}
-                </div>
-                <div>
-                  <Icon kind="coin" size={16} />
-                  {t(UI.each, { n: asksHud.find((q) => q.id === a.id)?.price ?? 0 })}
-                </div>
-              </div>
-              <LoadRow ask={a} kind={a.kind} refresh={refresh} />
+          <MarketBody refresh={refresh} />
+        </>
+      )
+    } else if (b.type === 'dock') {
+      // a stall: the ask whose truck is loaded there, with how many of its good wait in the stock
+      const a = askAt(world, MARKET.stalls.indexOf(b.x as (typeof MARKET.stalls)[number]))
+      body = a ? (
+        <>
+          <h3>
+            <Icon kind={a.kind} size={20} />
+            {t(CLIENT_NAMES[a.client])}
+          </h3>
+          <div className="pop__rows">
+            <div>
+              <Icon kind={a.kind} size={20} /> {a.have} / {a.total}
             </div>
-          ))}
-          {gs.trade && <MarketBody refresh={refresh} />}
+            <div>
+              <Icon kind="coin" size={16} />
+              {t(UI.each, { n: asksHud.find((q) => q.id === a.id)?.price ?? 0 })}
+            </div>
+            {stockOf(world, a.kind) > 0 && (
+              <div title={t(UI.stock)}>
+                <Icon kind="stock" size={16} /> {stockOf(world, a.kind)}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <h3>
+            <Icon kind="coin" size={20} />
+            {t(UI.stall)}
+          </h3>
+          <div className="pop__st pop__st--plain">{t(UI.noTruck)}</div>
         </>
       )
     } else {

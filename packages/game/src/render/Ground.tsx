@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { Mesh } from 'three'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, SRGBColorSpace } from 'three'
-import { BAY_X, CONTACT, GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
+import { CONTACT, GRID, ISLAND, LOOK, MARKET, ROAD } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -170,7 +170,7 @@ function islandBody() {
   // stone curbs along both sides of the road
   const len = X1() - X0 - 0.5
   const curb = (z: number) => rb(len, 0.07, 0.12, 0.03).translate((X0 + X1()) / 2, 0.035, z)
-  const curbs = mergeGeometries([curb(GRID.roadY + 1.03), curb(GRID.roadY + 2.97)])!
+  const curbs = mergeGeometries([curb(ROAD.row + 0.03), curb(ROAD.row + 1.97)])!
   // the rounded sides in bands blended smoothly, so the corners don't show as stripes
   return { lip, soil, curbs, lipMat: softMat(LOOK.lip), soilMat: softMat(LOOK.soil) }
 }
@@ -242,27 +242,28 @@ function paint(world: World, c: HTMLCanvasElement) {
   }
   g.globalAlpha = 1
   g.filter = 'none'
-  // the dock row: grout under the pastel paving tiles (Props.tsx); the road in two lanes
-  const rowY = wz(GRID.roadY)
+  // the market's row: grout under the pastel paving tiles (Props.tsx); the stalls' floor past it, from edge to edge;
+  // then the road in two lanes along the island's edge
+  const rowY = wz(GRID.roadY),
+    roadY = wz(ROAD.row)
   g.fillStyle = LOOK.dockTile
   g.fillRect(wx(X0 + 0.2), rowY, (X1() - X0 - 0.4) * PX, PX)
+  g.fillStyle = LOOK.dockRow
+  g.fillRect(wx(X0 + 0.2), rowY + PX, (X1() - X0 - 0.4) * PX, MARKET.rows * PX)
   g.fillStyle = LOOK.road
-  g.fillRect(wx(X0), rowY + PX, (X1() - X0) * PX, 2 * PX)
+  g.fillRect(wx(X0), roadY, (X1() - X0) * PX, 2 * PX)
   g.strokeStyle = LOOK.roadLine
   g.lineWidth = 3
   g.setLineDash([16, 14])
   g.beginPath()
-  g.moveTo(wx(X0), rowY + 2 * PX)
-  g.lineTo(wx(X1()), rowY + 2 * PX)
+  g.moveTo(wx(X0), roadY + PX)
+  g.lineTo(wx(X1()), roadY + PX)
   g.stroke()
   g.setLineDash([])
-  // the clients' parking bays in front of the market, on the lane past the middle line
+  // a parking bay in front of each stall, on the lane by the stalls
   g.strokeStyle = 'rgba(255,255,255,0.75)'
   g.lineWidth = 2
-  for (const x of Object.values(BAY_X)) g.strokeRect(wx(x - 0.25) + 4, rowY + 2 * PX + 5, 1.5 * PX - 8, PX - 10)
-  // the market's floor past the road: paving from edge to edge
-  g.fillStyle = LOOK.dockRow
-  g.fillRect(wx(X0 + 0.2), rowY + 3 * PX, (X1() - X0 - 0.4) * PX, MARKET.rows * PX)
+  for (const x of MARKET.stalls) g.strokeRect(wx(x + MARKET.stallW / 2 - 0.8) + 4, roadY + 5, 1.6 * PX - 8, PX - 10)
   // meadows: tilled soil with two furrows under the sheaves
   for (const [k, t] of res(world, Field).terrain) {
     if (t !== 'meadow') continue
