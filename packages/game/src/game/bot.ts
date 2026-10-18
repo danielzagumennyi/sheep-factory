@@ -5,7 +5,7 @@ import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from '.
 import { PLAN, applyStep, finishJob, landReady, pieceCost, pieces, plotsToBuy } from './plan'
 import { FIXED_DT, stepSimulation } from './systems'
 import { hungry, loopHasFeeder } from './systems/sheep'
-import { buy, loadDock, openAsks, sell } from './systems/village'
+import { buy, loadAsk, openAsks, sell } from './systems/village'
 import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, stockOf, toStock, unkey, type World } from './world'
 
 /**
@@ -99,12 +99,8 @@ export function createBot(w: World) {
         b.item = null
       }
     }
-    // docks: every open ask gets what the stock has of its good
-    for (const a of openAsks(w)) {
-      if (!stockOf(w, a.kind)) continue
-      const d = [...res(w, Plant).b.values()].find((q) => q.type === 'dock' && q.client === a.client)
-      if (d) loadDock(w, d, stockOf(w, a.kind))
-    }
+    // the market: every open ask gets what the stock has of its good
+    for (const a of openAsks(w)) if (stockOf(w, a.kind)) loadAsk(w, a, stockOf(w, a.kind))
     // dye for a dye ask from the bushes; a good an ask wants and no line brings, picked off a belt by hand
     if (asked().has('dye') && stockOf(w, 'dye') < 4) gatherOwn('bush', 4)
     for (const a of openAsks(w)) {

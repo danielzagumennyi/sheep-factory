@@ -19,16 +19,15 @@ export interface GrowDef {
   level: number
   top?: number
   right?: number
-  docks?: readonly (readonly [ClientId, number])[]
 }
 /**
  * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), at these village levels: twice
- * a column of plots rises in the east, along the road, with docks of its own so a farm there has somewhere near to
- * send its goods; then the far row. The new plots hold fresh deposits, for sale.
+ * a column of plots rises in the east, along the road — the market's row grows with it, so a farm there sends its goods
+ * straight down; then the far row. The new plots hold fresh deposits, for sale.
  */
 export const ISLAND_GROW: readonly GrowDef[] = [
-  { level: 6, right: 40, docks: [['shop', 31], ['post', 33]] },
-  { level: 11, right: 48, docks: [['cobbler', 39], ['atelier', 41]] },
+  { level: 6, right: 40 },
+  { level: 11, right: 48 },
   { level: 13, top: 0 },
 ]
 
@@ -247,9 +246,13 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
   const [l, w] = BUILDINGS[type].size ?? [1, 1]
   return dir % 2 === 0 ? [l, w] : [w, l]
 }
-/** Docks with a truck are 2×1 on the dock row; the market is a 2×2 stall reaching up into the row above (the author). */
-export const DOCK = { w: 2, h: 1 } as const
-export const MARKET = { w: 2, h: 2 } as const
+/**
+ * The market (the author, 18.10.2026: «пусть рынок будет как основная точка куда игрок приносит товар»): the whole row
+ * beside the road takes goods in — a belt brought to any of its cells hands them over, and a little bridge carries them
+ * over the road into a long market on the island's near edge, `rows` deep past the road. It gives each client what
+ * it asks for; trucks park at their bays in front of it and drive off full.
+ */
+export const MARKET = { row: GRID.roadY, rows: 2, gap: 3 } as const
 
 export type RecipeId = 'sweater' | 'valenki'
 /**
@@ -288,9 +291,9 @@ export const SPLIT_RULES = ['any', 'wool', 'pwool', 'roving', 'proving', 'yarn',
 // ---------------------------------------------------------------- road (GDD 7)
 
 export const ROAD = {
-  /** Lane centres (grid rows): trucks park on A beside the docks and drive on B. */
-  laneA: GRID.roadY + 1.5,
-  laneB: GRID.roadY + 2.5,
+  /** Lane centres (grid rows): trucks park on A, by the market past the road, and drive on B, by the field. */
+  laneA: GRID.roadY + 2.5,
+  laneB: GRID.roadY + 1.5,
   gap: 1.6,
   arriveSpeed: 4,
   leaveSpeed: 5,
@@ -516,13 +519,10 @@ export const LOOK = {
 // ---------------------------------------------------------------- the village (GDD 7–8)
 
 export type ClientId = 'market' | 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fair'
-/**
- * Where each client's dock stands on the dock row. A dock appears when its client first asks; the market stands apart
- * on the left, without a truck, once its level opens it.
- */
-/** The clients with a truck, in the order the village meets them. */
+/** The clients with a truck, in the order the village meets them; `market` is the market itself. */
 export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
-export const DOCK_X: Readonly<Record<ClientId, number>> = { market: 9, post: 13, shop: 15, atelier: 19, cobbler: 4, school: 28, fair: 25 }
+/** Where each client's truck parks in front of the market (its bay), MARKET.gap cells apart from the next. */
+export const BAY_X: Readonly<Record<Exclude<ClientId, 'market'>, number>> = { post: 11, shop: 14, atelier: 17, cobbler: 20, school: 23, fair: 26 }
 
 /** «Новое» cards: one per thing a level opens (its id), and a few hints. */
 export type CardId = BuildingId | 'valenki' | 'market' | 'land' | 'island' | 'chapter'

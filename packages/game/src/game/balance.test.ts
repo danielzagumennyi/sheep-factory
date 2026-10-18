@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CLIENT_ORDER, DOCK, DOCK_X, ITEMS, LEVELS, MARKET, RECIPES, TOOL_ORDER, type BuildingId } from './balance'
+import { BAY_X, CLIENT_ORDER, ITEMS, LEVELS, MARKET, RECIPES, TOOL_ORDER, type BuildingId } from './balance'
 import { jobsOf } from './grid'
 
 describe('the village (GDD 7–8)', () => {
@@ -22,10 +22,9 @@ describe('the village (GDD 7–8)', () => {
     expect(at('market')).toBeGreaterThan(at('sheep'))
     expect(at('feeder')).toBeGreaterThan(at('mower'))
   })
-  it('docks stand apart on the dock row, the market away from the trucks', () => {
-    const xs = CLIENT_ORDER.map((c) => DOCK_X[c]).sort((a, b) => a - b)
-    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(DOCK.w)
-    for (const x of xs) expect(Math.abs(x - DOCK_X.market)).toBeGreaterThanOrEqual(MARKET.w)
+  it('the clients park at bays of their own in front of the market, a truck length apart', () => {
+    const xs = CLIENT_ORDER.map((c) => BAY_X[c as keyof typeof BAY_X]).sort((a, b) => a - b)
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(MARKET.gap)
   })
 })
 

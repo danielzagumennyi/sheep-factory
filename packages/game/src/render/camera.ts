@@ -1,4 +1,4 @@
-import { CAMERA, GRID } from '@/game/balance'
+import { CAMERA, GRID, MARKET } from '@/game/balance'
 import { Field, res, unkey, type World } from '@/game/world'
 import { island } from './island'
 
@@ -16,7 +16,7 @@ export function clampCam() {
   cam.z = Math.min(GRID.rows, Math.max(0, cam.z))
 }
 
-/** Frame the owned land and the road below it, the way the prototype opens a mission. */
+/** Frame the owned land, the road below it and the market past it, the way the prototype opens a mission. */
 export function fitOwned(world: World, aspect: number) {
   let x0 = 1e9,
     y0 = 1e9,
@@ -29,7 +29,7 @@ export function fitOwned(world: World, aspect: number) {
     x1 = Math.max(x1, (px + 1) * GRID.plotW)
     y1 = Math.max(y1, (py + 1) * GRID.plotH)
   }
-  y1 = Math.max(y1, GRID.roadY + 3)
+  y1 = Math.max(y1, GRID.roadY + 3 + MARKET.rows)
   cam.x = (x0 + x1) / 2 + 1.2
   cam.z = (y0 + y1) / 2 + 0.6
   const w = x1 - x0 + 5,

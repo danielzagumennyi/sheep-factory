@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { liftUp } from './actions/build'
 import { pickSheep } from './actions/hand'
+import { LEVELS } from './balance'
 import { runBot } from './bot'
 import { SAVE_VERSION, loadGame, saveGame, saveInfo, type SaveData } from './save'
 import { startWorld } from './start'
 import { stepSimulation } from './systems'
-import { Flock, Plant, key, res, type World } from './world'
+import { Field, Flock, GameState, Plant, key, res, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -49,6 +50,24 @@ describe('saves (TDD 3.5)', () => {
     const l = keep(loadGame(stored(saveGame(w))))
     expect(res(l, Flock).sheep.find((q) => q.id === s.id)!.state).toBe('pasture')
     expect(res(l, Plant).b.get(key(m.x, m.y))?.type).toBe('shearer')
+  })
+
+  it('a save from before the one market loads with it: the old docks go, trading as its level says', () => {
+    const w = keep(startWorld({ seed: 5 }))
+    runBot(w, 9 * 60)
+    const old = stored(saveGame(w)) as SaveData
+    old.v = 1
+    delete (old.game.gs as Partial<SaveData['game']['gs']>).trade
+    // the client docks and the market stall of version 1
+    const dock = old.game.plant.find((q) => q.type === 'dock')!
+    old.game.plant = old.game.plant.filter((q) => q.type !== 'dock')
+    old.game.plant.push({ ...dock, client: 'post', x: 13, w: 2 }, { ...dock, client: 'market', x: 9, y: 19, w: 2, h: 2 })
+    const l = keep(loadGame(old))
+    const docks = [...res(l, Plant).b.values()].filter((q) => q.type === 'dock')
+    expect(docks.length).toBe(1)
+    expect(docks[0]!.w).toBe(res(l, Field).right)
+    expect(res(l, Plant).occ.has(key(10, 19))).toBe(false)
+    expect(res(l, GameState).trade).toBe(res(w, GameState).level >= LEVELS.findIndex((L) => L.open.includes('market')))
   })
 
   it('a broken save, another game’s or a newer one is not loaded', () => {

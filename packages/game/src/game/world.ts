@@ -1,5 +1,5 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, DOCK, DOCK_X, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -146,11 +146,14 @@ export type FxEvent =
   | { kind: 'float'; x: number; y: number; text: string; tone: 'good' | 'soft' | 'bad' | 'accent' | 'water' }
   | { kind: 'puff'; x: number; y: number; color: string; n: number }
   | { kind: 'sound'; id: SoundId }
+  /** A good handed to the market at column x: the view carries it over the road on that column's bridge. */
+  | { kind: 'deliver'; x: number; good: ItemId }
 /** The game's sounds for now (the author's recordings): a building set down, one removed. The UI click is the HUD's own. */
 export type SoundId = 'place' | 'remove'
 
 export type Tool = 'hand' | 'erase' | BuildingId
-export type Selection = { kind: 'b'; key: string } | { kind: 'plot'; px: number; py: number } | { kind: 'p'; id: number } | null
+/** What is selected; for the market's row (one dock along the road) also where along it it was clicked, for its popup. */
+export type Selection = { kind: 'b'; key: string; x?: number } | { kind: 'plot'; px: number; py: number } | { kind: 'p'; id: number } | null
 
 // ---------------------------------------------------------------- traits (world resources)
 
@@ -168,6 +171,8 @@ export const GameState = trait(() => ({
   chapterDone: false,
   /** Sheep need food (from the feeder's level on): until then a shorn sheep grows its fleece by itself. */
   food: false,
+  /** The market trades with the player (from its level on): sells from the stock and buys into it. */
+  trade: false,
   /** While true, deliveries don't float their own numbers (a hand delivery floats one total). */
   quiet: false,
   strayT: 0,
@@ -359,6 +364,7 @@ export function createGameWorld(opts: WorldOptions = {}): World {
     const [x, y] = unkey(k)
     f.forSale.add(key(Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)))
   }
+  addMarket(world)
   const p = makePen(world, START.pen.x, START.pen.y, START.pen.dir)
   res(world, Flock).pastures.push(p)
   for (let i = 0; i < START.sheep; i++) res(world, Flock).sheep.push(makeSheep(world, p.id, true))
@@ -366,17 +372,19 @@ export function createGameWorld(opts: WorldOptions = {}): World {
 }
 
 /**
- * A client's dock on the dock row (the market's stall reaches up into the row above); nothing if it stands already.
- * Away from DOCK_X it is one more dock of that client, on land the island grew (no truck parks there).
+ * The market's row: one dock along the whole row beside the road, as wide as the island (it grows with it), taking
+ * goods from every cell a belt brings them to (TDD 3, GDD 7). The market itself is drawn past the road.
  */
-export function addDock(world: World, client: ClientId, x: number = DOCK_X[client]) {
-  const plant = res(world, Plant)
-  for (const b of plant.b.values()) if (b.type === 'dock' && b.client === client && b.x === x) return b
-  const m = client === 'market',
-    y = m ? GRID.roadY - MARKET.h + 1 : GRID.roadY
-  const d: Building = { ...blankBuilding('dock', x, y, 3), client, fixed: true, ...(m ? { w: MARKET.w, h: MARKET.h } : {}) }
-  plant.b.set(key(x, y), d)
-  for (let dy = 0; dy < d.h; dy++) for (let dx = 0; dx < d.w; dx++) if (dx || dy) plant.occ.set(key(x + dx, y + dy), key(x, y))
+export function addMarket(world: World) {
+  const plant = res(world, Plant),
+    right = res(world, Field).right
+  let d = [...plant.b.values()].find((b) => b.type === 'dock')
+  if (!d) {
+    d = { ...blankBuilding('dock', 0, MARKET.row, 3), client: 'market', fixed: true }
+    plant.b.set(key(0, MARKET.row), d)
+  }
+  d.w = right
+  for (let x = 1; x < right; x++) plant.occ.set(key(x, MARKET.row), key(0, MARKET.row))
   return d
 }
 
@@ -408,7 +416,7 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
 }
 
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
-  const [w, h] = type === 'dock' ? [DOCK.w, DOCK.h] : dimsOf(type, dir)
+  const [w, h] = type === 'dock' ? [1, 1] : dimsOf(type, dir)
   return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
 }
 

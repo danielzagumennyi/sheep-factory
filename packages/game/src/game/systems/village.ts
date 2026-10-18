@@ -1,13 +1,14 @@
-import { AFTER, BUY_SHARE, DOCK, DOCK_X, ISLAND_GROW, ITEMS, LEVELS, MARKET_SHARE, ROAD, type ClientId, type GrowDef, type ItemId, type LevelDef } from '../balance'
-import { Field, GameState, Market, Plant, Stats, Unlocks, addDock, float, isOn, newItem, res, stockAdd, stockTake, type AskT, type Building, type Item, type World } from '../world'
+import { AFTER, BAY_X, BUY_SHARE, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, ROAD, type ClientId, type GrowDef, type ItemId, type LevelDef } from '../balance'
+import { Field, GameState, Market, Plant, Stats, Unlocks, addMarket, emit, float, isOn, newItem, res, stockAdd, stockTake, type AskT, type Building, type Item, type World } from '../world'
 import { queueCard, unlock } from './unlocks'
 
 /**
  * The village (GDD 7–8): one long game, no missions. A level is a set of asks, one per client; each ask pays its good's
  * price for every one that comes. When all of a level's asks are done the next level opens one new thing (its card)
  * and new asks; at the levels of ISLAND_GROW the island grows. After the table the same clients ask again, more each time.
- * A dock whose ask is done — like the market — takes anything at a quarter of its price, so no line jams. From the
- * stock the player loads a dock or trades at the market in their popups (the author: «он выбирает что и/или сколько»).
+ * Every good goes to the market, by the row beside the road: it fills the asks and sells the rest at a quarter of its
+ * price, so no line jams. From the stock the player loads an ask or trades in the market's popup (the author: «он
+ * выбирает что и/или сколько»).
  */
 
 /** What the market pays for one good, and what it asks for one. */
@@ -17,10 +18,10 @@ export const buyPrice = (k: ItemId) => Math.max(1, Math.ceil(ITEMS[k].price * BU
 export const openAsks = (w: World) => res(w, Market).asks.filter((a) => a.have < a.total)
 export const askFor = (w: World, client: ClientId) => res(w, Market).asks.find((a) => a.client === client && a.have < a.total) ?? null
 
-export function dockX(w: World, client: ClientId) {
-  for (const b of res(w, Plant).b.values()) if (b.type === 'dock' && b.client === client) return b.x
-  return DOCK_X[client]
-}
+/** Where a client's truck parks in front of the market, and where the market's numbers for it float up. */
+export const bayX = (client: ClientId) => (client === 'market' ? 0 : BAY_X[client]) + 0.5
+/** The market's front, past the road, where its numbers float up. */
+const FRONT = MARKET.row + 3.3
 
 export function earn(w: World, n: number) {
   res(w, GameState).coins += n
@@ -44,20 +45,19 @@ export function openLevel(w: World, i: number) {
   for (const id of L.open) unlock(w, id)
   for (const g of ISLAND_GROW) if (g.level === i + 1) growIsland(w, g)
   for (const [client, kind, total] of L.asks) {
-    addDock(w, client)
     const a: AskT = { id: ++market.askUid, client, kind, total, have: 0 }
     market.asks.push(a)
-    market.trucks.push({ ask: a.id, x: -2 - market.trucks.filter((t) => t.state === 'arrive').length * 2, tx: DOCK_X[client] + (DOCK.w - 1) / 2, state: 'arrive', lane: 1 })
+    market.trucks.push({ ask: a.id, x: -2 - market.trucks.filter((t) => t.state === 'arrive').length * 2, tx: bayX(client) - 0.5, state: 'arrive', lane: 1 })
   }
 }
 
-/** A strip of plots rises with fresh deposits, for sale, and the docks that come with it (the author, 16–17.10.2026). */
+/** A strip of plots rises with fresh deposits, for sale; the market's row grows with it (the author, 16–18.10.2026). */
 export function growIsland(w: World, g: GrowDef) {
   const f = res(w, Field)
   if (f.top <= (g.top ?? f.top) && f.right >= (g.right ?? f.right)) return
   f.top = Math.min(f.top, g.top ?? f.top)
   f.right = Math.max(f.right, g.right ?? f.right)
-  for (const [client, x] of g.docks ?? []) addDock(w, client, x)
+  addMarket(w)
   res(w, GameState).fieldVersion++
   // its card every time it grows
   res(w, Unlocks).seen.delete('island')
@@ -83,37 +83,39 @@ function askDone(w: World, a: AskT) {
   openLevel(w, gs.level + 1)
 }
 
-export function dockAccept(w: World, d: Building, it: Item): boolean {
+/**
+ * A good handed to the market at column x (TDD 3): the view carries it over the road on that column's bridge. The
+ * market gives it to the open ask that wants it, at its full price; one nobody asks for it sells at once, for a quarter
+ * (the author: «рынок сам раздаёт клиентам»). So no line ever jams at the road.
+ */
+export function dockAccept(w: World, _d: Building, it: Item, x = 0): boolean {
   if (it.kind === 'sheep') return false
-  // with the village switched off a dock only takes what comes: nothing is counted, no level opens (the menu's farm)
+  const gs = res(w, GameState),
+    kind = it.kind
+  if (!gs.quiet) emit(w, { kind: 'deliver', x, good: kind })
+  // with the village switched off the market only takes what comes: nothing is counted, no level opens (the menu's farm)
   if (!isOn(w, 'village')) return true
-  const gs = res(w, GameState)
-  const x = d.x + 0.5,
-    y = d.y - 0.15
-  const kind = it.kind
-  const a = d.client && d.client !== 'market' ? askFor(w, d.client) : null
-  if (a && a.kind === kind) {
+  const a = openAsks(w).find((q) => q.kind === kind)
+  if (a) {
     a.have++
     const g = ITEMS[kind].price
     earn(w, g)
-    if (!gs.quiet) float(w, x, y, '+' + g + ' · ' + a.have + '/' + a.total, 'good')
+    if (!gs.quiet) float(w, bayX(a.client), FRONT, '+' + g + ' · ' + a.have + '/' + a.total, 'good')
     if (a.have >= a.total) askDone(w, a)
     return true
   }
-  // the market, a dock whose ask is done, a good not in its ask: a quarter of the price
   const g = sellPrice(kind)
   earn(w, g)
-  if (!gs.quiet) float(w, x, y, '+' + g)
+  if (!gs.quiet) float(w, x + 0.5, FRONT, '+' + g)
   return true
 }
 
 /**
- * Load up to n of the good a dock's ask wants from the stock (its popup): each one counts as delivered, the dock floats
- * one total for the lot. Returns how many went.
+ * Load up to n of what an ask wants from the stock (the market's popup): each one counts as delivered, the market floats
+ * one total for the lot at the client's bay. Returns how many went.
  */
-export function loadDock(w: World, d: Building, n: number) {
-  const a = d.client && d.client !== 'market' ? askFor(w, d.client) : null
-  if (!a) return 0
+export function loadAsk(w: World, a: AskT, n: number) {
+  if (a.have >= a.total) return 0
   const gs = res(w, GameState)
   const c0 = gs.coins,
     h0 = a.have,
@@ -121,33 +123,32 @@ export function loadDock(w: World, d: Building, n: number) {
     total = a.total
   const got = stockTake(w, kind, Math.min(n, a.total - a.have))
   gs.quiet = true
+  const d = marketDock(w)!
   for (let i = 0; i < got; i++) dockAccept(w, d, newItem(kind))
   gs.quiet = false
-  const x = d.x + 0.5,
-    y = d.y - 0.15
-  if (gs.coins > c0) float(w, x, y - 0.35, '+' + (gs.coins - c0), 'good')
-  if (got) float(w, x, y, '+' + got + ' · ' + Math.min(total, h0 + got) + '/' + total)
+  const x = bayX(a.client)
+  if (gs.coins > c0) float(w, x, FRONT - 0.35, '+' + (gs.coins - c0), 'good')
+  if (got) float(w, x, FRONT, '+' + got + ' · ' + Math.min(total, h0 + got) + '/' + total)
   return got
 }
 
-/** The market's stall, once its level has opened it. */
-export const marketDock = (w: World) => [...res(w, Plant).b.values()].find((b) => b.type === 'dock' && b.client === 'market') ?? null
+/** The market's row (one dock along the road, world.ts `addMarket`). */
+export const marketDock = (w: World) => [...res(w, Plant).b.values()].find((b) => b.type === 'dock') ?? null
 
 /** Sell up to n of a good from the stock at the market (none before it opens). Returns how many were sold. */
 export function sell(w: World, k: ItemId, n: number) {
-  const m = marketDock(w)
-  if (!m) return 0
+  if (!res(w, GameState).trade) return 0
   const p = sellPrice(k)
   const got = stockTake(w, k, n)
   if (!got) return 0
   earn(w, got * p)
-  float(w, m.x + 1, m.y - 0.15, '+' + got * p, 'good')
+  float(w, res(w, Field).right / 2, FRONT, '+' + got * p, 'good')
   return got
 }
 
 /** Buy up to n of a good into the stock at the market, as many as the coins allow. Returns how many were bought. */
 export function buy(w: World, k: ItemId, n: number) {
-  if (!marketDock(w)) return 0
+  if (!res(w, GameState).trade) return 0
   const gs = res(w, GameState),
     p = buyPrice(k)
   const got = Math.max(0, Math.min(n, Math.floor(gs.coins / p)))

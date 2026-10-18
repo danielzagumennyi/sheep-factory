@@ -5,8 +5,8 @@ import { jobOf, jobsOf, plotAdjacent, plotPrice, plotStock, residents } from '@/
 import { buyPlot, cycleRule, liftUp, remove, setRecipe, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
-import { askFor, buy, buyPrice, loadDock, sell, sellPrice } from '@/game/systems/village'
-import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type Building, type SplitRules, type World } from '@/game/world'
+import { buy, buyPrice, loadAsk, openAsks, sell, sellPrice } from '@/game/systems/village'
+import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type AskT, type Building, type SplitRules, type World } from '@/game/world'
 import { useAppStore } from '@/app/store'
 import { NewGame } from './Title'
 import { setSoundOn } from '@/audio'
@@ -385,8 +385,8 @@ function Amount({ n, max, set }: { n: number; max: number; set: (n: number) => v
   )
 }
 
-/** A truck dock's loading: how many of its good to load from the stock (the author: «он выбирает … сколько»). */
-function LoadRow({ b, kind, refresh }: { b: Building; kind: ItemId; refresh: () => void }) {
+/** Giving an ask its good from the stock, in the market's popup: how many (the author: «он выбирает … сколько»). */
+function LoadRow({ ask, kind, refresh }: { ask: AskT; kind: ItemId; refresh: () => void }) {
   const { world } = useGame()
   const { t } = useT()
   const have = stockOf(world, kind)
@@ -400,7 +400,7 @@ function LoadRow({ b, kind, refresh }: { b: Building; kind: ItemId; refresh: () 
         <button
           type="button"
           onClick={() => {
-            loadDock(world, b, k)
+            loadAsk(world, ask, k)
             refresh()
           }}
         >
@@ -540,35 +540,28 @@ function Popup() {
     const b = res(world, Plant).b.get(sel.key)
     if (!b) return null
     if (b.type === 'dock') {
-      const a = b.client === 'market' ? null : askFor(world, b.client!)
-      const price = a ? (asksHud.find((q) => q.id === a.id)?.price ?? 0) : 0
+      // the market: every open ask, with what the stock can give it; trading once its level has opened it
       body = (
         <>
           <h3>
-            {b.client === 'market' ? <Icon kind="coin" size={20} /> : a ? <Icon kind={a.kind} size={20} /> : null}
-            {t(CLIENT_NAMES[b.client!])}
+            <Icon kind="coin" size={20} />
+            {t(CLIENT_NAMES.market)}
           </h3>
-          {b.client === 'market' ? (
-            <MarketBody refresh={refresh} />
-          ) : a ? (
-            <>
+          {openAsks(world).map((a) => (
+            <div key={a.id} className="pop__ask">
               <div className="pop__rows">
                 <div>
-                  <Icon kind={a.kind} size={20} /> {a.have} / {a.total}
+                  <Icon kind={a.kind} size={20} /> {t(CLIENT_NAMES[a.client])} {a.have} / {a.total}
                 </div>
                 <div>
                   <Icon kind="coin" size={16} />
-                  {t(UI.each, { n: price })}
+                  {t(UI.each, { n: asksHud.find((q) => q.id === a.id)?.price ?? 0 })}
                 </div>
               </div>
-              <LoadRow b={b} kind={a.kind} refresh={refresh} />
-            </>
-          ) : (
-            <div className="pop__rows">
-              <div>{t(UI.askDone)}</div>
-              <div className="pop__st pop__st--plain">{t(UI.quarter)}</div>
+              <LoadRow ask={a} kind={a.kind} refresh={refresh} />
             </div>
-          )}
+          ))}
+          {gs.trade && <MarketBody refresh={refresh} />}
         </>
       )
     } else {

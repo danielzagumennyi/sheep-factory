@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { GRID, ISLAND, LOOK } from '@/game/balance'
+import { GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { get, owned, pastureAt } from '@/game/grid'
 import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/world'
@@ -61,7 +61,8 @@ function signature(w: World) {
 
 /** Is a cell free for decor: no terrain, no building, no pasture, not the docks and the road. */
 function free(w: World, x: number, y: number) {
-  if (y >= GRID.roadY && y <= GRID.roadY + 2) return false
+  // the road row, the road and the market past it stay clear
+  if (y >= GRID.roadY && y <= GRID.roadY + 2 + MARKET.rows) return false
   const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
   if (!inside) return true
   if (res(w, Field).terrain.has(key(x, y))) return false
@@ -104,7 +105,7 @@ function scatter(w: World, put: (k: Kind, x: number, z: number, yaw: number, s: 
       if (!free(w, x, y)) continue
       const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
       // the rim of the island is a little garden; the player's land stays mostly clear
-      const rim = !inside || y > GRID.roadY + 2
+      const rim = !inside || y > GRID.roadY + 2 + MARKET.rows
       const mine = inside && !rim && owned(w, x, y)
       // flowers gather where something stands — by fences, water, machines and the rim — and in a few clumps on
       // the open lawn, which otherwise stays clear

@@ -347,7 +347,8 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
   if (sel) {
     if (sel.kind === 'b') {
       const b = res(world, Plant).b.get(sel.key)
-      if (b) _v.set(b.x + b.w, 0.6, b.y + 0.2)
+      // the market's popup hangs where its row was clicked, not at the far end of the island
+      if (b) _v.set(b.type === 'dock' && sel.x !== undefined ? sel.x + 0.6 : b.x + b.w, 0.6, b.y + 0.2)
       else ui.sel = null
     } else if (sel.kind === 'plot') _v.set((sel.px + 0.5) * GRID.plotW, 0.3, sel.py * GRID.plotH + 1)
     else {

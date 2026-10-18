@@ -4,8 +4,8 @@ import type { Text } from '.'
 
 /**
  * Names and one-line descriptions of everything in the game. Numbers never appear here: they live in balance.ts.
- * A dock shows the good its client asks for (the author, 15.10.2026: «пиши нормально, что нужно»); the client's name
- * is for the book and the popup's title.
+ * A sign over each client's bay at the market shows its name and the good it asks for (the author, 15.10.2026: «пиши
+ * нормально, что нужно»).
  */
 
 export const ITEM_NAMES: Readonly<Record<ItemId | 'sheep', Text>> = {
@@ -93,7 +93,7 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
   seeder: { title: { ru: 'Сеялка', en: 'Seeder' }, text: { ru: 'Сеет вокруг себя то, что привезла лента', en: 'Sows round itself what the belt brings' } },
   workshop: { title: { ru: 'Мастерская', en: 'Workshop' }, text: { ru: 'Свитер: пряжа и розовая, два входа', en: 'Sweater: yarn and pink, two ways in' } },
   valenki: { title: { ru: 'Рецепт: валенки', en: 'Recipe: felt boots' }, text: { ru: 'Выбери его в окне мастерской', en: 'Pick it in a workshop popup' } },
-  market: { title: { ru: 'Рынок', en: 'Market' }, text: { ru: 'Продаёт за ¼, покупает дороже', en: 'Sells at ¼, buys dearer' } },
+  market: { title: { ru: 'Торговля', en: 'Trade' }, text: { ru: 'Продавай и покупай на рынке', en: 'Sell and buy at the market' } },
   land: { title: { ru: 'Участки', en: 'Land' }, text: { ru: 'Покос кончается? Купи соседний участок', en: 'Running out? Buy the next plot' } },
   island: { title: { ru: 'Остров растёт', en: 'The island grows' }, text: { ru: 'Новые участки на краю острова', en: 'New plots at the island’s edge' } },
   chapter: { title: { ru: 'Глава 1', en: 'Chapter 1' }, text: { ru: 'Деревня довольна. Просьбы растут дальше', en: 'The village is happy. Asks grow on' } },

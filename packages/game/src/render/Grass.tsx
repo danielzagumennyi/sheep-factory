@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, Color, MeshToonMaterial } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { GRASS, GRID, ISLAND, LOOK } from '@/game/balance'
+import { GRASS, GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
 import { useAppStore } from '@/app/store'
 import { useGame } from '@/game/GameContext'
 import { get, owned, pastureAt } from '@/game/grid'
@@ -176,7 +176,8 @@ const _c = new Color()
  * buildings and belts, the pen, the road, or where goods lie.
  */
 function grows(w: World, x: number, y: number, bare: Set<string>) {
-  if (y >= GRID.roadY && y <= GRID.roadY + 2) return false
+  // the road row, the road and the market past it stay clear
+  if (y >= GRID.roadY && y <= GRID.roadY + 2 + MARKET.rows) return false
   const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
   if (!inside) return true
   const t = res(w, Field).terrain.get(key(x, y))

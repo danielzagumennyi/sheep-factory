@@ -106,7 +106,7 @@ export function handClick(w: World, px: number, py: number) {
   }
   const b = get(w, x, y)
   if (b) {
-    clickBuilding(w, b)
+    clickBuilding(w, b, px)
     return
   }
   // a resource is gathered by hand on own land only (docs/05-REWORK.md); machines take only from own land too
@@ -130,16 +130,19 @@ export function handClick(w: World, px: number, py: number) {
 
 /**
  * A click on a building, wherever on its model it lands (the pointer picks it by its model): a belt gives up its
- * good, anything else is selected — a dock's or the market's popup is where goods are loaded and traded.
+ * good, anything else is selected — the market's popup, by where its row was clicked, is where asks are given goods
+ * from the stock and the market trades.
  */
-export function clickBuilding(w: World, b: Building) {
+export function clickBuilding(w: World, b: Building, at?: number) {
   const ui = res(w, Ui)
   if (isBeltLike(b) && b.item && !b.item.sheep && !handStill(w)) {
     toStock(w, b.item)
     b.item = null
     return
   }
-  ui.sel = ui.sel?.kind === 'b' && ui.sel.key === key(b.x, b.y) ? null : { kind: 'b', key: key(b.x, b.y) }
+  const x = at ?? ui.hover?.wx
+  const where = b.type === 'dock' && x !== undefined ? { x } : {}
+  ui.sel = ui.sel?.kind === 'b' && ui.sel.key === key(b.x, b.y) ? null : { kind: 'b', key: key(b.x, b.y), ...where }
 }
 
 /** A field click on pause: the pause line at the top nudges, so it is plain why nothing happened. */

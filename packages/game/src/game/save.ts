@@ -1,4 +1,4 @@
-import { BUILDINGS, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import { BUILDINGS, LEVELS, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
 import { sendHome } from './systems/sheep'
 import {
   Field,
@@ -12,6 +12,7 @@ import {
   Time,
   Ui,
   Unlocks,
+  addMarket,
   emptyWorld,
   key,
   res,
@@ -36,9 +37,19 @@ import {
  */
 
 /** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 1
+export const SAVE_VERSION = 2
+/** The level the market starts trading at (a version-1 save knew no `trade`). */
+const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
-const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {}
+const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
+  // 2: one market along the road instead of a dock per client and a market stall (18.10.2026); trading is a flag
+  1: (g) => {
+    const s = g as GameSave
+    s.plant = s.plant.filter((b) => b.type !== 'dock')
+    s.gs = { ...s.gs, trade: s.gs.level >= TRADE_LEVEL }
+    return s
+  },
+}
 
 /** A good as saved: the sheep it carries by its id. */
 type ItemSave = Omit<Item, 'sheep'> & { sheep?: number }
@@ -240,6 +251,8 @@ function fill(w: World, g: GameSave) {
     plant.b.set(key(b.x, b.y), b)
     for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
   }
+  // the market's row, as wide as the island (a save from before it had none)
+  addMarket(w)
   const market = res(w, Market)
   market.asks = g.market.asks
   market.trucks = g.market.trucks

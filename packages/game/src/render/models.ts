@@ -357,49 +357,86 @@ export const truckBody = () =>
     return model(p)
   })
 
-/** A 2×1 loading platform of planks, with stacks of crates at its back. */
-export const dockBody = () =>
-  cached('dock', () => {
-    const p: BufferGeometry[] = [put(rb(1.9, 0.12, 0.88, 0.035), WOOD_DARK, [0, 0.06, 0])]
-    for (let i = 0; i < 7; i++) p.push(put(rb(0.25, 0.035, 0.9, 0.014), i % 2 ? WOOD : shade(WOOD, 1.15), [-0.78 + i * 0.26, 0.13, 0]))
-    const crates: [number, number, number, number][] = [
-      [-0.64, 0.29, -0.24, 0],
-      [-0.3, 0.29, -0.26, 0.2],
-      [-0.48, 0.55, -0.25, 0.4],
-      [0.66, 0.29, -0.24, -0.15],
-    ]
-    for (const [x, y, z, r] of crates) {
-      p.push(put(rb(0.32, 0.28, 0.3, 0.05), '#d8a663', [x, y, z], [0, r, 0]))
-      p.push(put(rb(0.34, 0.05, 0.32, 0.02), WOOD_DARK, [x, y, z], [0, r, 0]))
+/**
+ * One cell of the market's row beside the road: a low wooden chute of planks sloping towards the road, with side lips,
+ * where a belt hands its goods over (a bridge then carries them across).
+ */
+export const intakeBody = () =>
+  cached('intake', () => {
+    const p: BufferGeometry[] = [put(rb(1.0, 0.1, 0.9, 0.03), WOOD_DARK, [0, 0.05, 0])]
+    for (let i = 0; i < 4; i++) p.push(put(rb(0.96, 0.035, 0.2, 0.012), i % 2 ? WOOD : shade(WOOD, 1.15), [0, 0.13 - i * 0.012, -0.32 + i * 0.22], [0.08, 0, 0]))
+    p.push(put(rb(1.0, 0.1, 0.06, 0.02), shade(WOOD_DARK, 0.9), [0, 0.15, 0.44]))
+    return model(p)
+  })
+
+/** How a market bridge runs: from the chute (local z 0) over the road to the market's back (local z `len`), and how high at t of the way. */
+export const BRIDGE = { len: 2.7, y0: 0.22, y1: 0.62, rise: 1.25, segs: 12 } as const
+export const bridgeY = (t: number) => BRIDGE.y0 + (BRIDGE.y1 - BRIDGE.y0) * t + BRIDGE.rise * Math.sin(Math.PI * t)
+
+/**
+ * A little bridge carrying goods over the road (the author: «товар идёт по мосту»): a narrow wooden trough on an arch,
+ * from the chute up over both lanes and down into the market, on two posts at the road's edges. Runs along +z.
+ */
+export const bridgeBody = () =>
+  cached('bridge', () => {
+    const p: BufferGeometry[] = []
+    const n = BRIDGE.segs
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n,
+        t1 = (i + 1) / n
+      const z0 = t0 * BRIDGE.len,
+        z1 = t1 * BRIDGE.len,
+        y0 = bridgeY(t0),
+        y1 = bridgeY(t1)
+      const len = Math.hypot(z1 - z0, y1 - y0) + 0.02,
+        pitch = Math.atan2(y1 - y0, z1 - z0)
+      const z = (z0 + z1) / 2,
+        y = (y0 + y1) / 2
+      // the trough's floor and its two lips, tilted along the arch
+      p.push(put(rb(0.34, 0.05, len, 0.015), i % 2 ? WOOD : shade(WOOD, 1.12), [0, y, z], [-pitch, 0, 0]))
+      for (const x of [-0.18, 0.18]) p.push(put(rb(0.04, 0.09, len, 0.015), WOOD_DARK, [x, y + 0.05, z], [-pitch, 0, 0]))
+    }
+    // posts at the road's two edges, clear of the lanes
+    for (const t of [0.12, 0.9]) {
+      const y = bridgeY(t)
+      p.push(put(rb(0.08, y, 0.08, 0.02), WOOD_DARK, [0, y / 2, t * BRIDGE.len]))
     }
     return model(p)
   })
 
-/** The market: a 2×2 stall — stone floor, a long counter of goods under a pink-striped awning on four posts, crates. */
+/**
+ * Four cells of the long market past the road, two deep: kept low, so the road and the trucks behind it stay in view
+ * (the author: the market must not take the field). Two long counters at the back where the bridges set the goods down,
+ * crates and baskets in front, and one striped parasol on a pole between them.
+ */
+export const STALL = { w: 4, counterY: 0.44, counterZ: -0.5 } as const
 export const marketBody = () =>
   cached('market', () => {
-    const p: BufferGeometry[] = [put(rb(1.9, 0.1, 1.86, 0.04), STONE, [0, 0.05, 0])]
-    p.push(put(rb(1.6, 0.4, 0.5, 0.05), WOOD, [0, 0.3, 0.28]))
-    p.push(put(rb(1.66, 0.06, 0.56, 0.03), shade(WOOD, 1.25), [0, 0.53, 0.28]))
-    for (const x of [-0.84, 0.84]) for (const z of [-0.72, 0.5]) p.push(put(rb(0.1, 1.3, 0.1, 0.04), WOOD_DARK, [x, 0.7, z]))
-    for (let i = 0; i < 8; i++) p.push(put(rb(0.24, 0.06, 1.5, 0.025), i % 2 ? '#ffffff' : LOOK.accent, [-0.84 + i * 0.24, 1.3, -0.1], [0.22, 0, 0]))
-    for (let i = 0; i < 8; i++) p.push(put(ball(0.12), i % 2 ? '#ffffff' : LOOK.accent, [-0.84 + i * 0.24, 1.14, 0.62], [0, 0, 0], [1, 0.7, 0.6]))
-    // goods on the counter
-    const goods: [string, number][] = [
-      [LOOK.hay, -0.56],
-      [LOOK.pyarn, -0.2],
-      [LOOK.wool, 0.16],
-      [LOOK.sweater, 0.52],
+    const p: BufferGeometry[] = [put(rb(3.9, 0.06, 1.9, 0.03), STONE, [0, 0.03, 0])]
+    // the counters the goods land on, facing the road
+    for (const x of [-0.98, 0.98]) {
+      p.push(put(rb(1.8, 0.36, 0.5, 0.05), WOOD, [x, 0.21, STALL.counterZ]))
+      p.push(put(rb(1.86, 0.05, 0.56, 0.02), shade(WOOD, 1.25), [x, 0.41, STALL.counterZ]))
+    }
+    // crates, a basket and a barrel in front
+    const crates: [number, number, number][] = [
+      [-1.5, 0.18, 0.35],
+      [-1.12, 0.18, 0.5],
+      [1.3, 0.18, 0.42],
     ]
-    for (const [c, x] of goods) p.push(put(ball(0.15), c, [x, 0.68, 0.28]))
-    // crates and a barrel behind
-    p.push(put(rb(0.4, 0.34, 0.36, 0.05), '#d8a663', [-0.5, 0.27, -0.44]))
-    p.push(put(rb(0.42, 0.05, 0.38, 0.02), WOOD_DARK, [-0.5, 0.27, -0.44]))
-    p.push(put(cyl(0.2, 0.42, 18, 0.18), WOOD, [0.46, 0.31, -0.44]))
-    p.push(put(ball(0.14), LOOK.dye, [0.46, 0.55, -0.44]))
-    // a gold coin sign on the front post
-    p.push(put(cyl(0.18, 0.06, 20), '#f2c14e', [0, 1.62, 0.5], [Math.PI / 2, 0, 0]))
-    p.push(put(rb(0.06, 0.24, 0.06, 0.02), WOOD_DARK, [0, 1.42, 0.5]))
+    for (const [x, y, z] of crates) {
+      p.push(put(rb(0.36, 0.3, 0.34, 0.05), '#d8a663', [x, y, z]))
+      p.push(put(rb(0.38, 0.05, 0.36, 0.02), WOOD_DARK, [x, y + 0.02, z]))
+    }
+    p.push(put(cyl(0.18, 0.36, 18, 0.16), WOOD, [0.72, 0.21, 0.5]))
+    p.push(put(cyl(0.2, 0.18, 18, 0.24), '#e2c15e', [-0.3, 0.12, 0.55]))
+    // the parasol: a pole and a striped cone, high enough to walk under, small enough to see past
+    p.push(put(cyl(0.035, 1.25, 8), WOOD_DARK, [0, 0.62, 0.05]))
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      p.push(put(new ConeGeometry(0.78, 0.26, 3, 1, true, 0, Math.PI / 4), i % 2 ? '#ffffff' : LOOK.accent, [0, 1.3, 0.05], [0, a, 0]))
+    }
+    p.push(put(ball(0.06), '#f2c14e', [0, 1.46, 0.05]))
     return model(p)
   })
 

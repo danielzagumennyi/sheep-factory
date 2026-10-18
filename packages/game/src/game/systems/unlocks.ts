@@ -1,6 +1,6 @@
 import { BUILDINGS, GRID, LEVELS, LOW_LAND, ONCE_CARDS, type BuildingId, type CardId } from '../balance'
 import { owned, plotOnIsland, plotRes } from '../grid'
-import { Field, Flock, GameState, Unlocks, addDock, key, res, unkey, type World } from '../world'
+import { Field, Flock, GameState, Unlocks, key, res, unkey, type World } from '../world'
 
 /**
  * Growth one thing at a time (the author: «каждый продукт открывается и объясняется отдельно»). Each village level
@@ -33,7 +33,7 @@ export function queueCard(w: World, id: CardId, alsoUnlock = true) {
 export function unlock(w: World, id: BuildingId | 'valenki' | 'market') {
   const un = res(w, Unlocks)
   if (id === 'market') {
-    addDock(w, 'market')
+    res(w, GameState).trade = true
     queueCard(w, 'market', false)
     return
   }

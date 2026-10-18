@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { Mesh } from 'three'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, SRGBColorSpace } from 'three'
-import { CONTACT, GRID, ISLAND, LOOK } from '@/game/balance'
+import { BAY_X, CONTACT, GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -256,10 +256,13 @@ function paint(world: World, c: HTMLCanvasElement) {
   g.lineTo(wx(X1()), rowY + 2 * PX)
   g.stroke()
   g.setLineDash([])
-  // parking bays under the docks
+  // the clients' parking bays in front of the market, on the lane past the middle line
   g.strokeStyle = 'rgba(255,255,255,0.75)'
   g.lineWidth = 2
-  for (const b of res(world, Plant).b.values()) if (b.type === 'dock' && b.client !== 'market') g.strokeRect(wx(b.x) + 4, rowY + PX + 5, b.w * PX - 8, PX - 10)
+  for (const x of Object.values(BAY_X)) g.strokeRect(wx(x - 0.25) + 4, rowY + 2 * PX + 5, 1.5 * PX - 8, PX - 10)
+  // the market's floor past the road: paving from edge to edge
+  g.fillStyle = LOOK.dockRow
+  g.fillRect(wx(X0 + 0.2), rowY + 3 * PX, (X1() - X0 - 0.4) * PX, MARKET.rows * PX)
   // meadows: tilled soil with two furrows under the sheaves
   for (const [k, t] of res(world, Field).terrain) {
     if (t !== 'meadow') continue

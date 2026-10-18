@@ -189,8 +189,7 @@ export const PLAN: readonly Job[] = [
       { b: 'carder', x: 6, y: 10, d: 1 },
       { b: 'spinner', x: 6, y: 12, d: 1 },
       { b: 'splitter', x: 6, y: 14, d: 1, rules: R('any', 'any', 'off') },
-      ...belt(1, ...col(7, 14, 18)),
-      ...belt(0, [7, 19], [8, 19]),
+      ...belt(1, ...col(7, 14, 19)),
     ],
   },
   // ---------------------------------------------------------------- the workshops

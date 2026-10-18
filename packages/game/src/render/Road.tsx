@@ -5,16 +5,11 @@ import type { Group } from 'three'
 import { ISLAND, ROAD } from '@/game/balance'
 import { island } from './island'
 import { useGame } from '@/game/GameContext'
-import { askFor } from '@/game/systems/village'
-import { Market, Plant, isOn, key, res, type Building, type TruckT } from '@/game/world'
-import { useView, views } from './pick'
-import { useT } from '@/i18n'
-import { CLIENT_NAMES, ITEM_NAMES } from '@/i18n/content'
-import { UI } from '@/i18n/ui'
+import { Market, isOn, res, type TruckT } from '@/game/world'
 import type { ItemId } from '@/game/balance'
-import { Icon } from '@/ui/Icon'
 import { vmat } from './kit'
-import { dockBody, good, marketBody, truckBody } from './models'
+import { good, truckBody } from './models'
+import { Market as MarketView } from './Market'
 
 /** Where goods sit in a truck's open box: two layers of three, the second rising above the rim. */
 const LOAD_SPOTS: [number, number, number][] = [
@@ -26,76 +21,14 @@ const LOAD_SPOTS: [number, number, number][] = [
   [0.02, 0.56, 0.02],
 ]
 
-/** Docks on the row above the road (one more as each client joins), and the trucks that come for each ask. */
+/** The market and its row (Market.tsx), and the trucks that come for each ask and park at the market. */
 export function Road() {
-  const { world } = useGame()
-  const [docks, setDocks] = useState<Building[]>([])
-  const sig = useRef('')
-  useFrame(() => {
-    const list = [...res(world, Plant).b.values()].filter((b) => b.type === 'dock')
-    const s = list.map((d) => d.x).join(',')
-    if (s === sig.current) return
-    sig.current = s
-    setDocks(list)
-  })
   return (
     <group>
-      {docks.map((d) => (
-        <Dock key={d.x} d={d} />
-      ))}
+      <MarketView />
       <Trucks />
     </group>
   )
-}
-
-/**
- * A loading platform with a signpost: the good its client asks for now, by icon and name, or the client's name; the
- * market says it is the market. Like every label on the field the signs and the trucks' counts go with `tags` (none
- * behind the main menu).
- */
-function Dock({ d }: { d: Building }) {
-  const { world } = useGame()
-  const { t } = useT()
-  const signs = isOn(world, 'tags')
-  const [want, setWant] = useState<string>('')
-  const root = useRef<Group>(null)
-  useView(views.buildings, key(d.x, d.y), root)
-  useFrame(() => {
-    const w = d.client === 'market' ? '' : (askFor(world, d.client!)?.kind ?? '')
-    if (w !== want) setWant(w)
-  })
-  if (d.client === 'market')
-    return (
-      <group ref={root} position={[d.x + d.w / 2, 0, d.y + d.h / 2]}>
-        <MarketStall />
-        {signs && (
-          <Html position={[0, 2.0, 0.3]} center zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
-            <span className="tag tag--dock tag--market">
-              <Icon kind="coin" size={16} />
-              {t(UI.market)}
-            </span>
-          </Html>
-        )}
-      </group>
-    )
-  return (
-    <group ref={root} position={[d.x + d.w / 2, 0, d.y + d.h / 2]}>
-      <mesh geometry={dockBody()} material={vmat()} receiveShadow castShadow />
-      {signs && (
-        <Html position={[0, 1.0, -0.3]} center zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
-          <span className={'tag tag--dock' + (want ? ' tag--on' : '')}>
-            {want && <Icon kind={want} size={16} />}
-            {want ? t(ITEM_NAMES[want as ItemId]) : d.client ? t(CLIENT_NAMES[d.client]) : ''}
-          </span>
-        </Html>
-      )}
-    </group>
-  )
-}
-
-/** The market: a stall of its own — counter, striped awning on posts, crates of goods — with no truck and no parking bay. */
-function MarketStall() {
-  return <mesh geometry={marketBody()} material={vmat()} castShadow receiveShadow />
 }
 
 function Trucks() {
@@ -114,7 +47,7 @@ function Trucks() {
   )
 }
 
-/** A small lorry: drives along lane B, parks on lane A at its dock and shows the ask's count while parked. */
+/** A small lorry: drives along lane B, parks on lane A at its bay in front of the market and shows the ask's count while parked. */
 function Truck({ id }: { id: number }) {
   const { world } = useGame()
   const g = useRef<Group>(null)

@@ -1,8 +1,8 @@
-import { CLIENT_ORDER, GRID, ISLAND_GROW, PEN, RECIPE_ORDER, TOOL_ORDER } from './balance'
+import { GRID, PEN, RECIPE_ORDER, TOOL_ORDER } from './balance'
 import { createBot } from './bot'
 import { PLAN, applyJob } from './plan'
 import { stepSimulation } from './systems'
-import { Field, Flock, GameState, Unlocks, addDock, key, makeSheep, res, type World } from './world'
+import { Field, Flock, GameState, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
 
 /**
  * The farm of chapter 1 built whole (game/plan.ts), for the main menu's background and for screenshots (dev console:
@@ -23,8 +23,8 @@ export function buildShowcase(w: World, warmup = 90) {
   f.right = GRID.cols
   for (let py = 0; py * GRID.plotH < GRID.roadY; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
   gs.fieldVersion++
-  for (const c of ['market', ...CLIENT_ORDER] as const) addDock(w, c)
-  for (const g of ISLAND_GROW) for (const [c, x] of g.docks ?? []) addDock(w, c, x)
+  addMarket(w)
+  gs.trade = true
   for (const j of PLAN) applyJob(w, j, true)
   const flock = res(w, Flock)
   for (const p of flock.pastures) while (flock.sheep.filter((s) => s.home === p.id).length < PEN.cap) flock.sheep.push(makeSheep(w, p.id, true))
