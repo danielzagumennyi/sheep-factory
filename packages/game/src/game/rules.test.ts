@@ -4,7 +4,7 @@ import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pasture
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setRecipe, setSeed } from './actions/build'
 import { dropSheep, gather, handClick, pickSheep, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
-import { penIn } from './systems/sheep'
+import { penIn, toRoam } from './systems/sheep'
 import { dockAccept, nearestStall, openAsks, openLevel, sell, sellPrice, buy, buyPrice, stallX } from './systems/village'
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
@@ -322,6 +322,32 @@ describe('pens and sheep (GDD 5)', () => {
     dropSheep(w, s, ax + 0.5, ay + 0.5)
     run(w, 5)
     expect([s.wool < 1, s.clicks]).toEqual([true, 0])
+  })
+  it('the sheep under the hand stands still: roaming, or in its pen, where it does not go out', () => {
+    const w = world()
+    const [a, b] = sheepOf(w) as [SheepT, SheepT]
+    toRoam(w, a, 20.5, 17.5)
+    const ui = res(w, Ui)
+    const over = (s: SheepT) => (ui.hover = { x: Math.floor(s.px), y: Math.floor(s.py), wx: s.px, wy: s.py, sheep: s.id, b: null })
+    over(a)
+    const at = [a.px, a.py]
+    run(w, 20)
+    expect([a.px, a.py]).toEqual(at)
+    // let go, it grazes on and walks again
+    ui.hover = null
+    run(w, 20)
+    expect([a.px, a.py]).not.toEqual(at)
+    // fluffy in a pen with a belt on its way out, under the hand it stays in
+    const p = pen0(w)
+    place(w, 'belt', p.exit.x, p.exit.y, p.dir)
+    for (const s of sheepOf(w)) if (s !== b && s.state === 'pasture') s.wool = 0
+    b.wool = 1
+    over(b)
+    run(w, 5)
+    expect(b.state).toBe('pasture')
+    ui.hover = null
+    run(w, 5)
+    expect(b.state).not.toBe('pasture')
   })
   it('a sheep a station lets out with nothing on its way out roams off, and the station is free', () => {
     const w = world()

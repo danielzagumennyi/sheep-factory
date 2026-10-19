@@ -1,6 +1,6 @@
 import { DIRS, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
 import { get, inGrid, isBeltLike, isStation, outCells, owned, pastureAt, step, terr } from '../grid'
-import { Flock, GameState, Plant, Rng, Time, key, newItem, pastureSpot, penOf, puff, res, type Building, type PastureT, type SheepT, type World } from '../world'
+import { Flock, GameState, Plant, Rng, Time, Ui, key, newItem, pastureSpot, penOf, puff, res, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 
 /**
@@ -9,7 +9,8 @@ import { tryPush } from './belts'
  * into the game (the feeder's level) a shorn sheep grows its next fleece by itself; from then on only once it has
  * eaten: at a feeder on the loop, or from the hand. A fluffy sheep walks out through its pen's exit by itself when a
  * belt or a station stands there; so does a hungry one when its pen's loop has a feeder with hay, to eat on its way
- * round. Otherwise it waits in the pen. A pen takes in four sheep at most.
+ * round. Otherwise it waits in the pen. A pen takes in four sheep at most. The sheep under the hand stands still, in a
+ * pen or roaming, so it is easy to click and to take (the author, 19.10.2026: «при наведении овца останавливается»).
  */
 
 /** A sheep in its pen, shorn, that hasn't eaten. */
@@ -84,8 +85,8 @@ export function toRoam(w: World, s: SheepT, x: number, y: number) {
   s.wanderT = ROAM.rest
 }
 
-/** A roaming sheep: grazes and grows its fleece, now and then walks a little way to a spot it can reach straight. */
-function roam(w: World, s: SheepT, dt: number) {
+/** A roaming sheep: grazes and grows its fleece, now and then walks a little way to a spot it can reach straight; under the hand (`still`) it stands. */
+function roam(w: World, s: SheepT, dt: number, still: boolean) {
   if (s.wool < 1) {
     s.wool = Math.min(1, s.wool + dt / SHEEP.grow)
     // it has grazed: put into a pen, its next fleece still grows once without a meal
@@ -100,6 +101,7 @@ function roam(w: World, s: SheepT, dt: number) {
     s.py = s.ty = at.y
     return
   }
+  if (still) return stand(s)
   s.wanderT -= dt
   if (s.wanderT <= 0) {
     const rnd = res(w, Rng).next
@@ -202,9 +204,17 @@ export function loopHasFeeder(w: World, p: PastureT) {
   return !!c.f && (c.f.inv.hay ?? 0) > 0 && res(w, Plant).b.get(key(c.f.x, c.f.y)) === c.f
 }
 
+/** It stops where it is: the way it was going is dropped, it picks a new one once its rest is over. */
+function stand(s: SheepT) {
+  s.tx = s.px
+  s.ty = s.py
+}
+
 export function sheepSystem(w: World, dt: number) {
   const flock = res(w, Flock),
     food = res(w, GameState).food
+  // the sheep the hand is over (Hover.tsx keeps it; none headless)
+  const under = res(w, Ui).hover?.sheep ?? null
   for (const p of flock.pastures) if (p.exitT > 0) p.exitT -= dt
   for (const s of flock.sheep) {
     if (s.state === 'transit') {
@@ -212,7 +222,7 @@ export function sheepSystem(w: World, dt: number) {
       continue
     }
     if (s.state === 'roam') {
-      roam(w, s, dt)
+      roam(w, s, dt, s.id === under)
       continue
     }
     if (s.state !== 'pasture') continue
@@ -222,6 +232,11 @@ export function sheepSystem(w: World, dt: number) {
       s.wool = Math.min(1, s.wool + dt / SHEEP.grow)
       // the fleece is grown: the next one needs another meal, once sheep need food at all
       if (s.wool >= 1) s.fed = !food
+    }
+    // under the hand it neither walks nor goes out
+    if (s.id === under) {
+      stand(s)
+      continue
     }
     const feeder = hungry(s) && loopHasFeeder(w, p)
     // a fluffy sheep walks out by itself when the exit has a belt or a station; a hungry one too when its loop has a feeder
