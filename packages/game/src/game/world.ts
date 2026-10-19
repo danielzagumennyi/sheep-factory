@@ -1,5 +1,5 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, ROAM, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -41,8 +41,8 @@ export interface Building {
   buf: Item[]
   /** A machine's input store, by item (a station's good, a seeder's seeds). */
   inv: Partial<Record<ItemId, number>>
-  /** The current job: a sheep in a station, or a machine's batch (which of its jobs). */
-  slot: { sheep?: SheepT; pass?: boolean; job?: Job } | null
+  /** The sheep in a station, and whether it only passes through. */
+  slot: { sheep?: SheepT; pass?: boolean } | null
   timer: number
   total: number
   /** Finished outputs waiting for room. */
@@ -54,8 +54,6 @@ export interface Building {
   /** Footprint in cells along x and y; (x, y) is its top-left cell. */
   w: number
   h: number
-  /** What a workshop makes now (null for every other building). */
-  recipe: RecipeId | null
   /** What a seeder sows (null for every other building). */
   seed: ResId | null
   count: number
@@ -95,10 +93,20 @@ export interface SheepT {
   clicks: number
   /** It has eaten (at a feeder, or from the hand): its next fleece grows. */
   fed: boolean
-  /** Its fleece went through the dyer: it shears pink. */
-  pink: boolean
+  /** What its fleece went through in the salon since it was last shorn: what shearing it gives (SHEAR_YIELD). */
+  marks: SheepMarks
   face: Dir
 }
+
+/** The salon's marks on a fleece: combed, curled, knitted into a sweater, felted in the bath, coloured. */
+export interface SheepMarks {
+  comb: boolean
+  curl: boolean
+  knit: boolean
+  bath: boolean
+  dye: boolean
+}
+export const noMarks = (): SheepMarks => ({ comb: false, curl: false, knit: false, bath: false, dye: false })
 
 /** A pen (GDD 5): a 3×3 building of its own, with a way out and a way in, for PEN.cap sheep. */
 export interface PastureT {
@@ -228,8 +236,6 @@ export const Stock = trait(() => ({ n: {} as Partial<Record<ItemId, number>> }))
 
 export const Unlocks = trait(() => ({
   unlocked: new Set<BuildingId>(),
-  /** Recipes the workshop knows. */
-  recipes: new Set<RecipeId>(),
   /** Tools that glow on the hotbar until first picked. */
   fresh: new Set<BuildingId>(),
   /** «Новое» cards waiting to be shown; the game pauses while one is up. */
@@ -246,8 +252,6 @@ export const Unlocks = trait(() => ({
 export const Ui = trait(() => ({
   tool: 'hand' as Tool,
   rot: 0 as Dir,
-  /** The recipe a newly placed workshop starts with: the last one picked, or the newest learnt. */
-  recipe: 'sweater' as RecipeId,
   /** What the hand sows, and what a new seeder starts with. */
   seed: 'meadow' as ResId,
   sel: null as Selection,
@@ -375,8 +379,11 @@ export function createGameWorld(opts: WorldOptions = {}): World {
   }
   addMarket(world)
   const rnd = res(world, Rng).next
+  // each on open grass: not in the bushes or among the stones round where the first pen will stand
+  const open = (p: { x: number; y: number }) => !ROAM.blocking.includes(f.terrain.get(key(Math.floor(p.x), Math.floor(p.y))) as never)
   for (let i = 0; i < START.sheep; i++) {
-    const at = { x: START.pen.x + 0.5 + rnd() * 3, y: START.pen.y + 0.5 + rnd() * 3 }
+    let at = { x: START.pen.x + 0.5 + rnd() * 3, y: START.pen.y + 0.5 + rnd() * 3 }
+    for (let k = 0; k < 8 && !open(at); k++) at = { x: START.pen.x + 0.5 + rnd() * 3, y: START.pen.y + 0.5 + rnd() * 2.4 }
     res(world, Flock).sheep.push(makeSheep(world, 0, true, at))
   }
   return world
@@ -436,7 +443,7 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
 
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
   const [w, h] = type === 'dock' ? [1, 1] : dimsOf(type, dir)
-  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
+  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
 }
 
 /** A random spot inside a pen where a sheep may stand (clear of the fence). */
@@ -469,7 +476,7 @@ export function makeSheep(world: World, home: number, fluffy = true, at0?: { x: 
     clicks: 0,
     // before food comes into the game every sheep counts as fed, so its fleece grows by itself
     fed: !gs.food,
-    pink: false,
+    marks: noMarks(),
     face: 0,
   }
 }

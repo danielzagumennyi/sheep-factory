@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import type { ItemId } from '@/game/balance'
+import { ITEMS, type ItemId } from '@/game/balance'
 import { vmat } from './kit'
 import { good } from './models'
 import { Batch, useInstanced } from './instancing'
 import { frame } from './frame'
 
-const KINDS: readonly ItemId[] = ['wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'dye', 'sweater', 'valenki', 'hay']
+const KINDS = Object.keys(ITEMS) as ItemId[]
 
 /** Every good on a belt, a pile or the ground: one instanced mesh per kind. */
 export function Items() {
@@ -20,7 +20,7 @@ export function Items() {
     const t = frame.t
     for (const g of frame.goods) {
       // round goods turn slowly as they ride; flat ones keep square to the belt
-      const spin = g.kind === 'wool' || g.kind === 'pwool' || g.kind === 'yarn' || g.kind === 'pyarn' || g.kind === 'dye'
+      const spin = g.kind === 'wool' || g.kind === 'cwool' || g.kind === 'yarn' || g.kind === 'cyarn' || g.kind === 'thread' || g.kind === 'cthread' || g.kind === 'dye'
       batches[g.kind].put(g.x, g.y - 0.12, g.z, spin ? t * 0.6 + g.x : 0, 1.45)
     }
     for (const k of KINDS) batches[k].end()

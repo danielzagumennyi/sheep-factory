@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BELT, BUILDINGS, MARKET, RECIPES, RECIPE_ORDER, SEED, type BuildingId, type CardId, type ItemId, type RecipeId, type ResId } from '@/game/balance'
+import { BATH_YIELD, BELT, BUILDINGS, ITEMS, MARKET, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { jobOf, jobsOf, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
-import { buyPlot, cycleRule, liftUp, remove, setRecipe, setSeed } from '@/game/actions/build'
+import { plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
+import { buyPlot, cycleRule, liftUp, remove, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
 import { askAt, buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
@@ -44,21 +44,35 @@ function Recipe({ r }: { r: readonly [Part, Part] | null }) {
     </span>
   )
 }
-const recipeLine = (r: RecipeId): readonly [Part, Part] => [Object.entries(RECIPES[r].inp) as [string, number][], [[RECIPES[r].out, 1]]]
-/** A building's or card's recipe line; a workshop shows the recipe it is set to (or would start with). */
-export function recipeOf(id: BuildingId | CardId, recipe?: RecipeId | null): readonly [Part, Part] | null {
+/**
+ * A building's or card's recipe line. A salon station shows what a sheep that went through it gives when shorn: the
+ * comb a step up (thread), the curl as the second step (yarn), the knitting as the third (a sweater), the bath felt,
+ * the dye a coloured good.
+ */
+export function recipeOf(id: BuildingId | CardId): readonly [Part, Part] | null {
   if (id === 'shearer') return [[['sheep', 1]], [['wool', 2]]]
   if (id === 'feeder') return [[['sheep', 1], ['hay', 1]], [['sheep', 1]]]
-  if (id === 'dyer') return [[['sheep', 1], ['dye', 1]], [['pwool', 2]]]
+  if (id === 'dyer') return [[['sheep', 1], ['dye', 1]], [['cwool', 2]]]
+  if (id === 'bath') return [[['sheep', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]]
+  const step = STEPS.indexOf(id as (typeof STEPS)[number])
+  if (step >= 0) return [STEPS.slice(0, step + 1).map((st) => [st, 1] as const), [[SHEAR_YIELD[step + 1]![0], SHEAR_YIELD[step + 1]![1]]]]
   if (id === 'sow' || id === 'seeder') return [[['hay', 1]], [['meadow', 1]]]
-  if (id === 'workshop') return recipeLine(recipe ?? 'sweater')
-  if (id === 'valenki') return recipeLine('valenki')
   const b = (BUILDINGS as Record<string, (typeof BUILDINGS)[BuildingId]>)[id]
-  if (!b) return null
-  const j = b.jobs?.[0]
-  if (j) return [Object.entries(j.inp) as [string, number][], [[j.out, 1]]]
-  if (b.near) return [[[b.near, 1]], [[b.gives!, 1]]]
+  if (b?.near) return [[[b.near, 1]], [[b.gives!, 1]]]
   return null
+}
+/**
+ * What shearing gives, line by line, as far as the farm knows it (the author's sum, 19.10.2026): a sheep that went
+ * through none of the steps — wool; through one, two, three of them — thread, yarn, a sweater; out of the bath — felt.
+ */
+export function shearLines(met: readonly ItemId[]): (readonly [Part, Part])[] {
+  const lines: (readonly [Part, Part])[] = [[[['sheep', 1]], [[SHEAR_YIELD[0]![0], SHEAR_YIELD[0]![1]]]]]
+  STEPS.forEach((_, i) => {
+    const [k, n] = SHEAR_YIELD[i + 1]!
+    if (met.includes(k)) lines.push([STEPS.slice(0, i + 1).map((st) => [st, 1] as const), [[k, n]]])
+  })
+  if (met.includes(BATH_YIELD[0])) lines.push([[['bath', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]])
+  return lines
 }
 
 export function Hud() {
@@ -205,30 +219,21 @@ function Asks() {
   )
 }
 
-/** A building's recipes for its tip: a workshop every recipe it knows, a carder or spinner white and pink, others their one line. */
+/** A building's recipes for its tip: the shearer what it gives for each sheep, others their one line. */
 function Recipes({ id }: { id: BuildingId }) {
-  const known = useHudStore((s) => s.recipes)
-  const recipe = useHudStore((s) => s.recipe)
   const met = useHudStore((s) => s.met)
-  if (id === 'workshop' && known.length)
-    return (
-      <span className="recipes-tip">
-        {known.map((r) => (
-          <Recipe key={r} r={recipeLine(r)} />
-        ))}
-      </span>
-    )
-  // a pink job shows once pink wool is met
-  const jobs = (BUILDINGS[id].jobs ?? []).filter((j, i) => i === 0 || Object.keys(j.inp).every((k) => met.includes(k as ItemId)))
-  if (jobs.length > 1)
-    return (
-      <span className="recipes-tip">
-        {jobs.map((j) => (
-          <Recipe key={j.out} r={[Object.entries(j.inp) as [string, number][], [[j.out, 1]]]} />
-        ))}
-      </span>
-    )
-  return <Recipe r={recipeOf(id, recipe)} />
+  if (id === 'shearer') return <ShearLines met={met} />
+  return <Recipe r={recipeOf(id)} />
+}
+/** The shearer's lines: what a sheep gives by the stations it went through. */
+function ShearLines({ met }: { met: readonly ItemId[] }) {
+  return (
+    <span className="recipes-tip">
+      {shearLines(met).map((r, i) => (
+        <Recipe key={i} r={r} />
+      ))}
+    </span>
+  )
 }
 
 /** What is sown (by hand, or by a seeder): hay → a meadow, dye → a bush once bushes are known. */
@@ -354,7 +359,7 @@ function BottomRight() {
  * The stock, which is the hand, bottom left as in Tower Factory (the author): a column of goods with their counts, only
  * those there are.
  */
-const STOCK_ORDER: readonly ItemId[] = ['hay', 'dye', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'sweater', 'valenki']
+const STOCK_ORDER = Object.keys(ITEMS) as ItemId[]
 function StockPanel() {
   const { t } = useT()
   const stock = useHudStore((s) => s.stock)
@@ -458,9 +463,11 @@ function MachineLoad({ b }: { b: Building }) {
   const { t } = useT()
   const type = b.type as BuildingId
   const def = BUILDINGS[type]
-  if (!def.time && !jobOf(b)) return null
-  const kinds: ItemId[] = def.station ? (def.uses ? [def.uses] : []) : def.sows ? [SEED[b.seed ?? 'meadow']] : [...new Set(jobsOf(b).flatMap((j) => Object.keys(j.inp) as ItemId[]))]
-  const out = b.slot?.job?.out ?? jobOf(b)?.out ?? def.gives ?? (type === 'shearer' ? 'wool' : null)
+  if (!def.time) return null
+  const kinds: ItemId[] = def.uses ? [def.uses] : def.sows ? [SEED[b.seed ?? 'meadow']] : []
+  // what waits to leave: a producer's good, or what the last sheep's fleece gave
+  const waiting = b.outs.find((o) => !o.item.sheep)?.item.kind ?? b.pile[0]?.kind
+  const out = waiting && waiting !== 'sheep' ? waiting : (def.gives ?? null)
   const ready = b.outs.filter((o) => !o.item.sheep).length + b.pile.length
   return (
     <div className="load">
@@ -566,27 +573,8 @@ function Popup() {
             <Icon kind={type} size={22} />
             {t(BUILDING_TEXT[type].name)}
           </h3>
-          <Recipe r={recipeOf(type, b.recipe)} />
+          {type === 'shearer' ? <ShearLines met={met} /> : <Recipe r={recipeOf(type)} />}
           <div className="pop__st pop__st--plain">{t(BUILDING_TEXT[type].desc)}</div>
-          {BUILDINGS[type].recipes && (
-            <div className="recipes" role="group" aria-label={t(UI.recipe)}>
-              {RECIPE_ORDER.filter((r) => res(world, Unlocks).recipes.has(r)).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  className="rule"
-                  aria-pressed={b.recipe === r}
-                  title={t(ITEM_NAMES[RECIPES[r].out])}
-                  onClick={() => {
-                    setRecipe(world, b, r)
-                    refresh()
-                  }}
-                >
-                  <Icon kind={RECIPES[r].out} size={22} />
-                </button>
-              ))}
-            </div>
-          )}
           {BUILDINGS[type].sows && (
             <SeedPick
               value={b.seed ?? 'meadow'}

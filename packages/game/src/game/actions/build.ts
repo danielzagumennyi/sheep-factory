@@ -1,4 +1,4 @@
-import { BUILDINGS, LOOK, RECIPES, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type RecipeId, type ResId, dimsOf } from '../balance'
+import { BUILDINGS, LOOK, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
 import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, whyNot, cellsOf, pastureAt } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, stockTake, toStock, type Building, type Item, type PastureT, type SplitRules, type World } from '../world'
 import { sowAt } from '../systems/machines'
@@ -69,12 +69,7 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
   spend(w, price)
   const b = blankBuilding(type, x, y, dir)
   b.paid = price
-  // a workshop starts on the recipe last picked (or the newest learnt); a seeder sows what the hand sows
-  if (BUILDINGS[type].recipes) {
-    const un = res(w, Unlocks)
-    const r = res(w, Ui).recipe
-    b.recipe = un.recipes.has(r) ? r : ([...un.recipes].at(-1) ?? 'sweater')
-  }
+  // a seeder sows what the hand sows
   if (BUILDINGS[type].sows) b.seed = res(w, Ui).seed
   // set on a belt, a splitter takes goods the way they came in, a merger sends them on the way they went
   if (type === 'splitter' && ex) b.dir = beltInDir(w, ex)
@@ -204,7 +199,6 @@ export function remove(w: World, x: number, y: number): boolean {
   res(w, GameState).coins += b.paid
   const lose: Item[] = [b.item, ...b.buf, ...b.pile, ...b.outs.map((o) => o.item)].filter((q): q is Item => !!q)
   if (b.slot?.sheep) lose.push({ kind: 'sheep', sheep: b.slot.sheep, p: 0, ed: 0, strayT: 0 })
-  if (b.slot?.job) for (const [k, n] of Object.entries(b.slot.job.inp) as [ItemId, number][]) for (let i = 0; i < n; i++) lose.push(newItem(k))
   for (const [k, n] of Object.entries(b.inv) as [Item['kind'], number][]) for (let i = 0; i < n; i++) lose.push({ kind: k, p: 0, ed: 0, strayT: 0 })
   for (const it of lose) {
     if (it.sheep) sendHome(w, it.sheep)
@@ -264,24 +258,6 @@ export function rotate(w: World, b: Building) {
   plant.b.set(me, b)
   for (const [cx, cy] of footprint(b.x, b.y, nw, nh).slice(1)) plant.occ.set(key(cx, cy), me)
   res(w, GameState).plantVersion++
-  return true
-}
-
-/**
- * Set what a workshop makes. Whatever it held for the old recipe — its store and a job in progress — goes back to the
- * stock, so nothing is lost; finished goods still leave as usual.
- */
-export function setRecipe(w: World, b: Building, r: RecipeId) {
-  if (!BUILDINGS[b.type as BuildingId]?.recipes || b.recipe === r || !res(w, Unlocks).recipes.has(r)) return false
-  const back: Item[] = []
-  for (const [k, n] of Object.entries(b.inv) as [ItemId, number][]) for (let i = 0; i < n; i++) back.push(newItem(k))
-  if (b.slot && b.recipe) for (const [k, n] of Object.entries(RECIPES[b.recipe].inp) as [ItemId, number][]) for (let i = 0; i < n; i++) back.push(newItem(k))
-  for (const it of back) toStock(w, it)
-  b.inv = {}
-  b.slot = null
-  b.timer = b.total = 0
-  b.recipe = r
-  res(w, Ui).recipe = r
   return true
 }
 

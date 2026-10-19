@@ -1,5 +1,5 @@
-import { BELT, BUILDINGS, type Dir } from '../balance'
-import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, isStation, pastureAt, step, usesGood } from '../grid'
+import { BELT, type Dir } from '../balance'
+import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, isStation, pastureAt, step } from '../grid'
 import { GameState, Plant, float, key, res, toStock, type Building, type Item, type World } from '../world'
 import { stationTake } from './machines'
 import { dockAccept } from './village'
@@ -59,14 +59,12 @@ export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boole
 
 /**
  * A machine takes an item by one of its ways in (`takes` says what that way takes; a hand dropping a sheep gives
- * 'sheep'): a station its sheep, or its good up to BELT.bufMax; any other machine a good one of its jobs uses.
+ * 'sheep'): a station its sheep, or its good up to BELT.bufMax; a seeder its seeds.
  */
 export function machineAccept(_w: World, m: Building, it: Item, takes?: string): boolean {
   if (it.sheep) return takes === 'sheep' && isStation(m) && stationTake(m, it.sheep)
-  if (takes === 'sheep') return false
   const kind = it.kind as Exclude<Item['kind'], 'sheep'>
-  if (takes ? takes !== kind : !usesGood(m, kind)) return false
-  if (!takes && BUILDINGS[m.type as keyof typeof BUILDINGS]?.station) return false
+  if (takes !== kind) return false
   if ((m.inv[kind] ?? 0) >= BELT.bufMax) return false
   m.inv[kind] = (m.inv[kind] ?? 0) + 1
   return true

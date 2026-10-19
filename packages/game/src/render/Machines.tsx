@@ -2,15 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, type BuildingId, type ItemId } from '@/game/balance'
+import { BUILDINGS, LOOK, PRODUCERS, ROOF, type BuildingId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { jobOf } from '@/game/grid'
 import { machineState } from '@/game/systems/machines'
 import { Plant, isOn, res, type Building } from '@/game/world'
 import { Icon } from '@/ui/Icon'
 import { GEO, machineYaw, mat, vmat, yawOf } from './kit'
-import { WORKSHOP_SHOW, machineModel, type PartSpec } from './machineModels'
-import { cached, product } from './models'
+import { machineModel } from './machineModels'
 import { frame } from './frame'
 
 /** The icon a producer shows when nothing is left in its reach, and a seeder with no empty cell round it. */
@@ -19,23 +17,24 @@ const NEAR_ICON: Readonly<Record<string, string>> = { meadow: 'meadow', bush: 'b
 /** A building's own colour: its accents in the field, its stripe on the build tile. */
 export const MACHINE_COLOR = ROOF
 
-/** The colour a splitter shows for a rule: the good's own colour. */
+/** The colour a splitter shows for a rule: the good's own colour (a coloured good's first stripe). */
 const RULE_COLOR: Readonly<Record<string, string>> = {
   wool: LOOK.wool,
-  pwool: LOOK.pwool,
-  roving: LOOK.roving,
-  proving: LOOK.proving,
+  thread: LOOK.thread,
   yarn: LOOK.yarn,
-  pyarn: LOOK.pyarn,
-  felt: LOOK.felt,
-  dye: LOOK.dye,
   sweater: LOOK.sweater,
-  valenki: LOOK.valenki,
+  felt: LOOK.felt,
+  cwool: LOOK.colors[0]!,
+  cthread: LOOK.colors[1]!,
+  cyarn: LOOK.colors[2]!,
+  csweater: LOOK.colors[3]!,
+  cfelt: LOOK.colors[0]!,
+  dye: LOOK.dye,
   hay: LOOK.hay,
   sheep: LOOK.skin,
 }
 
-/** Re-renders the list only when buildings are added, removed, turned, re-ruled or given a new recipe or seed. */
+/** Re-renders the list only when buildings are added, removed, turned, re-ruled or given a new seed. */
 function useBuildings() {
   const { world } = useGame()
   const [list, setList] = useState<Building[]>([])
@@ -43,7 +42,7 @@ function useBuildings() {
   useFrame(() => {
     const b = res(world, Plant).b
     let s = ''
-    for (const q of b.values()) if (q.type !== 'belt' && q.type !== 'dock') s += q.type + q.x + ',' + q.y + q.dir + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + (q.recipe ?? '') + (q.seed ?? '') + ';'
+    for (const q of b.values()) if (q.type !== 'belt' && q.type !== 'dock') s += q.type + q.x + ',' + q.y + q.dir + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + (q.seed ?? '') + ';'
     if (s === sig.current) return
     sig.current = s
     setList([...b.values()].filter((q) => q.type !== 'belt' && q.type !== 'dock'))
@@ -57,14 +56,11 @@ export function Machines() {
     <group>
       <MachineMeshes list={list} />
       {list.map((b) => (
-        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.recipe ?? '') + (b.seed ?? '')} b={b} />
+        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.seed ?? '')} b={b} />
       ))}
     </group>
   )
 }
-
-/** A product on a workshop's stand, leaning back to face the camera. */
-const onShow = (kind: ItemId) => cached('show' + kind, () => product(kind).clone().rotateX(-0.6))
 
 /**
  * One machine's bubble when it stands still (its moving part shows that it works): what it waits for, or a red «!»
@@ -76,11 +72,10 @@ function MachineView({ b }: { b: Building }) {
   const [mood, setMood] = useState('')
   const type = b.type as BuildingId
   const def = BUILDINGS[type]
-  const job = jobOf(b)
   useFrame(() => {
     const st = machineState(world, b)
     const m =
-      st.tone === 'ok' || st.text === 'waitsSheep' || (def.time === undefined && !job)
+      st.tone === 'ok' || st.text === 'waitsSheep' || def.time === undefined
         ? ''
         : st.tone + ':' + (st.text === 'waitsFor' ? st.item : st.text === 'emptyAround' ? NEAR_ICON[def.near!] : st.text === 'sheepWaits' ? 'sheep' : st.text === 'noRoom' ? NEAR_ICON[b.seed ?? 'meadow'] : '!')
     if (m !== mood) setMood(m)
@@ -101,10 +96,6 @@ const DROP = { lift: 0.24, fall: 0.16, settle: 0.24 } as const
 /** Is this machine at work: a job in hand, or a producer gathering, or a seeder sowing? Its parts move only then. */
 const busyOf = (b: Building) => !!b.slot || ((PRODUCERS.includes(b.type as BuildingId) || b.type === 'seeder') && b.status === '' && b.prog > 0)
 
-/** What a workshop shows on its stand: the product of its recipe. */
-const showOf = (b: Building) => onShow(RECIPES[b.recipe ?? 'sweater'].out)
-const SHOW: PartSpec = { geo: () => onShow('sweater'), at: WORKSHOP_SHOW, motion: 'bob', scale: 1.9 }
-
 const _m = new Matrix4(),
   _n = new Matrix4(),
   _a = new Matrix4(),
@@ -115,7 +106,7 @@ const _m = new Matrix4(),
   _e = new Euler()
 
 /**
- * Every machine's body, moving parts and product on show: one instanced mesh per model (the body of a
+ * Every machine's body and moving parts: one instanced mesh per model (the body of a
  * kind, each of its parts), posed in one pass each frame — 30 machines of five meshes each cost 300 draw calls with
  * their shadows, this costs about 40. The whole model turns with its building (machineYaw). A part moves while its
  * machine works: spins keep their angle per machine.
@@ -130,7 +121,6 @@ function MachineMeshes({ list }: { list: Building[] }) {
       const spec = machineModel(b.type as BuildingId)
       want(spec.body)
       for (const pt of spec.parts) want(pt.geo())
-      if (b.type === 'workshop') want(showOf(b))
     }
     const out = new Map<BufferGeometry, InstancedMesh>()
     for (const [g, n] of need) {
@@ -178,9 +168,8 @@ function MachineMeshes({ list }: { list: Building[] }) {
       }
       put(spec.body, base)
       const busy = busyOf(b)
-      const n = spec.parts.length + (b.type === 'workshop' ? 1 : 0)
-      for (let i = 0; i < n; i++) {
-        const pt = spec.parts[i] ?? SHOW
+      for (let i = 0; i < spec.parts.length; i++) {
+        const pt = spec.parts[i]!
         const t = t0 + (pt.phase ?? 0)
         const k = b.x + ',' + b.y + ':' + i
         let rx = 0,
@@ -215,15 +204,11 @@ function MachineMeshes({ list }: { list: Building[] }) {
             rz = pt.motion === 'snip' ? open : -open
             break
           }
-          case 'stamp':
-            // lifted by the cam, then dropped onto the felt; at rest it hangs half way up
-            py = busy ? Math.max(0, Math.sin(t * 6)) * 0.3 : 0.16
-            break
           case 'swing':
             ry = busy ? Math.sin(t * 1.6) * 0.9 : 0.3
             break
           case 'bob':
-            // a product on show: it hops while being made and sways a little
+            // a pitchfork in its rack, steam over a chimney: it hops while at work and sways a little
             py = busy ? Math.abs(Math.sin(t * 4)) * 0.06 : 0
             ry = Math.sin(t * 0.8) * 0.3
             break
@@ -232,7 +217,7 @@ function MachineMeshes({ list }: { list: Building[] }) {
         // where the part sits and how it leans at rest, then its own motion, then its size
         _m.compose(_p.set(...pt.at), _q.setFromEuler(_e.set(...(pt.tilt ?? [0, 0, 0]))), _s.set(1, 1, 1))
         _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.setScalar(pt.scale ?? 1)))
-        put(pt === SHOW ? showOf(b) : pt.geo(), _a.premultiply(base))
+        put(pt.geo(), _a.premultiply(base))
       }
     }
     first.current = false

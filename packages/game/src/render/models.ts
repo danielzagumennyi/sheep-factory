@@ -65,32 +65,38 @@ export function shade(hex: string, k: number) {
   return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')
 }
 
-/** A workshop's product, shown big on its stand so the recipe reads from afar (and, smaller, as a good). */
-export const product = (kind: ItemId) =>
-  cached('product' + kind, () => {
-    const c: string = { sweater: LOOK.sweater, valenki: LOOK.valenki, pyarn: LOOK.pyarn, yarn: LOOK.yarn }[kind as string] ?? '#ffffff'
-    switch (kind) {
-      case 'sweater':
-        return model([
-          put(rb(0.3, 0.3, 0.1, 0.05), c, [0, 0, 0]),
-          put(rb(0.1, 0.24, 0.09, 0.04), c, [-0.18, 0.02, 0], [0, 0, -0.5]),
-          put(rb(0.1, 0.24, 0.09, 0.04), c, [0.18, 0.02, 0], [0, 0, 0.5]),
-          put(rb(0.12, 0.04, 0.11, 0.02), shade(c, 0.75), [0, 0.15, 0]),
-          put(rb(0.3, 0.04, 0.105, 0.02), shade(c, 0.8), [0, -0.13, 0]),
-        ])
-      case 'valenki':
-        return model([0, 1].flatMap((i) => [put(rb(0.11, 0.3, 0.12, 0.05), c, [i * 0.14 - 0.07, 0, 0]), put(rb(0.11, 0.1, 0.22, 0.05), c, [i * 0.14 - 0.07, -0.1, 0.06])]))
-      default:
-        // a ball of yarn: three wraps a shade darker
-        return model([
-          put(ball(0.17), c, [0, 0, 0]),
-          put(ring(0.17, 0.028), shade(c, 0.75), [0, 0, 0], [0.5, 0, 0]),
-          put(ring(0.17, 0.028), shade(c, 0.75), [0, 0, 0], [-0.4, 0.9, 0]),
-          put(ring(0.17, 0.028), shade(c, 0.75), [0, 0, 0], [1.3, 0.3, 0.4]),
-        ])
-    }
-  })
+/** The colours a coloured good is striped in, from the first (the author: «просто цветная», not one colour). */
+const STRIPES = LOOK.colors
 
+/** A ball of yarn: three wraps a shade darker — or, coloured, a ball of one colour wrapped in the others. */
+const yarnBall = (c: string, wraps: readonly string[] | null) =>
+  model([
+    put(ball(0.17), c, [0, 0, 0]),
+    put(ring(0.17, 0.028), wraps ? wraps[0]! : shade(c, 0.75), [0, 0, 0], [0.5, 0, 0]),
+    put(ring(0.17, 0.028), wraps ? wraps[1]! : shade(c, 0.75), [0, 0, 0], [-0.4, 0.9, 0]),
+    put(ring(0.17, 0.028), wraps ? wraps[2]! : shade(c, 0.75), [0, 0, 0], [1.3, 0.3, 0.4]),
+  ])
+
+/** A jumper laid flat, facing up: a body, two sleeves, a collar, a cuffed hem — or, coloured, in stripes. */
+function sweater(c: string, stripes: readonly string[] | null) {
+  const p: BufferGeometry[] = []
+  if (stripes) stripes.forEach((k, i) => p.push(put(rb(0.3, 0.3 / stripes.length + 0.004, 0.1, 0.02), k, [0, 0.15 - (i + 0.5) * (0.3 / stripes.length), 0])))
+  else p.push(put(rb(0.3, 0.3, 0.1, 0.05), c, [0, 0, 0]))
+  const sleeve = stripes ? stripes[1]! : c
+  p.push(put(rb(0.1, 0.24, 0.09, 0.04), sleeve, [-0.18, 0.02, 0], [0, 0, -0.5]), put(rb(0.1, 0.24, 0.09, 0.04), sleeve, [0.18, 0.02, 0], [0, 0, 0.5]))
+  p.push(put(rb(0.12, 0.04, 0.11, 0.02), shade(stripes ? stripes[0]! : c, 0.75), [0, 0.15, 0]))
+  p.push(put(rb(0.3, 0.04, 0.105, 0.02), shade(stripes ? stripes.at(-1)! : c, 0.8), [0, -0.13, 0]))
+  return model(p)
+}
+
+/** A wooden spool of thread: white, or wound in bands of colour. */
+function spool(c: string, bands: readonly string[] | null) {
+  const p: BufferGeometry[] = [put(cyl(0.05, 0.3, 10), WOOD_DARK, [0, 0.15, 0])]
+  for (const y of [0.025, 0.275]) p.push(put(cyl(0.13, 0.05, 16), WOOD, [0, y, 0]))
+  if (bands) bands.forEach((k, i) => p.push(put(cyl(0.1, 0.2 / bands.length + 0.002, 16), k, [0, 0.05 + (i + 0.5) * (0.2 / bands.length), 0])))
+  else p.push(put(cyl(0.1, 0.2, 16), c, [0, 0.15, 0]), put(ring(0.1, 0.012), shade(c, 0.85), [0, 0.15, 0], [Math.PI / 2, 0, 0]))
+  return model(p)
+}
 
 // ---------------------------------------------------------------- nature (instanced: one geometry per kind)
 
@@ -229,6 +235,44 @@ export const fleece = () =>
     for (const c of curls) p.push(put(ball(0.09), LOOK.wool, c, [0, 0, 0], [1, 0.6, 1]))
     return model(p)
   })
+
+/**
+ * The salon's marks on a fleece (the author, 19.10.2026: the sheep's path must show on it), drawn white and tinted per
+ * sheep: a combed fleece, sleek and smooth, in place of the woolly one; the bath's felted one, flat and matted; and on top
+ * of either, curls, and a knitted sweater round its middle. Facing +X, posed like the fleece.
+ */
+export const fleeceSleek = () =>
+  cached('fleeceSleek', () => model([put(rb(0.56, 0.4, 0.48, 0.2), '#ffffff', [0, 0, 0]), ...[-0.12, 0.04, 0.2].map((x) => put(rb(0.06, 0.02, 0.44, 0.01), '#e9e4f4', [x, 0.2, 0], [0, 0, 0.3]))]))
+export const fleeceFelt = () =>
+  cached('fleeceFelt', () => {
+    const p: BufferGeometry[] = [put(rb(0.58, 0.36, 0.52, 0.08), '#ffffff', [0, -0.02, 0])]
+    for (const [x, z] of [
+      [-0.15, -0.12],
+      [0.12, 0.1],
+      [0.05, -0.16],
+    ] as const)
+      p.push(put(rb(0.18, 0.05, 0.16, 0.02), '#f1ece3', [x, 0.17, z], [0, x * 4, 0]))
+    return model(p)
+  })
+export const fleeceCurls = () =>
+  cached('fleeceCurls', () => {
+    const p: BufferGeometry[] = []
+    for (let i = 0; i < 6; i++)
+      for (const z of [-0.15, 0.15]) {
+        const x = -0.22 + i * 0.09
+        p.push(put(ring(0.05, 0.02), '#ffffff', [x, 0.21, z + (i % 2) * 0.04], [Math.PI / 2, 0, 0]))
+      }
+    for (const z of [-0.26, 0.26]) for (let i = 0; i < 3; i++) p.push(put(ring(0.045, 0.018), '#ffffff', [-0.15 + i * 0.15, 0.05, z]))
+    return model(p)
+  })
+export const fleeceSweater = () =>
+  cached('fleeceSweater', () =>
+    model([
+      put(rb(0.36, 0.46, 0.56, 0.1), '#ffffff', [-0.02, -0.01, 0]),
+      put(rb(0.06, 0.48, 0.58, 0.03), '#e6e6e6', [0.16, -0.01, 0]),
+      put(rb(0.06, 0.48, 0.58, 0.03), '#e6e6e6', [-0.2, -0.01, 0]),
+    ]),
+  )
 
 /** The shorn sheep's pink body. */
 export const shorn = () => cached('shorn', () => model([put(rb(0.44, 0.3, 0.36, 0.13), LOOK.skin, [0, 0, 0])]))
@@ -485,44 +529,37 @@ export const good = (kind: ItemId) =>
   cached('good' + kind, () => {
     switch (kind) {
       case 'wool':
-      case 'pwool': {
-        // a fleece: white, or pink off a dyed sheep
-        const c = kind === 'pwool' ? LOOK.pwool : LOOK.wool
-        return model([put(ball(0.12), c, [0, 0.11, 0]), put(ball(0.09), c, [0.1, 0.09, 0.04]), put(ball(0.09), c, [-0.09, 0.09, -0.03]), put(ball(0.08), c, [0.01, 0.18, 0.02])])
+      case 'cwool': {
+        // a fleece: white, or in tufts of every colour off a dyed sheep
+        const c = (i: number) => (kind === 'cwool' ? STRIPES[i % STRIPES.length]! : LOOK.wool)
+        return model([put(ball(0.12), c(0), [0, 0.11, 0]), put(ball(0.09), c(1), [0.1, 0.09, 0.04]), put(ball(0.09), c(2), [-0.09, 0.09, -0.03]), put(ball(0.08), c(3), [0.01, 0.18, 0.02])])
       }
-      case 'roving':
-      case 'proving': {
-        // a fat rope of combed wool, coiled, with twist marks
-        const c = kind === 'proving' ? LOOK.proving : LOOK.roving
-        const p: BufferGeometry[] = [put(new TorusGeometry(0.11, 0.075, 10, 20), c, [0, 0.075, 0], [Math.PI / 2, 0, 0])]
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2
-          p.push(put(rb(0.03, 0.16, 0.05, 0.012), shade(c, 0.84), [Math.cos(a) * 0.11, 0.08, Math.sin(a) * 0.11], [0, -a, 0.6]))
-        }
-        return model(p)
+      case 'thread':
+      case 'cthread': {
+        const g = spool(LOOK.thread, kind === 'cthread' ? STRIPES : null)
+        g.scale(0.85, 0.85, 0.85)
+        return g
       }
       case 'yarn':
-      case 'pyarn': {
-        const g = product(kind).clone()
+      case 'cyarn': {
+        const g = kind === 'cyarn' ? yarnBall(STRIPES[0]!, STRIPES.slice(1)) : yarnBall(LOOK.yarn, null)
         g.scale(0.72, 0.72, 0.72)
         g.translate(0, 0.125, 0)
         return g
       }
-      case 'sweater': {
-        const g = product('sweater').clone()
+      case 'sweater':
+      case 'csweater': {
+        const g = sweater(LOOK.sweater, kind === 'csweater' ? STRIPES : null)
         g.rotateX(-Math.PI / 2)
         g.scale(0.9, 0.9, 0.9)
         g.translate(0, 0.05, 0)
         return g
       }
-      case 'valenki': {
-        const g = product('valenki').clone()
-        g.scale(0.8, 0.8, 0.8)
-        g.translate(0, 0.2, -0.04)
-        return g
-      }
       case 'felt':
-        return model([put(rb(0.3, 0.06, 0.26, 0.025), LOOK.felt, [0, 0.03, 0]), put(rb(0.28, 0.05, 0.24, 0.022), shade(LOOK.felt, 1.12), [0.01, 0.08, 0.01], [0, 0.2, 0])])
+      case 'cfelt': {
+        const [a, b] = kind === 'cfelt' ? [STRIPES[2]!, STRIPES[0]!] : [LOOK.felt, shade(LOOK.felt, 1.12)]
+        return model([put(rb(0.3, 0.06, 0.26, 0.025), a, [0, 0.03, 0]), put(rb(0.28, 0.05, 0.24, 0.022), b, [0.01, 0.08, 0.01], [0, 0.2, 0])])
+      }
       case 'dye':
         // a little pot of berry dye with a cork
         return model([put(cyl(0.1, 0.16, 16, 0.085), LOOK.dye, [0, 0.08, 0]), put(cyl(0.07, 0.03, 14), shade(LOOK.dye, 1.4), [0, 0.165, 0]), put(cyl(0.045, 0.05, 10), '#c9935a', [0, 0.19, 0])])
@@ -532,6 +569,9 @@ export const good = (kind: ItemId) =>
         return model([put(ball(0.1), '#ffffff', [0, 0.1, 0])])
     }
   })
+
+/** A ball of yarn as the knitting station's sign shows it: big, white, its wraps coloured. */
+export const knitSign = () => cached('knitSign', () => yarnBall('#fff6e8', STRIPES))
 
 // ---------------------------------------------------------------- the island's rim
 

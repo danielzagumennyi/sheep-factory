@@ -1,38 +1,36 @@
-import { BUILDINGS, GRID, PEN, PLOTS, START, dimsOf, type BuildingId, type Dir, type RecipeId } from './balance'
+import { BUILDINGS, GRID, PEN, PLOTS, START, dimsOf, type BuildingId, type Dir } from './balance'
 import { get, plotOnIsland, plotPrice } from './grid'
-import { buyPlot, place, remove, setRecipe } from './actions/build'
+import { buyPlot, place, remove } from './actions/build'
 import { Field, Flock, GameState, key, res, type SplitRule, type World } from './world'
 
 /**
- * The farm of chapter 1, laid out cell by cell (docs/05-REWORK.md): what the balance bot builds, step by step as levels
- * open, the island grows and coins allow, and what the main menu shows built whole. Nine pens on five loops of stations:
+ * The farm of chapter 1, laid out cell by cell: what the balance bot builds, step by step as levels open, the island
+ * grows and coins allow, and what the main menu shows built whole. Five loops, each giving one good — everything is
+ * made on the sheep (the author's salon, 19.10.2026), so a loop's stations say what its shearer gives:
  *
- * - A, the first pen in the middle: white wool to the post, a carder for the shop, a spinner for the atelier; a
- *   second pen on the same loop, at its corner past the shearer;
- * - E, north-east: a dyer before its shearer, so it shears pink as far as the dye goes; white yarn and pink yarn meet
- *   in a workshop making sweaters (the fair), pink yarn goes on to the school;
- * - W, north-west: the same with a felter, the workshop making felt boots (the cobbler), and a second pen like A's;
- *   once the far row rises, a third pen there, and a second one for E: the loop comes back by the far row;
- * - X and Y, on the land the island grows in the east: a pen at the top, its loop running down and back, its goods to
- *   the docks that came with the land — X wool to the post and roving to the shop, Y felt to the cobbler and yarn to
- *   the atelier.
+ * - A, the first pen in the middle: wool for the post, two pens; later a dye station, coloured wool while the school
+ *   asks for it;
+ * - E, north-east: a comb before its shearer — thread for the shop;
+ * - W, north-west: comb and curl — yarn for the atelier, two pens; later a dye station for coloured yarn;
+ * - X, on the land the island grows in the east, by its pond: the bath — felt for the cobbler; later coloured felt;
+ * - Y, past it, from the far row down: comb, curl and knitting — sweaters, and coloured ones for the fair.
  *
- * Every loop turns left round its pen, so the good a station takes comes in from its right — from outside the loop —
- * and the shearer's wool leaves the same way (grid.ts). A pen turns a loop left too, so a second pen stands at a
- * corner: each sheep crosses the other pen on its way round and stays only in its own (systems/sheep.ts). Where a line
- * has nowhere more to go it ends at a dock, which takes anything; a dead end is emptied by the hand. A job buys the
- * plots it stands on first (`jobPlots`), and waits while any of them is still under the sky.
+ * A, E and W lie east from their pens and turn left round them; X and Y run down from a pen facing south and come back
+ * up beside. Either way the good a station takes comes in from its right — from outside the loop — and so does what the
+ * shearer gives leave (grid.ts). A second pen stands at a loop's corner: each sheep crosses the other pen on its way
+ * round and stays only in its own (systems/sheep.ts). A dye station's dye comes through a splitter the bot closes while
+ * no client asks for the coloured good, so the sheep pass it white. Every shearer's line runs down to the market's row.
+ * A job buys the plots it stands on first (`jobPlots`), and waits while any of them is still under the sky.
  */
 
-export type Step =
-  | { b: BuildingId; x: number; y: number; d: Dir; recipe?: RecipeId; rules?: readonly [SplitRule, SplitRule, SplitRule] }
-  | { pen: readonly [number, number]; d: Dir }
-  | { remove: readonly [number, number] }
+export type Step = { b: BuildingId; x: number; y: number; d: Dir; rules?: readonly [SplitRule, SplitRule, SplitRule] } | { pen: readonly [number, number]; d: Dir } | { remove: readonly [number, number] }
 
 export interface Job {
   id: string
-  /** What must be open for it (buildings, recipes). */
-  needs: readonly (BuildingId | 'valenki')[]
+  /** The buildings that must be open for it. */
+  needs: readonly BuildingId[]
+  /** The jobs that must stand before it: a loop before what goes on it. */
+  after?: readonly string[]
   steps: readonly Step[]
   /** Built in one go: half of it would cut a working loop (a second pen at its corner). */
   whole?: boolean
@@ -41,183 +39,129 @@ export interface Job {
 const belt = (d: Dir, ...cells: (readonly [number, number])[]): Step[] => cells.map(([x, y]) => ({ b: 'belt' as const, x, y, d }))
 const col = (x: number, y0: number, y1: number): [number, number][] => Array.from({ length: Math.abs(y1 - y0) + 1 }, (_, i) => [x, y0 + i * Math.sign(y1 - y0 || 1)])
 const row = (y: number, x0: number, x1: number): [number, number][] => Array.from({ length: Math.abs(x1 - x0) + 1 }, (_, i) => [x0 + i * Math.sign(x1 - x0 || 1), y])
+const off = (...cells: (readonly [number, number])[]): Step[] => cells.map((c) => ({ remove: c }))
 
 /** A splitter's rules as [left, forward, right] of the way it faces. */
 const R = (l: SplitRule, f: SplitRule, r: SplitRule) => [l, f, r] as const
+/** The splitter a dye station's dye comes through: straight on into it, closed to the sides. */
+const DYE_GATE = R('off', 'any', 'off')
 
-/** A pen's loop facing east: the stations' cells, the turn north beside the last, back west along the row above. */
-function loop(px: number, py: number): Step[] {
-  // the pen (px..px+2, py..py+2) gives its sheep out at (px+3, py+1) and takes them in at (px+1, py-1)
-  const end = px + 9
-  return [...belt(3, [end, py + 1], [end, py]), ...belt(2, ...row(py - 1, end, px + 2)), ...belt(1, [px + 1, py - 1])]
-}
-
-/**
- * A pen facing south with its loop running down and back up its east side (X and Y): the stations stand below the pen,
- * their goods' side to the west, and the shearer's wool goes west and down to the dock row.
- */
-function downLoop(px: number, py: number): Step[] {
-  // the pen (px..px+2, py..py+2) gives its sheep out at (px+1, py+3) and takes them in at (px+3, py+1)
-  return [
-    { pen: [px, py], d: 1 },
-    ...belt(1, [px + 1, py + 3], [px + 1, py + 4]),
-    { b: 'shearer', x: px + 1, y: py + 5, d: 1 },
-    ...belt(1, [px + 1, py + 7], [px + 1, py + 8]),
-    ...belt(0, [px + 1, py + 9], [px + 2, py + 9]),
-    ...belt(3, ...col(px + 3, py + 9, py + 2)),
-    ...belt(2, [px + 3, py + 1]),
-    ...belt(2, [px, py + 5]),
-    ...belt(1, ...col(px - 1, py + 5, 19)),
-  ]
-}
-/** A down loop's mower beside its feeder's way in, and the feeder in place of two belts. */
-const downMower = (px: number, py: number): Step[] => [{ b: 'mower', x: px, y: py + 8, d: 3 }]
-const downFeeder = (px: number, py: number): Step[] => [{ remove: [px + 1, py + 7] }, { remove: [px + 1, py + 8] }, { b: 'feeder', x: px + 1, y: py + 7, d: 1 }, ...belt(0, [px, py + 7])]
-/** Off a down loop's wool line, to the west: a splitter, two belts, a machine facing south and its line to the dock row. */
-const downBranch = (px: number, py: number, m: BuildingId): Step[] => [
-  { b: 'splitter', x: px - 1, y: py + 8, d: 1, rules: R('off', 'any', 'any') },
-  ...belt(2, [px - 2, py + 8]),
-  ...belt(1, [px - 3, py + 8]),
-  { b: m, x: px - 3, y: py + 9, d: 1 },
-  ...belt(1, ...col(px - 3, py + 11, 19)),
+/** Where each dye station's dye splitter stands, by the good its loop gives coloured (the bot opens it while that is asked). */
+export const DYE_GATES: readonly { at: readonly [number, number]; good: 'cwool' | 'cyarn' | 'cfelt' | 'csweater' }[] = [
+  { at: [14, 13], good: 'cwool' },
+  { at: [7, 8], good: 'cyarn' },
+  { at: [35, 10], good: 'cfelt' },
+  { at: [43, 12], good: 'csweater' },
 ]
 
 export const PLAN: readonly Job[] = [
-  // ---------------------------------------------------------------- A, the first pen (11,11), where the sheep roam at the start
+  // ---------------------------------------------------------------- A, the first pen (11,11), where the sheep roam at the start: wool
   { id: 'A.pen', needs: ['pen'], steps: [{ pen: [START.pen.x, START.pen.y], d: START.pen.dir }] },
-  { id: 'A.shearer', needs: ['shearer'], steps: [{ b: 'shearer', x: 14, y: 11, d: 0 }] },
+  { id: 'A.shearer', needs: ['shearer'], after: ['A.pen'], steps: [{ b: 'shearer', x: 16, y: 11, d: 0 }] },
   {
     id: 'A.loop',
     needs: ['belt'],
-    steps: [...belt(0, [16, 12], [17, 12]), ...belt(3, [18, 12], [18, 11]), ...belt(2, ...row(10, 18, 13)), ...belt(1, [12, 10]), ...belt(1, ...col(14, 13, 19))],
+    after: ['A.shearer'],
+    // the dye station's place and the feeder's on the way, round north and back west over the pen, the wool down to the market
+    steps: [...belt(0, [14, 12], [15, 12], [18, 12], [19, 12]), ...belt(3, [20, 12], [20, 11]), ...belt(2, ...row(10, 20, 13)), ...belt(1, [12, 10]), ...belt(1, ...col(16, 13, 19))],
   },
-  // A's second pen on the same loop, its bottom-right corner: the line goes on east into it, out north and back west
-  {
-    id: 'A.pen2',
-    needs: ['pen', 'sheep'],
-    whole: true,
-    steps: [{ remove: [18, 11] }, ...belt(0, [18, 12]), { pen: [19, 11], d: 3 }, ...belt(2, [20, 10], [19, 10])],
-  },
-  { id: 'A.carder', needs: ['carder'], steps: [...belt(1, [15, 14]), { b: 'carder', x: 15, y: 15, d: 1 }, ...belt(1, ...col(15, 17, 19))] },
-  { id: 'A.mower', needs: ['mower'], steps: [{ b: 'mower', x: 17, y: 13, d: 2 }] },
-  { id: 'A.feeder', needs: ['feeder'], steps: [{ remove: [16, 12] }, { remove: [17, 12] }, { b: 'feeder', x: 16, y: 11, d: 0 }, ...belt(3, [16, 13])] },
-  // ---------------------------------------------------------------- E, north-east (21,6): white first, the dyer later
+  // A's second pen on the same loop, its corner: the line goes on east into it, out north and back west
+  { id: 'A.pen2', needs: ['pen', 'sheep'], after: ['A.loop'], whole: true, steps: [...off([20, 11]), ...belt(0, [20, 12]), { pen: [21, 11], d: 3 }, ...belt(2, [22, 10], [21, 10])] },
+  // hay: a mower beside the feeder's way in, then the feeder
+  { id: 'A.mower', needs: ['mower'], after: ['A.loop'], steps: [{ b: 'mower', x: 19, y: 13, d: 2 }] },
+  { id: 'A.feeder', needs: ['feeder'], after: ['A.mower'], steps: [...off([18, 12], [19, 12]), { b: 'feeder', x: 18, y: 11, d: 0 }, ...belt(3, [18, 13])] },
+  // ---------------------------------------------------------------- E, north-east (21,6): wool, then thread; its line to the market later
   {
     id: 'E.module',
     needs: ['pen', 'belt', 'shearer'],
     steps: [{ pen: [21, 6], d: 0 }, ...belt(0, [24, 7], [25, 7]), { b: 'shearer', x: 26, y: 6, d: 0 }, ...belt(0, [28, 7], [29, 7]), ...belt(3, [30, 7], [30, 6]), ...belt(2, ...row(5, 30, 23)), ...belt(1, [22, 5])],
   },
-  { id: 'E.mower', needs: ['mower'], steps: [{ b: 'mower', x: 29, y: 8, d: 2 }] },
-  { id: 'E.feeder', needs: ['feeder'], steps: [{ remove: [28, 7] }, { remove: [29, 7] }, { b: 'feeder', x: 28, y: 6, d: 0 }, ...belt(3, [28, 8])] },
-  // ---------------------------------------------------------------- A: roving, then yarn
-  { id: 'A.split', needs: ['splitter'], steps: [{ b: 'splitter', x: 14, y: 14, d: 1, rules: R('any', 'any', 'off') }] },
-  // ---------------------------------------------------------------- W, north-west (0,6)
+  { id: 'E.comb', needs: ['comb'], after: ['E.module'], steps: [...off([24, 7], [25, 7]), { b: 'comb', x: 24, y: 6, d: 0 }] },
+  // ---------------------------------------------------------------- hay for E
+  { id: 'E.mower', needs: ['mower'], after: ['E.module'], steps: [{ b: 'mower', x: 29, y: 8, d: 2 }] },
+  { id: 'E.feeder', needs: ['feeder'], after: ['E.mower'], steps: [...off([28, 7], [29, 7]), { b: 'feeder', x: 28, y: 6, d: 0 }, ...belt(3, [28, 8])] },
+  // ---------------------------------------------------------------- W, north-west (0,6): wool, then yarn
   {
     id: 'W.module',
     needs: ['pen', 'belt', 'shearer'],
-    steps: [{ pen: [0, 6], d: 0 }, ...belt(0, [3, 7], [4, 7]), { b: 'shearer', x: 5, y: 6, d: 0 }, ...belt(0, [7, 7], [8, 7]), ...loop(0, 6)],
-  },
-  {
-    id: 'W.pen2',
-    needs: ['pen', 'sheep'],
-    whole: true,
-    steps: [{ remove: [9, 6] }, ...belt(0, [9, 7]), { pen: [10, 6], d: 3 }, ...belt(2, [11, 5], [10, 5])],
-  },
-  { id: 'W.mower', needs: ['mower'], steps: [{ b: 'mower', x: 8, y: 8, d: 2 }] },
-  { id: 'W.feeder', needs: ['feeder'], steps: [{ remove: [7, 7] }, { remove: [8, 7] }, { b: 'feeder', x: 7, y: 6, d: 0 }, ...belt(3, [7, 8])] },
-  // ---------------------------------------------------------------- X, the first land in the east (35,5)
-  { id: 'X.module', needs: ['pen', 'belt', 'shearer'], steps: downLoop(35, 5) },
-  { id: 'X.mower', needs: ['mower'], steps: downMower(35, 5) },
-  { id: 'X.feeder', needs: ['feeder'], steps: downFeeder(35, 5) },
-  { id: 'X.carder', needs: ['carder', 'splitter'], steps: downBranch(35, 5, 'carder') },
-  {
-    id: 'A.spinner',
-    needs: ['spinner', 'splitter'],
-    steps: [{ b: 'splitter', x: 15, y: 17, d: 1, rules: R('any', 'any', 'off') }, ...belt(1, [16, 17]), ...belt(0, [16, 18]), { b: 'spinner', x: 17, y: 17, d: 0 }, ...belt(1, [19, 18], [19, 19])],
-  },
-  // ---------------------------------------------------------------- E: white yarn (by hand to the atelier, until the workshop)
-  {
-    id: 'E.white',
-    needs: ['carder', 'spinner', 'splitter'],
+    // three places for stations before the shearer: comb, curl, dye
     steps: [
-      ...belt(1, [26, 8]),
-      { b: 'splitter', x: 26, y: 9, d: 1, rules: R('pwool', 'off', 'wool') },
-      ...belt(1, [25, 9]),
-      { b: 'carder', x: 25, y: 10, d: 1 },
-      { b: 'spinner', x: 25, y: 12, d: 1 },
-      { b: 'splitter', x: 25, y: 14, d: 1, rules: R('any', 'any', 'off') },
-      ...belt(1, [26, 14]),
-      ...belt(1, ...col(25, 15, 19)),
+      { pen: [0, 6], d: 0 },
+      ...belt(0, ...row(7, 3, 8)),
+      { b: 'shearer', x: 9, y: 6, d: 0 },
+      ...belt(0, [11, 7], [12, 7]),
+      ...belt(3, [13, 7], [13, 6]),
+      ...belt(2, ...row(5, 13, 2)),
+      ...belt(1, [1, 5]),
+      ...belt(1, ...col(9, 8, 19)),
     ],
   },
-  // ---------------------------------------------------------------- W: felt for the cobbler
+  { id: 'E.line', needs: ['belt'], after: ['E.module'], steps: belt(1, ...col(26, 8, 19)) },
+  { id: 'W.mower', needs: ['mower'], after: ['W.module'], steps: [{ b: 'mower', x: 12, y: 8, d: 2 }] },
+  { id: 'W.feeder', needs: ['feeder'], after: ['W.mower'], steps: [...off([11, 7], [12, 7]), { b: 'feeder', x: 11, y: 6, d: 0 }, ...belt(3, [11, 8])] },
+  { id: 'W.pen2', needs: ['pen', 'sheep'], after: ['W.module'], whole: true, steps: [...off([13, 6]), ...belt(0, [13, 7]), { pen: [14, 6], d: 3 }, ...belt(2, [15, 5], [14, 5])] },
+  { id: 'W.yarn', needs: ['comb', 'curl'], after: ['W.module'], steps: [...off([3, 7], [4, 7], [5, 7], [6, 7]), { b: 'comb', x: 3, y: 6, d: 0 }, { b: 'curl', x: 5, y: 6, d: 0 }] },
+  // ---------------------------------------------------------------- X, the first land in the east (35,5), by its pond: felt
   {
-    id: 'W.felter',
-    needs: ['felter', 'splitter'],
-    steps: [...belt(1, [5, 8]), { b: 'splitter', x: 5, y: 9, d: 1, rules: R('any', 'off', 'wool') }, ...belt(1, [4, 9]), { b: 'felter', x: 4, y: 10, d: 1 }, ...belt(1, ...col(4, 12, 19))],
-  },
-  // ---------------------------------------------------------------- Y, the second land in the east (43,5)
-  { id: 'Y.module', needs: ['pen', 'belt', 'shearer'], steps: downLoop(43, 5) },
-  { id: 'Y.mower', needs: ['mower'], steps: downMower(43, 5) },
-  { id: 'Y.feeder', needs: ['feeder'], steps: downFeeder(43, 5) },
-  { id: 'Y.felter', needs: ['felter', 'splitter'], steps: downBranch(43, 5, 'felter') },
-  {
-    id: 'Y.yarn',
-    needs: ['carder', 'spinner'],
-    steps: [...([15, 16, 17, 18] as const).map((y) => ({ remove: [42, y] as const })), { b: 'carder', x: 42, y: 15, d: 1 }, { b: 'spinner', x: 42, y: 17, d: 1 }],
-  },
-  // ---------------------------------------------------------------- the dyers: half the dye to the dyer, half to a dead end for the hand
-  {
-    id: 'E.dyer',
-    needs: ['dyer', 'berry', 'splitter'],
-    steps: [{ remove: [24, 7] }, { remove: [25, 7] }, { b: 'dyer', x: 24, y: 6, d: 0 }, { b: 'berry', x: 24, y: 9, d: 3 }, { b: 'splitter', x: 24, y: 8, d: 3, rules: R('off', 'any', 'any') }, ...belt(3, [25, 8])],
-  },
-  {
-    id: 'E.pink',
-    needs: ['carder', 'spinner', 'splitter'],
-    steps: [...belt(1, [27, 9]), { b: 'carder', x: 27, y: 10, d: 1 }, { b: 'spinner', x: 27, y: 12, d: 1 }, { b: 'splitter', x: 27, y: 14, d: 1, rules: R('any', 'any', 'off') }, ...belt(1, ...col(28, 14, 19))],
-  },
-  {
-    id: 'W.dyer',
-    needs: ['dyer', 'berry', 'splitter'],
-    steps: [{ remove: [3, 7] }, { remove: [4, 7] }, { b: 'dyer', x: 3, y: 6, d: 0 }, { b: 'berry', x: 3, y: 9, d: 3 }, { b: 'splitter', x: 3, y: 8, d: 3, rules: R('off', 'any', 'any') }, ...belt(3, [4, 8])],
-  },
-  {
-    id: 'W.pink',
-    needs: ['carder', 'spinner', 'splitter'],
+    id: 'X.module',
+    needs: ['pen', 'belt', 'shearer', 'bath'],
+    // down from the pen: the bath, the dye station's place, the shearer; round east and back up; the felt west and down
     steps: [
-      ...belt(1, [6, 9]),
-      { b: 'carder', x: 6, y: 10, d: 1 },
-      { b: 'spinner', x: 6, y: 12, d: 1 },
-      { b: 'splitter', x: 6, y: 14, d: 1, rules: R('any', 'any', 'off') },
-      ...belt(1, ...col(7, 14, 19)),
+      { pen: [35, 5], d: 1 },
+      { b: 'bath', x: 36, y: 8, d: 1 },
+      ...belt(1, [36, 10], [36, 11]),
+      { b: 'shearer', x: 36, y: 12, d: 1 },
+      ...belt(1, [36, 14], [36, 15]),
+      ...belt(0, [36, 16], [37, 16]),
+      ...belt(3, ...col(38, 16, 7)),
+      ...belt(2, [38, 6]),
+      ...belt(1, ...col(35, 12, 19)),
     ],
   },
-  // ---------------------------------------------------------------- the workshops
-  { id: 'E.sweater', needs: ['workshop'], steps: [{ b: 'workshop', x: 26, y: 15, d: 1, recipe: 'sweater' }, ...belt(1, ...col(26, 17, 19))] },
-  {
-    id: 'W.valenki',
-    needs: ['workshop', 'valenki'],
-    steps: [{ b: 'splitter', x: 4, y: 14, d: 1, rules: R('any', 'any', 'off') }, ...belt(1, [5, 14]), { b: 'workshop', x: 5, y: 15, d: 1, recipe: 'valenki' }, ...belt(1, ...col(5, 17, 19))],
-  },
-  // ---------------------------------------------------------------- the far row, once it rises: a pen more on W's loop and on E's
-  // the loop comes back by the far row instead of row 5: up through the new pen at the corner, west, and down into the first
-  {
-    id: 'W.pen3',
-    needs: ['pen', 'sheep'],
-    steps: [...belt(2, ...row(3, 9, 2)), ...belt(1, [1, 3], [1, 4]), { pen: [10, 2], d: 2 }, ...belt(3, [11, 5]), ...row(5, 10, 2).map(([x, y]) => ({ remove: [x, y] as const }))],
-  },
+  { id: 'X.mower', needs: ['mower'], after: ['X.module'], steps: [{ b: 'mower', x: 39, y: 16, d: 3 }] },
+  { id: 'X.feeder', needs: ['feeder'], after: ['X.mower'], steps: [...off([38, 14], [38, 15]), { b: 'feeder', x: 37, y: 14, d: 3 }, ...belt(2, [39, 15])] },
+  // ---------------------------------------------------------------- the dye stations: their berry pickers' dye through a gate the bot opens
+  { id: 'A.dyer', needs: ['dyer', 'berry', 'splitter'], after: ['A.loop'], steps: [...off([14, 12], [15, 12]), { b: 'dyer', x: 14, y: 11, d: 0 }, { b: 'berry', x: 14, y: 14, d: 3 }, { b: 'splitter', x: 14, y: 13, d: 3, rules: DYE_GATE }] },
+  { id: 'W.dyer', needs: ['dyer', 'berry', 'splitter'], after: ['W.yarn'], steps: [...off([7, 7], [8, 7]), { b: 'dyer', x: 7, y: 6, d: 0 }, { b: 'berry', x: 7, y: 9, d: 3 }, { b: 'splitter', x: 7, y: 8, d: 3, rules: DYE_GATE }] },
+  { id: 'X.dyer', needs: ['dyer', 'berry', 'splitter'], after: ['X.module'], steps: [...off([36, 10], [36, 11]), { b: 'dyer', x: 36, y: 10, d: 1 }, { b: 'berry', x: 33, y: 10, d: 0 }, { b: 'splitter', x: 35, y: 10, d: 0, rules: DYE_GATE }] },
+  // ---------------------------------------------------------------- the far row, once it rises: a second pen for E, its loop back by the far row
   {
     id: 'E.pen2',
     needs: ['pen', 'sheep'],
-    steps: [...belt(2, ...row(3, 28, 23)), ...belt(1, [22, 3], [22, 4]), { pen: [29, 2], d: 2 }, ...belt(3, [30, 5]), ...row(5, 29, 23).map(([x, y]) => ({ remove: [x, y] as const }))],
+    after: ['E.module'],
+    steps: [...belt(2, ...row(3, 28, 23)), ...belt(1, [22, 3], [22, 4]), { pen: [29, 2], d: 2 }, ...belt(3, [30, 5]), ...off(...row(5, 29, 23))],
   },
+  // a third pen for W, the far row's, past its second: the second's way out turns up into it, and the loop comes back
+  // west by the far row instead of row 5
+  {
+    id: 'W.pen3',
+    needs: ['pen', 'sheep'],
+    after: ['W.pen2'],
+    whole: true,
+    steps: [...belt(2, ...row(3, 13, 2)), ...belt(1, [1, 3], [1, 4]), ...off([15, 5]), ...belt(3, [15, 5]), { pen: [14, 2], d: 2 }, ...off(...row(5, 14, 2))],
+  },
+  // ---------------------------------------------------------------- Y, the second land in the east (43,3), from the far row down: sweaters
+  {
+    id: 'Y.module',
+    needs: ['pen', 'belt', 'shearer', 'comb', 'curl', 'knit'],
+    steps: [
+      { pen: [43, 3], d: 1 },
+      { b: 'comb', x: 44, y: 6, d: 1 },
+      { b: 'curl', x: 44, y: 8, d: 1 },
+      { b: 'knit', x: 44, y: 10, d: 1 },
+      ...belt(1, [44, 12], [44, 13]),
+      { b: 'shearer', x: 44, y: 14, d: 1 },
+      ...belt(1, [44, 16], [44, 17]),
+      ...belt(0, [44, 18], [45, 18]),
+      ...belt(3, ...col(46, 18, 5)),
+      ...belt(2, [46, 4]),
+      ...belt(1, ...col(43, 14, 19)),
+    ],
+  },
+  { id: 'Y.mower', needs: ['mower'], after: ['Y.module'], steps: [{ b: 'mower', x: 47, y: 18, d: 3 }] },
+  { id: 'Y.feeder', needs: ['feeder'], after: ['Y.mower'], steps: [...off([46, 16], [46, 17]), { b: 'feeder', x: 45, y: 16, d: 3 }, ...belt(2, [47, 17])] },
+  { id: 'Y.dyer', needs: ['dyer', 'berry', 'splitter'], after: ['Y.module'], steps: [...off([44, 12], [44, 13]), { b: 'dyer', x: 44, y: 12, d: 1 }, { b: 'berry', x: 41, y: 12, d: 0 }, { b: 'splitter', x: 43, y: 12, d: 0, rules: DYE_GATE }] },
 ]
-
-/** The splitter rules that change as the farm grows: W's first splitter takes pink to its carder once there is one. */
-export const RULES_LATER: Readonly<Record<string, { at: readonly [number, number]; rules: readonly [SplitRule, SplitRule, SplitRule] }>> = {
-  'W.pink': { at: [5, 9], rules: R('pwool', 'off', 'wool') },
-}
 
 /** What a step costs now (a belt it stands on gives its coins back). */
 export function stepCost(w: World, s: Step) {
@@ -309,19 +253,10 @@ export function applyStep(w: World, s: Step, free = false) {
     if (!place(w, s.b, s.x, s.y, s.d, free)) return false
   }
   const b = get(w, s.x, s.y)!
-  if (s.recipe) setRecipe(w, b, s.recipe)
   if (s.rules) b.rules = { l: s.rules[0], f: s.rules[1], r: s.rules[2] }
   return true
 }
-/** The rules that change once a job stands. */
-export function finishJob(w: World, j: Job) {
-  const later = RULES_LATER[j.id]
-  const b = later && get(w, later.at[0], later.at[1])
-  if (later && b) b.rules = { l: later.rules[0], f: later.rules[1], r: later.rules[2] }
-}
-/** Do a whole job, and the rules that change once it stands. */
+/** Do a whole job. */
 export function applyJob(w: World, j: Job, free = false) {
-  const ok = j.steps.every((s) => applyStep(w, s, free))
-  if (ok) finishJob(w, j)
-  return ok
+  return j.steps.every((s) => applyStep(w, s, free))
 }

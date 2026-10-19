@@ -1,4 +1,4 @@
-import { GRID, PEN, RECIPE_ORDER, TOOL_ORDER } from './balance'
+import { GRID, PEN, TOOL_ORDER } from './balance'
 import { createBot } from './bot'
 import { PLAN, applyJob } from './plan'
 import { stepSimulation } from './systems'
@@ -8,17 +8,16 @@ import { Field, Flock, GameState, Unlocks, addMarket, key, makeSheep, res, type 
 
 /**
  * The farm of chapter 1 built whole (game/plan.ts), for the main menu's background and for screenshots (dev console:
- * `__game.showcase()`): five pens on three loops of stations, every line, the workshops making sweaters and felt
- * boots, the market whole; the pens full of sheep, the deposits kept full. Then it runs a while so goods are on the
- * belts, with the bot's hand tending it as a player would — dead ends emptied, the dye held back while white is short
- * — and returns that hand, for whoever shows the farm to keep tending it (`act` about every 0.7 s).
+ * `__game.showcase()`): the five loops of the salon, every line, the market whole; the pens full of sheep, the deposits
+ * kept full. Then it runs a while so goods are on the belts, with the bot's hand tending it as a player would — dead
+ * ends emptied, the dye stations always given their dye, so the sheep come out coloured — and returns that hand, for
+ * whoever shows the farm to keep tending it (`act` about every 0.7 s).
  */
 export function buildShowcase(w: World, warmup = 90) {
   const un = res(w, Unlocks),
     gs = res(w, GameState),
     f = res(w, Field)
   for (const t of TOOL_ORDER) un.unlocked.add(t)
-  for (const r of RECIPE_ORDER) un.recipes.add(r)
   gs.coins += 50_000
   gs.food = true
   f.top = 0
@@ -37,7 +36,7 @@ export function buildShowcase(w: World, warmup = 90) {
   for (const p of flock.pastures) while (flock.sheep.filter((s) => s.home === p.id).length < PEN.cap) flock.sheep.push(makeSheep(w, p.id, true))
   keepFull(w)
   un.cardQ.length = 0
-  const hand = createBot(w)
+  const hand = createBot(w, { colour: 'always' })
   let a = 0
   for (let t = 0; t < warmup; t += 1 / 60) {
     stepSimulation(w)

@@ -17,7 +17,7 @@ export interface SheepPose {
   legs: Matrix4
   fleece: Matrix4
   head: Matrix4
-  /** Fleece on (or the pink shorn body, posed by `fleece`). */
+  /** Fleece on (or the shorn body, posed by `fleece`). */
   woolly: boolean
 }
 /** Every drawn sheep's pose, by id. The flock is instanced, so this is what the pointer and the hover line read. */

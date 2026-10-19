@@ -7,7 +7,7 @@ import { useGame } from '@/game/GameContext'
 import { Flock, isOn, res, type SheepT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
 import { vmat } from './kit'
-import { fleece, sheepHead, sheepLegs, shorn } from './models'
+import { fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, sheepHead, sheepLegs, shorn } from './models'
 import { frame } from './frame'
 import { sheepPoses, type SheepPose } from './pick'
 
@@ -19,15 +19,21 @@ const _m = new Matrix4(),
   _q = new Quaternion(),
   _s = new Vector3(),
   _e = new Euler()
-/** A fleece as it grows: white, or pink after the dyer (an instance tint over the white). */
+/** Tints over the white fleece meshes: plain white, the bath's felt, a coloured sheep's colour, a sweater's red. */
 const WHITE = new Color('#ffffff'),
-  PINK = new Color(LOOK.pinkFleece)
+  FELT = new Color(LOOK.feltFleece),
+  SWEATER = new Color(LOOK.sweater),
+  DYED = LOOK.fleeceColors.map((c) => new Color(c)),
+  STRIPE = LOOK.colors.map((c) => new Color(c))
 
 /**
  * The flock: cube sheep with big eyes, like the animals of the reference dioramas. The fleece grows from a pink shorn
- * body to a big white block — a pink one after the dyer; a bubble shows what a sheep needs. All of them are four instanced meshes — legs, fleece,
- * shorn body, head — posed in one pass (a sheep of four meshes cost eight draw calls with its shadow: 48 sheep, 380);
- * each sheep's pose is also kept in `sheepPoses`, which the pointer and the hover line read.
+ * body to a big white block, and shows where the sheep has been in the salon (the author, 19.10.2026: the sheep's path
+ * must be plain): sleek after the comb, matted after the bath, curls after the curling, a sweater after the knitting,
+ * and the colour it took at the dye station. A bubble shows what a sheep needs. All of them are a few instanced meshes —
+ * legs, the fleeces, the curls, the sweater, the shorn body, the head — posed in one pass (a sheep of four meshes cost
+ * eight draw calls with its shadow: 48 sheep, 380); each sheep's pose is also kept in `sheepPoses`, which the pointer and
+ * the hover line read.
  */
 export function Flock3D() {
   const { world } = useGame()
@@ -42,9 +48,18 @@ export function Flock3D() {
       m.frustumCulled = false
       return m
     }
-    const out = { legs: make(sheepLegs(), 'sheep_legs'), fleece: make(fleece(), 'sheep_fleece'), skin: make(shorn(), 'sheep_shorn'), head: make(sheepHead(), 'sheep_heads') }
-    // the fleece's tint from the start, so its shader is built with it
-    for (let i = 0; i < CAP; i++) out.fleece.setColorAt(i, WHITE)
+    const out = {
+      legs: make(sheepLegs(), 'sheep_legs'),
+      fleece: make(fleece(), 'sheep_fleece'),
+      sleek: make(fleeceSleek(), 'sheep_sleek'),
+      felt: make(fleeceFelt(), 'sheep_felt'),
+      curls: make(fleeceCurls(), 'sheep_curls'),
+      sweater: make(fleeceSweater(), 'sheep_sweater'),
+      skin: make(shorn(), 'sheep_shorn'),
+      head: make(sheepHead(), 'sheep_heads'),
+    }
+    // the tints from the start, so their shaders are built with them
+    for (const m of [out.fleece, out.sleek, out.felt, out.curls, out.sweater]) for (let i = 0; i < CAP; i++) m.setColorAt(i, WHITE)
     return out
   }, [])
   useEffect(() => () => Object.values(meshes).forEach((m) => m.dispose()), [meshes])
@@ -53,9 +68,13 @@ export function Flock3D() {
     if (list.length !== ids.length || list.some((s, i) => ids[i] !== s)) setIds([...list])
     const t = frame.t
     let nl = 0,
-      nf = 0,
       ns = 0,
       nh = 0
+    const n = { fleece: 0, sleek: 0, felt: 0, curls: 0, sweater: 0 }
+    const add = (k: keyof typeof n, mx: Matrix4, c: Color) => {
+      meshes[k].setColorAt(n[k], c)
+      meshes[k].setMatrixAt(n[k]++, mx)
+    }
     const seen = new Set<number>()
     for (const s of list) {
       const spot = frame.sheep.get(s)
@@ -77,8 +96,12 @@ export function Flock3D() {
       if (pose.woolly) {
         const k = 0.62 + 0.5 * w
         pose.fleece.multiplyMatrices(base, _m.compose(_p.set(-0.02, 0.15 + 0.18 * k, 0), _q.identity(), _s.set(k, k, k)))
-        meshes.fleece.setColorAt(nf, s.pink ? PINK : WHITE)
-        meshes.fleece.setMatrixAt(nf++, pose.fleece)
+        // the salon's marks: the fleece itself (woolly, sleek or felted), then curls and a sweater over it
+        const m = s.marks,
+          tint = m.dye ? DYED[s.id % DYED.length]! : m.bath ? FELT : WHITE
+        add(m.bath ? 'felt' : m.comb ? 'sleek' : 'fleece', pose.fleece, tint)
+        if (m.curl) add('curls', pose.fleece, tint)
+        if (m.knit) add('sweater', pose.fleece, m.dye ? STRIPE[s.id % STRIPE.length]! : SWEATER)
       } else {
         pose.fleece.multiplyMatrices(base, _m.makeTranslation(-0.02, 0.27, 0))
         meshes.skin.setMatrixAt(ns++, pose.fleece)
@@ -90,11 +113,13 @@ export function Flock3D() {
     }
     for (const id of sheepPoses.keys()) if (!seen.has(id)) sheepPoses.delete(id)
     meshes.legs.count = nl
-    meshes.fleece.count = nf
+    for (const k of Object.keys(n) as (keyof typeof n)[]) {
+      meshes[k].count = n[k]
+      if (meshes[k].instanceColor) meshes[k].instanceColor.needsUpdate = true
+    }
     meshes.skin.count = ns
     meshes.head.count = nh
     for (const m of Object.values(meshes)) m.instanceMatrix.needsUpdate = true
-    if (meshes.fleece.instanceColor) meshes.fleece.instanceColor.needsUpdate = true
   })
   return (
     <group>

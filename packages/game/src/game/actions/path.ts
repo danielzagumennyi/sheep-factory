@@ -156,7 +156,7 @@ export function buildPath(w: World, a: Cell, b: Cell, rot: Dir = 0): boolean {
 export function beltStart(w: World, c: Cell): Cell | null {
   const b = inGrid(c.x, c.y) ? get(w, c.x, c.y) : null
   if (!b || b.type === 'belt') return c
-  // a shearer's line starts on its wool side first; a workshop's on either front cell
+  // a shearer's line starts on the side its goods leave by first
   const outs = outCells(b).sort((p, q) => (b.type === 'shearer' ? (p.d === b.dir ? 1 : 0) - (q.d === b.dir ? 1 : 0) : 0))
   for (const c of outs) if (freeCell(w, c.x, c.y) || get(w, c.x, c.y)?.type === 'belt') return { x: c.x, y: c.y }
   return null

@@ -141,50 +141,65 @@ export const LOW_LAND = 20
 
 // ---------------------------------------------------------------- goods and buildings (GDD 4)
 
-export type ItemId = 'wool' | 'pwool' | 'roving' | 'proving' | 'yarn' | 'pyarn' | 'felt' | 'dye' | 'sweater' | 'valenki' | 'hay'
+/**
+ * The goods: what shearing gives at each step of the salon, plain or coloured, and the hay and dye the stations use
+ * (the author, 19.10.2026: everything is made on the sheep; «не привязываться к розовому, просто цветная»; «Нитки»
+ * for the unfamiliar «ровница»).
+ */
+export type ItemId = 'wool' | 'cwool' | 'thread' | 'cthread' | 'yarn' | 'cyarn' | 'sweater' | 'csweater' | 'felt' | 'cfelt' | 'dye' | 'hay'
 
 /**
- * Base prices: each step of making is worth 1.3 × what goes into it (docs/05-REWORK.md), so making always beats selling
- * the inputs. A truck pays the full price for its ask; the market pays a quarter.
+ * Base prices. One sheep shorn gives 6 coins of wool, 10 of thread, 16 of yarn, 24 of a sweater: each station it
+ * passed is worth more than the time it takes, so a longer loop pays. Colour adds more than the dye it takes; felt
+ * pays a little more than thread for the water it needs. A truck pays the full price for its ask; the market pays a
+ * quarter.
  */
 export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
   hay: { price: 1 },
   dye: { price: 2 },
   wool: { price: 3 },
-  pwool: { price: 5 },
-  roving: { price: 8 },
-  proving: { price: 13 },
-  yarn: { price: 10 },
-  pyarn: { price: 17 },
-  felt: { price: 12 },
-  sweater: { price: 35 },
-  valenki: { price: 53 },
+  cwool: { price: 5 },
+  thread: { price: 5 },
+  cthread: { price: 8 },
+  yarn: { price: 8 },
+  cyarn: { price: 13 },
+  sweater: { price: 24 },
+  csweater: { price: 38 },
+  felt: { price: 6 },
+  cfelt: { price: 9 },
 }
-/** The pink goods and the white ones they are made like. */
-export const PINK: Readonly<Partial<Record<ItemId, ItemId>>> = { pwool: 'wool', proving: 'roving', pyarn: 'yarn' }
+/** Each plain good shorn and the coloured one a sheep from the dye station gives instead. */
+export const COLORED: Readonly<Partial<Record<ItemId, ItemId>>> = { wool: 'cwool', thread: 'cthread', yarn: 'cyarn', sweater: 'csweater', felt: 'cfelt' }
 /** What the trading post pays for a good from the stock, as a share of its price. */
 export const MARKET_SHARE = 0.25
 /** The trading post sells anything at this many times a good's price, so buying never pays for an ask (the author: «как продавать так и покупать»). */
 export const BUY_SHARE = 2
 
-export type BuildingId = 'belt' | 'pen' | 'sheep' | 'shearer' | 'feeder' | 'dyer' | 'mower' | 'berry' | 'seeder' | 'carder' | 'spinner' | 'felter' | 'workshop' | 'splitter' | 'merger' | 'sow'
+export type BuildingId = 'belt' | 'pen' | 'sheep' | 'shearer' | 'feeder' | 'dyer' | 'comb' | 'curl' | 'knit' | 'bath' | 'mower' | 'berry' | 'seeder' | 'splitter' | 'merger' | 'sow'
 
-/** What a machine makes in one job: what it takes, what comes out, how long. */
-export interface Job {
-  inp: Partial<Record<ItemId, number>>
-  out: ItemId
-  time: number
-}
-/** A station on the sheep's loop: what it does to a sheep passing through. */
-export type StationId = 'shear' | 'feed' | 'dye'
+/**
+ * A station on the sheep's loop: what it does to a sheep passing through (GDD 5). The shearer takes off what grew; the
+ * feeder feeds; the rest change the fleece the shearer will take — combed, curled, knitted into a sweater, felted in the
+ * bath, coloured.
+ */
+export type StationId = 'shear' | 'feed' | 'dye' | 'comb' | 'curl' | 'knit' | 'bath'
+/** The three steps of the salon: shearing counts how many of them a sheep went through, in any order (SHEAR_YIELD). */
+export const STEPS: readonly StationId[] = ['comb', 'curl', 'knit']
+/**
+ * What shearing a fluffy sheep gives, by how many of the STEPS it went through (the author, 19.10.2026: «главное их
+ * сумма»): none — wool, one — thread, two — yarn, all three — a sweater. A sheep from the bath gives felt whatever else
+ * it went through; one from the dye station gives the coloured good (COLORED).
+ */
+export const SHEAR_YIELD: readonly (readonly [ItemId, number])[] = [
+  ['wool', 2],
+  ['thread', 2],
+  ['yarn', 2],
+  ['sweater', 1],
+]
+export const BATH_YIELD: readonly [ItemId, number] = ['felt', 2]
 
 export interface BuildingDef {
   cost: number
-  /**
-   * What it makes. A carder or a spinner makes pink from pink, as it makes white from white (the author, v6: a pair of
-   * one colour gives the same colour): each kind is its own job, taken as its inputs come.
-   */
-  jobs?: readonly Job[]
   /** A station on the loop: what it does to a passing sheep, how long, and the good it uses (by its second way in). */
   station?: StationId
   time?: number
@@ -194,17 +209,17 @@ export interface BuildingDef {
   gives?: ItemId
   /** It may stand only with its resource in reach (bushes are few); a mower goes anywhere (the author). */
   needsNear?: boolean
+  /** It may stand only with water in REACH (the bath). */
+  needsWater?: boolean
   /** The seeder: sows what a belt brings it, around itself. */
   sows?: boolean
   /** Placed onto a belt, replacing that belt cell. */
   onBelt?: boolean
   /**
-   * Footprint as [length along its output, width across it]. Workshops and stations are 2×2 like Tower Factory's
-   * production, producers 2×1 with their one output on the narrow end (the author, 15.10.2026), a pen 3×3; the rest 1×1.
+   * Footprint as [length along its output, width across it]. Stations are 2×2 like Tower Factory's production,
+   * producers 2×1 with their one output on the narrow end (the author, 15.10.2026), a pen 3×3; the rest 1×1.
    */
   size?: readonly [number, number]
-  /** Makes whichever of RECIPES the player picks, one at a time (the workshop). */
-  recipes?: boolean
   /** Stays in hand after it is placed, for the next one (a sheep: four go into a new pen). */
   repeat?: boolean
 }
@@ -221,29 +236,15 @@ export const BUILDINGS: Readonly<Record<BuildingId, BuildingDef>> = {
   sheep: { cost: SHEEP.price, repeat: true },
   shearer: { cost: 60, station: 'shear', time: 3, size: [2, 2] },
   feeder: { cost: 80, station: 'feed', time: 1, uses: 'hay', size: [2, 2] },
-  dyer: { cost: 300, station: 'dye', time: 2, uses: 'dye', size: [2, 2] },
+  dyer: { cost: 450, station: 'dye', time: 2, uses: 'dye', size: [2, 2] },
+  comb: { cost: 120, station: 'comb', time: 2, size: [2, 2] },
+  curl: { cost: 400, station: 'curl', time: 3, size: [2, 2] },
+  knit: { cost: 800, station: 'knit', time: 4, size: [2, 2] },
+  bath: { cost: 400, station: 'bath', time: 3, needsWater: true, size: [2, 2] },
   mower: { cost: 60, time: 3, near: 'meadow', gives: 'hay', size: [2, 1] },
-  berry: { cost: 200, time: 3, near: 'bush', gives: 'dye', needsNear: true, size: [2, 1] },
+  berry: { cost: 250, time: 3, near: 'bush', gives: 'dye', needsNear: true, size: [2, 1] },
   /** One sowing every `time` s, onto the nearest empty own cell in REACH, from the seeds a belt brings in. */
   seeder: { cost: 200, time: 3, sows: true, size: [2, 1] },
-  carder: {
-    cost: 150,
-    jobs: [
-      { inp: { wool: 2 }, out: 'roving', time: 3 },
-      { inp: { pwool: 2 }, out: 'proving', time: 3 },
-    ],
-    size: [2, 2],
-  },
-  spinner: {
-    cost: 250,
-    jobs: [
-      { inp: { roving: 1 }, out: 'yarn', time: 3 },
-      { inp: { proving: 1 }, out: 'pyarn', time: 3 },
-    ],
-    size: [2, 2],
-  },
-  felter: { cost: 250, jobs: [{ inp: { wool: 3 }, out: 'felt', time: 3 }], size: [2, 2] },
-  workshop: { cost: 800, size: [2, 2], recipes: true },
   splitter: { cost: 30, onBelt: true },
   merger: { cost: 20, onBelt: true },
   /** Sowing by hand: a click on an empty own cell puts a seed there from the stock (no coins). */
@@ -267,39 +268,28 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
  */
 export const MARKET = { row: GRID.roadY, rows: 2, stalls: [8, 14, 20, 26], stallW: 3, buyX: 2, buyW: 3, loadRate: 6, keep: 40 } as const
 
-export type RecipeId = 'sweater' | 'valenki'
-/**
- * The workshop's recipes: goods made of two different things (the author, 15.10.2026: «мы же не будем под каждую вещь
- * новое здание делать»). One workshop makes one recipe at a time, the one picked in its popup. Each input has its own
- * way in at the back (GDD 4.1), in the order written here: the first by the cell in line with the output.
- */
-export const RECIPES: Readonly<Record<RecipeId, Job>> = {
-  sweater: { inp: { yarn: 1, pyarn: 1 }, out: 'sweater', time: 6 },
-  valenki: { inp: { felt: 2, pyarn: 1 }, out: 'valenki', time: 6 },
-}
-export const RECIPE_ORDER: readonly RecipeId[] = ['sweater', 'valenki']
 /** Hotbar order; only unlocked tools are shown. */
 export const TOOL_ORDER: readonly BuildingId[] = [
   'shearer',
   'belt',
   'pen',
   'sheep',
-  'carder',
+  'comb',
   'mower',
   'feeder',
   'splitter',
-  'spinner',
+  'curl',
   'merger',
-  'felter',
+  'bath',
   'sow',
   'berry',
   'dyer',
   'seeder',
-  'workshop',
+  'knit',
 ]
 export const PRODUCERS: readonly BuildingId[] = ['mower', 'berry']
 /** What a splitter's rule chip cycles through on click; the popup shows only goods the farm has met. */
-export const SPLIT_RULES = ['any', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'dye', 'hay', 'sweater', 'valenki', 'sheep', 'off'] as const
+export const SPLIT_RULES = ['any', 'wool', 'cwool', 'thread', 'cthread', 'yarn', 'cyarn', 'sweater', 'csweater', 'felt', 'cfelt', 'dye', 'hay', 'sheep', 'off'] as const
 
 // ---------------------------------------------------------------- road (GDD 7)
 
@@ -375,15 +365,15 @@ export const ROOF: Readonly<Record<BuildingId, string>> = {
   shearer: '#f2668b',
   feeder: '#e9a23b',
   dyer: '#d4458a',
+  comb: '#de8a4e',
+  curl: '#a368dd',
+  knit: '#3fb6a0',
+  bath: '#5aa9e6',
   mower: '#f3bd3c',
   berry: '#c2477f',
   seeder: '#6fb64a',
-  carder: '#de8a4e',
-  spinner: '#a368dd',
   splitter: '#4a5568',
   merger: '#4a5568',
-  felter: '#3fb6a0',
-  workshop: '#e5503f',
   sow: '#6fb64a',
 }
 
@@ -460,9 +450,6 @@ export const LOOK = {
   grassFoot: '#8abf30',
   grassTip: '#98cf36',
   stone: '#7e8792',
-  /** The workshop booth's awning: muted mustard and cream stripes, so the product under it is the bright thing. */
-  workshopRoof: '#c99a3f',
-  awningLight: '#f6ead0',
   /** The mower's reel. */
   reel: '#e5503f',
   /** Wing colours of the butterflies. */
@@ -510,22 +497,25 @@ export const LOOK = {
   sheepFace: '#2b3240',
   hay: '#e2c15e',
   waterItem: '#4aa3df',
-  roving: '#fffaf2',
-  /** Undyed yarn is white, so it shows on the wooden belts; dyed yarn is the bright one. */
+  /** Plain goods are white or near it, so they show on the wooden belts; the coloured ones are the bright ones. */
+  thread: '#fffaf2',
   yarn: '#fff6e8',
   felt: '#b8aa98',
   dye: '#7b4bb3',
-  /** Pink goods: a dyed fleece and what is made of it (the dyer, GDD 5). */
-  pwool: '#ffb6d5',
-  proving: '#ffc9df',
-  pyarn: '#f2669f',
-  /** A sheep's fleece after the dyer, as an instance tint over the white fleece. */
-  pinkFleece: '#ffb0d2',
+  sweater: '#d95454',
+  /**
+   * Coloured goods are not one colour (the author: «просто цветная»): each is striped in these, and a sheep from the
+   * dye station takes one of `fleeceColors` (by its id) as a tint over the white fleece.
+   */
+  colors: ['#f2669f', '#f6c445', '#4cc3a6', '#6f8ff2'],
+  fleeceColors: ['#ffb0d2', '#ffe08a', '#a8e6cf', '#a9c6ff', '#d4b5ff'],
+  /** A sheep's marks from the salon: the sheen of a combed fleece, curls, the bath's matted felt. */
+  combed: '#f4f1ff',
+  curls: '#fff3df',
+  feltFleece: '#d9ccb6',
   /** A sown cell while it grows: little shoots on dark soil. */
   sprout: '#8fd65a',
   sproutSoil: '#b48857',
-  sweater: '#d95454',
-  valenki: '#6f7a88',
   truck: '#f1f4f8',
   truckCab: '#dd4379',
 } as const
@@ -537,9 +527,9 @@ export type ClientId = 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fai
 export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
 
 /** «Новое» cards: one per thing a level opens (its id), and a few hints; `shear` is the first level's, shearing by hand. */
-export type CardId = BuildingId | 'valenki' | 'market' | 'shear' | 'land' | 'island' | 'chapter'
-/** What a level may open: a building, the felt boots, trade, or the first level's card on shearing by hand. */
-export type OpenId = BuildingId | 'valenki' | 'market' | 'shear'
+export type CardId = BuildingId | 'market' | 'shear' | 'land' | 'island' | 'chapter'
+/** What a level may open: a building, trade, or the first level's card on shearing by hand. */
+export type OpenId = BuildingId | 'market' | 'shear'
 /** Cards shown once per game, not once per run. */
 export const ONCE_CARDS: readonly CardId[] = ['land']
 
@@ -551,7 +541,8 @@ export const ONCE_CARDS: readonly CardId[] = ['land']
  * Every part of the game comes in its turn (the author, 17.10.2026): the first level teaches shearing by hand only —
  * the sheep roam, nothing to build (the author, 19.10.2026); then the pen they are carried into; then the shearer on
  * its way out, and once it stands the belt that brings the sheep back (`after`). Buying sheep comes apart, the
- * trading post later, and food only with the feeder: until then a shorn sheep grows its fleece by itself.
+ * trading post later, and food only with the feeder: until then a shorn sheep grows its fleece by itself. The salon's
+ * stations come one by one, each with a client for what it makes (the author's salon, 19.10.2026).
  */
 export interface LevelDef {
   open: readonly OpenId[]
@@ -565,17 +556,17 @@ export const LEVELS: readonly LevelDef[] = [
   { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, asks: [['post', 'wool', 30]] },
   { open: ['sheep'], asks: [['post', 'wool', 40]] },
   {
-    open: ['carder'],
+    open: ['comb'],
     asks: [
       ['post', 'wool', 40],
-      ['shop', 'roving', 12],
+      ['shop', 'thread', 12],
     ],
   },
   {
     open: ['market'],
     asks: [
       ['post', 'wool', 60],
-      ['shop', 'roving', 16],
+      ['shop', 'thread', 16],
     ],
   },
   {
@@ -589,20 +580,20 @@ export const LEVELS: readonly LevelDef[] = [
     open: ['feeder'],
     asks: [
       ['post', 'wool', 80],
-      ['shop', 'roving', 20],
+      ['shop', 'thread', 20],
     ],
   },
   {
     open: ['splitter'],
     asks: [
       ['post', 'wool', 100],
-      ['shop', 'roving', 24],
+      ['shop', 'thread', 24],
     ],
   },
   {
-    open: ['spinner'],
+    open: ['curl'],
     asks: [
-      ['shop', 'roving', 30],
+      ['shop', 'thread', 30],
       ['atelier', 'yarn', 16],
     ],
   },
@@ -614,9 +605,9 @@ export const LEVELS: readonly LevelDef[] = [
     ],
   },
   {
-    open: ['felter'],
+    open: ['bath'],
     asks: [
-      ['shop', 'roving', 40],
+      ['shop', 'thread', 40],
       ['cobbler', 'felt', 16],
     ],
   },
@@ -632,43 +623,36 @@ export const LEVELS: readonly LevelDef[] = [
     open: ['berry'],
     asks: [
       ['school', 'dye', 24],
-      ['shop', 'roving', 40],
+      ['shop', 'thread', 40],
     ],
   },
   {
     open: ['dyer'],
     asks: [
-      ['school', 'pwool', 30],
+      ['school', 'cwool', 30],
       ['atelier', 'yarn', 30],
     ],
   },
   {
     open: ['seeder'],
     asks: [
-      ['school', 'pyarn', 12],
+      ['school', 'cyarn', 12],
       ['cobbler', 'felt', 16],
       ['post', 'wool', 120],
     ],
   },
   {
-    open: ['workshop'],
+    open: ['knit'],
     asks: [
       ['atelier', 'sweater', 8],
-      ['school', 'pyarn', 14],
-    ],
-  },
-  {
-    open: ['valenki'],
-    asks: [
-      ['cobbler', 'valenki', 5],
-      ['shop', 'roving', 40],
+      ['school', 'cyarn', 14],
     ],
   },
   {
     open: [],
     asks: [
-      ['fair', 'sweater', 10],
-      ['cobbler', 'valenki', 8],
+      ['fair', 'csweater', 6],
+      ['cobbler', 'cfelt', 10],
       ['post', 'wool', 200],
     ],
   },
@@ -698,21 +682,22 @@ export const START = {
 const RECTS = (...r: [number, number, number, number][]) => r.flatMap(([x0, y0, x1, y1]) => RECT(x0, y0, x1, y1))
 
 /**
- * The terrain, placed by hand so the farm has room to grow the way the bot builds it (game/plan.ts): a small meadow by
- * the first pen, every outer plot with its own deposit so each one is worth buying (the author, 14.10.2026: «какой
- * смысл от остальных»), a pond and a few trees. The east columns and the top row are the land that rises as the island
- * grows (ISLAND_GROW).
+ * The terrain, placed by hand so the farm has room to grow the way the bot builds it (game/plan.ts): a meadow by each
+ * loop's mower, bushes by each dye station's berry picker, a pond by the felting loop's bath (and one in the middle, for
+ * the player's), every outer plot with its own deposit so each one is worth buying (the author, 14.10.2026: «какой
+ * смысл от остальных»), and a few trees. The east columns and the top row are the land that rises as the island grows
+ * (ISLAND_GROW).
  */
 export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
   meadow: RECTS(
-    // the centre: below the first pen's loop, where its second pen leaves room
+    // the middle: by the first loop's mower
     [17, 14, 20, 14],
     [15, 13, 15, 13],
-    // north: left of the middle (below the west loop's second pen), right of the middle
-    [8, 9, 10, 10],
-    [13, 6, 14, 8],
-    [16, 6, 19, 8],
-    // north-east
+    // north: by the west loop's mower, and beside its second pen
+    [10, 9, 11, 10],
+    [12, 9, 12, 9],
+    [17, 6, 19, 8],
+    // north-east, by the east loop's mower
     [31, 6, 31, 9],
     [29, 9, 30, 9],
     // west and east
@@ -721,32 +706,33 @@ export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
     // south-west, south-east
     [0, 16, 2, 18],
     [29, 19, 31, 19],
-    // the east, under the sky until the island grows there: beside each pen, and by the mower of its loop
-    [32, 6, 33, 8],
-    [35, 15, 37, 16],
+    // the east, under the sky until the island grows there: by each loop's mower, and a deposit in every plot
+    [32, 5, 32, 6],
+    [32, 17, 33, 18],
+    [38, 18, 39, 19],
     [40, 6, 41, 8],
-    [44, 15, 46, 16],
-    // the far row, under the sky until the island grows: clear of the row the west and north-east loops come back by
+    [45, 19, 46, 19],
+    // the far row, under the sky until the island grows
     [1, 0, 4, 1],
     [9, 0, 12, 1],
     [17, 1, 21, 2],
     [25, 1, 27, 2],
     [33, 1, 36, 2],
-    [45, 1, 47, 3],
+    [46, 0, 47, 2],
   ),
-  bush: RECTS([22, 9, 23, 11], [0, 9, 2, 11], [30, 16, 31, 18], [13, 2, 14, 3], [28, 0, 31, 1], [32, 10, 33, 11], [40, 10, 41, 11], [41, 1, 43, 2]),
+  bush: RECTS([12, 14, 13, 14], [5, 8, 6, 11], [32, 11, 33, 12], [40, 10, 41, 11], [30, 16, 31, 18], [6, 0, 7, 1], [28, 0, 31, 1], [41, 1, 43, 2]),
   tree: [
-    [9, 12],
+    [10, 14],
     [23, 18],
     [12, 16],
     [3, 15],
     [38, 17],
-    [45, 18],
+    [40, 16],
   ],
   rock: [
     [10, 18],
     [29, 15],
     [47, 11],
   ],
-  water: RECTS([21, 16, 22, 17]),
+  water: RECTS([21, 16, 22, 17], [33, 7, 34, 8]),
 }

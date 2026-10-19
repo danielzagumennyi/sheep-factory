@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BuildingId, CardId, ClientId, ItemId, RecipeId, ResId } from '@/game/balance'
+import type { BuildingId, CardId, ClientId, ItemId, ResId } from '@/game/balance'
 import type { Selection, Tool } from '@/game/world'
 
 /**
@@ -39,11 +39,7 @@ export interface HudState {
   asks: AskHud[]
   /** The quick bar's ten slots (an empty slot is null). */
   tools: (ToolHud | null)[]
-  /** The recipes the workshop knows in this mission. */
-  recipes: RecipeId[]
   tool: Tool
-  /** The recipe a new workshop starts with. */
-  recipe: RecipeId
   /** What the hand sows, and what a new seeder starts with. */
   seed: ResId
   /** Kinds the farm has met so far: the splitter's rules and the market offer only these. */
@@ -68,9 +64,7 @@ export const useHudStore = create<HudState>((set) => ({
   goal: null,
   asks: [],
   tools: [],
-  recipes: [],
   tool: 'hand',
-  recipe: 'sweater',
   seed: 'meadow',
   met: [],
   sel: null,

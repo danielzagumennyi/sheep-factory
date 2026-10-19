@@ -89,12 +89,12 @@ export function startVillage(w: World) {
   openLevel(w, 0)
 }
 
-/** Every card the game can show: the buildings, the felt boots, trade, the hints, the chapter. */
-const ALL_CARDS: readonly CardId[] = [...(Object.keys(BUILDINGS) as CardId[]), 'valenki', 'market', 'shear', 'land', 'island', 'chapter']
+/** Every card the game can show: the buildings, trade, the hints, the chapter. */
+const ALL_CARDS: readonly CardId[] = [...(Object.keys(BUILDINGS) as CardId[]), 'market', 'shear', 'land', 'island', 'chapter']
 
 /**
  * The endless mode (the author, 19.10.2026: «бесконечный режим где сразу всё доступно»): all that the levels open is
- * open from the start — every building and recipe, trade, sheep that eat — and the island stands whole; no card comes.
+ * open from the start — every building, trade, sheep that eat — and the island stands whole; no card comes.
  * Coins, plots and the asks go as in the long game (the author: «обычные» coins), and the asks grow without end: there
  * is no chapter to close. Before the first level opens.
  */

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ISLAND_START, ITEMS, LEVELS, MARKET, RECIPES, TOOL_ORDER, type BuildingId } from './balance'
-import { jobsOf } from './grid'
+import { BATH_YIELD, COLORED, ISLAND_START, ITEMS, LEVELS, MARKET, SHEAR_YIELD, TOOL_ORDER } from './balance'
 
 describe('the village (GDD 7–8)', () => {
   it('every level opens at most one thing (and one more once it is placed), and every building opens once', () => {
@@ -34,12 +33,11 @@ describe('the village (GDD 7–8)', () => {
   })
 })
 
-describe('prices (docs/05-REWORK.md)', () => {
-  it('making always beats selling what it is made of', () => {
-    const jobs = [...(['carder', 'spinner', 'felter'] as BuildingId[]).flatMap((t) => jobsOf({ type: t, recipe: null })), ...Object.values(RECIPES)]
-    for (const j of jobs) {
-      const inputs = Object.entries(j.inp).reduce((s, [k, n]) => s + ITEMS[k as keyof typeof ITEMS].price * n, 0)
-      expect(ITEMS[j.out].price, j.out).toBeGreaterThan(inputs)
-    }
+describe('prices (the salon, 19.10.2026)', () => {
+  it('a sheep shorn after one more station is worth more; colour beats the dye it takes; the bath beats plain wool', () => {
+    const worth = ([k, n]: readonly [keyof typeof ITEMS, number]) => ITEMS[k].price * n
+    for (let i = 1; i < SHEAR_YIELD.length; i++) expect(worth(SHEAR_YIELD[i]!), SHEAR_YIELD[i]![0]).toBeGreaterThan(worth(SHEAR_YIELD[i - 1]!))
+    expect(worth(BATH_YIELD)).toBeGreaterThan(worth(SHEAR_YIELD[0]!))
+    for (const [k, n] of [...SHEAR_YIELD, BATH_YIELD]) expect(ITEMS[COLORED[k]!].price * n, COLORED[k]).toBeGreaterThan(ITEMS[k].price * n + ITEMS.dye.price)
   })
 })

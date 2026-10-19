@@ -36,8 +36,8 @@ export const UI = {
   waitingGoal: { ru: 'Перетащи овцу в загон', en: 'Drag the sheep into a pen' },
   shearGoal: { ru: 'Стриги пушистых овец', en: 'Shear the fluffy sheep' },
   penGoal: { ru: 'Поставь загон', en: 'Put down a pen' },
-  shearerGoal: { ru: 'Стригальню — на выход загона', en: 'The shearer on the pen’s way out' },
-  loopGoal: { ru: 'Лента от стригальни во вход', en: 'A belt from the shearer back in' },
+  shearerGoal: { ru: 'Стрижку — на выход загона', en: 'The shearing on the pen’s way out' },
+  loopGoal: { ru: 'Лента от стрижки во вход', en: 'A belt from the shearing back in' },
   woolGoal: { ru: 'Шерсть — лентой к рынку', en: 'Belt the wool to the market' },
   // ---- popups ----
   stall: { ru: 'Лавка', en: 'Stall' },
@@ -55,7 +55,6 @@ export const UI = {
   readyOut: { ru: 'готово', en: 'ready' },
   removeTitle: { ru: 'Убрать · X', en: 'Remove · X' },
   any: { ru: 'всё', en: 'any' },
-  recipe: { ru: 'рецепт', en: 'recipe' },
   error: { ru: 'Ошибка: {m} — игра продолжается', en: 'Error: {m} — the game goes on' },
   lang: { ru: 'English', en: 'Русский' },
   // ---- title ----
@@ -75,7 +74,7 @@ export const UI = {
   groupBelts: { ru: 'Ленты', en: 'Belts' },
   groupSheep: { ru: 'Овцы', en: 'Sheep' },
   groupLand: { ru: 'Поле и посев', en: 'Field and sowing' },
-  groupWool: { ru: 'Шерсть и вещи', en: 'Wool and goods' },
+  groupSalon: { ru: 'Салон', en: 'Salon' },
   bookHint: { ru: 'Клик — строить · 1–0 — на панель', en: 'Click to build · 1–0 to bar' },
   bookHintView: { ru: '1–0 в игре — на панель', en: 'In a game: 1–0 to bar' },
   seed: { ru: 'семя', en: 'seed' },

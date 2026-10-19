@@ -2,7 +2,7 @@ import { GRID, HAND, LOOK, SHEEP } from '../balance'
 import { get, inGrid, isBeltLike, isStation, owned, pastureAt, plotOf, plotPrice, roomFor, terr } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, float, key, newItem, puff, res, stockAdd, stockTake, toStock, type Building, type SheepT, type World } from '../world'
 import { enterBelt, machineAccept } from '../systems/belts'
-import { takeRes } from '../systems/machines'
+import { fleeceColor, shearYield, shorn, takeRes } from '../systems/machines'
 import { hungry, sendHome, toPasture, toRoam } from '../systems/sheep'
 import { pileHere } from './build'
 
@@ -29,15 +29,15 @@ export function sheepAt(w: World, x: number, y: number): SheepT | null {
   return best
 }
 
+/** One snip of the hand's shears; the third takes off what grew on the sheep, as the shearer would (shearYield). */
 export function shearClick(w: World, s: SheepT) {
   s.clicks++
-  puff(w, s.px, s.py, s.pink ? LOOK.pinkFleece : LOOK.wool, 4)
+  puff(w, s.px, s.py, fleeceColor(s), 4)
   if (s.clicks >= HAND.shearClicks) {
-    s.clicks = 0
-    s.wool = 0
-    stockAdd(w, s.pink ? 'pwool' : 'wool', 2)
-    s.pink = false
-    float(w, s.px, s.py - 0.4, '+2', 'accent')
+    const [kind, n] = shearYield(s)
+    shorn(s)
+    stockAdd(w, kind, n)
+    float(w, s.px, s.py - 0.4, '+' + n, 'accent')
     res(w, Stats).handShear++
   }
 }

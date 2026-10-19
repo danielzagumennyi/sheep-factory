@@ -1,15 +1,16 @@
-import { Color, CylinderGeometry, Euler, Float32BufferAttribute, Matrix4, SphereGeometry, type BufferGeometry } from 'three'
+import { Color, Euler, Float32BufferAttribute, Matrix4, SphereGeometry, type BufferGeometry } from 'three'
 import { DIRS, LOOK, PEN, ROOF, type BuildingId, type Dir } from '@/game/balance'
 import { entryOf, exitOf } from '@/game/world'
 import { model } from './kit'
-import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, ring, shade, sheepModel, type V3 } from './models'
+import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, knitSign, put, rb, ring, shade, sheepModel, type V3 } from './models'
 
 /**
  * The machines, designed like Tower Factory's (the author, 15.10.2026: «визуально дают легко понять что делает каждое
  * из них, … главное дизайн»): not houses but contraptions, each with its own silhouette and one big working part that
- * says what it does — giant shears over a striped tent, a hay manger over a trough, a pink shower over a dye vat, spiky
- * carding drums, a great spinning wheel, felting stamps, a roller mower, a berry cart with a scooping arm, a seed
- * spreader by its sacks, a craft table with yarn and needles and what it makes on a stand. They stand on cream stone plinths (the belts are wood), and the model itself says where
+ * says what it does — giant shears over a striped tent, a hay manger over a trough, a tub of dye rocking over a vat, a
+ * big brush and a giant comb, a salon's dryer hood and curlers, a ball of yarn with huge knitting needles, a little log
+ * bathhouse puffing steam, a roller mower, a berry cart with a scooping arm, a seed spreader by its sacks. The salon's
+ * stations are arches the sheep walk under (the author's salon, 19.10.2026). They stand on cream stone plinths (the belts are wood), and the model itself says where
  * goods go in and out (the author, 16.10.2026, as the pasture's open gates do): a funnel tray between two capped posts
  * at the way in, a chute sloping down to the edge with what it makes on it at the way out (`inlet`, `outlet`, on the
  * cells of grid.ts `machineIns` / `outCells`). A station on the sheep loop lets the sheep through by two gates, as the
@@ -25,10 +26,8 @@ import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, r
 /** A moving part: where it sits, how it is turned at rest (`tilt`), how it moves while the machine works. */
 export type PartSpec = { geo: () => BufferGeometry; at: V3; motion: Motion; phase?: number; scale?: number; tilt?: V3 }
 /** How a part moves while the machine works. */
-export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'stamp' | 'swing' | 'bob' | 'still'
+export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'swing' | 'bob' | 'still'
 export type MachineSpec = { body: BufferGeometry; top: number; parts: PartSpec[] }
-/** Where a workshop's product stands on show: on its stand over the way out. */
-export const WORKSHOP_SHOW: V3 = [-0.5, 0.62, 0.3]
 
 const specs = new Map<string, MachineSpec>()
 /** A machine's body and moving parts, built once per type. `top` is where its signs float. */
@@ -72,17 +71,7 @@ function plinth(w: number, d: number): BufferGeometry[] {
   return p
 }
 
-/** A toothed gear, axis along X. */
-function gear(r: number, teeth: number, color: string, t = 0.08): BufferGeometry[] {
-  const p = [put(cyl(r, t, 20), color, [0, 0, 0], [0, 0, Math.PI / 2]), put(cyl(r * 0.38, t + 0.04, 12), INKY, [0, 0, 0], [0, 0, Math.PI / 2])]
-  for (let i = 0; i < teeth; i++) {
-    const a = (i / teeth) * Math.PI * 2
-    p.push(put(rb(t, r * 0.36, r * 0.32, 0.025), color, [0, Math.cos(a) * r, Math.sin(a) * r], [a, 0, 0]))
-  }
-  return p
-}
-
-/** A carding drum, axis along X, with a few rows of big rounded teeth. */
+/** A brush drum, axis along X, with a few rows of big rounded teeth. */
 function spikyDrum(r: number, len: number, color: string): BufferGeometry {
   const p: BufferGeometry[] = [put(cyl(r, len, 22), color, [0, 0, 0], [0, 0, Math.PI / 2])]
   for (const x of [-len / 2, len / 2]) p.push(put(cyl(r * 1.1, 0.07, 22), INKY, [x, 0, 0], [0, 0, Math.PI / 2]))
@@ -298,168 +287,132 @@ const moved = (p: V3, dx: number, dz: number): V3 => [p[0] + dx, p[1], p[2] + dz
 function build(type: BuildingId): MachineSpec {
   const c = ROOF[type]
   switch (type) {
-    case 'carder': {
-      // two big toothed drums between wooden cheeks, a hopper of fleece over the way in behind them, the roving sliding
-      // out down the chute in front
+    case 'comb': {
+      // a brushing arch over the sheep's lane: a big brush drum turning between two posts, and the station's sign beside
+      // it, a giant comb standing on its back; a basket of combed-out fluff by it
       const p = plinth(1.84, 1.84)
-      const BIG: V3 = [0, 0.72, -0.26],
-        SMALL: V3 = [0, 0.54, 0.3]
-      for (const sx of [-1, 1]) {
-        p.push(put(rb(0.16, 0.9, 1.36, 0.06), WOOD, [sx * 0.78, 0.6, -0.02]))
-        p.push(put(rb(0.18, 0.1, 1.42, 0.04), WOOD_DARK, [sx * 0.78, 1.07, -0.02]))
-        p.push(put(cyl(0.09, 0.22, 12), INKY, [sx * 0.8, BIG[1], BIG[2]], [0, 0, Math.PI / 2]))
-        p.push(put(cyl(0.07, 0.22, 12), INKY, [sx * 0.8, SMALL[1], SMALL[2]], [0, 0, Math.PI / 2]))
+      for (const x of [-0.92, 0.02]) {
+        p.push(put(rb(0.16, 1.12, 0.2, 0.06), WOOD_DARK, [x, 0.68, 0]))
+        p.push(put(ball(0.12), c, [x, 1.28, 0], [0, 0, 0], [1, 0.8, 1]))
       }
-      p.push(put(rb(1.36, 0.32, 0.38, 0.06), WOOD_DARK, [0, 1.18, -0.72]))
-      // a lumpy heap of fleece in the hopper
-      const fleece: [number, number, number, number][] = [
-        [-0.42, 1.36, -0.74, 0.17],
-        [-0.15, 1.42, -0.7, 0.2],
-        [0.14, 1.39, -0.76, 0.18],
-        [0.42, 1.35, -0.7, 0.16],
-        [0, 1.51, -0.72, 0.14],
-      ]
-      for (const [x, y, z, r] of fleece) p.push(put(ball(r), LOOK.wool, [x, y, z], [0, 0, 0], [1.25, 0.8, 1]))
-      p.push(...setAt(inlet(c, 0.26), -0.5, -EDGE), ...setAt(outlet(c, good('roving').clone().scale(0.85, 0.85, 0.85), 0.3, 0.32), -0.5, EDGE))
+      p.push(put(rb(1.1, 0.12, 0.26, 0.05), WOOD, [-0.45, 1.18, 0]))
+      // the giant comb: a rounded spine in the station's colour, its teeth pointing down
+      p.push(put(rb(0.82, 0.2, 0.14, 0.08), c, [0.5, 1.12, -0.38]))
+      for (let i = 0; i < 7; i++) p.push(put(rb(0.07, 0.42, 0.09, 0.03), shade(c, 0.85), [0.17 + i * 0.11, 0.82, -0.38]))
+      for (const x of [0.2, 0.8]) p.push(put(rb(0.1, 0.62, 0.1, 0.04), WOOD_DARK, [x, 0.42, -0.38]))
+      p.push(put(cyl(0.22, 0.22, 16, 0.18), '#c9935a', [0.55, 0.26, 0.45]))
+      for (const [x, z, r] of [
+        [0.5, 0.42, 0.11],
+        [0.62, 0.5, 0.09],
+        [0.47, 0.54, 0.08],
+      ] as const)
+        p.push(put(ball(r), LOOK.combed, [x, 0.4, z], [0, 0, 0], [1.2, 0.7, 1]))
+      p.push(...gates(c, 0.78))
       return {
         body: model(p),
-        top: 1.48,
-        parts: [
-          { geo: () => cached('carderBig', () => spikyDrum(0.38, 1.3, c)), at: BIG, motion: 'spinX' },
-          { geo: () => cached('carderSmall', () => spikyDrum(0.2, 1.3, shade(c, 1.15))), at: SMALL, motion: 'spinX-' },
-          { geo: () => cached('carderGear', () => model(gear(0.3, 8, shade(c, 0.8)))), at: [0.92, BIG[1], BIG[2]], motion: 'spinX' },
-        ],
+        top: 1.6,
+        parts: [{ geo: () => cached('combBrush', () => spikyDrum(0.22, 0.86, shade(c, 1.15))), at: [-0.45, 0.88, 0], motion: 'spinX' }],
       }
     }
-    case 'spinner': {
-      // a great spinning wheel leaning back to face the camera; behind it a bench with roving waiting, a distaff of
-      // fleece by the way in; the bobbin the yarn winds onto stands over the chute it slides out by, a ball of it at the lip
+    case 'curl': {
+      // a salon's hood dryer over the sheep's lane on a stout stand, curlers in the station's colours on a tray beside it,
+      // and its sign, a giant curler standing upright, its rack of small ones turning
       const p = plinth(1.84, 1.84)
-      p.push(put(rb(1.0, 0.12, 0.44, 0.05), WOOD, [0.34, 0.5, -0.55]))
-      for (const x of [-0.08, 0.76]) for (const z of [-0.7, -0.4]) p.push(put(rb(0.09, 0.36, 0.09, 0.03), WOOD_DARK, [x, 0.32, z]))
-      for (const [x, z] of [
-        [0.14, -0.58],
-        [0.52, -0.5],
-      ] as const)
-        p.push(good('roving').clone().scale(1.5, 1.5, 1.5).translate(x, 0.56, z))
-      // the wheel's two uprights, leaning back with it
-      for (const x of [-0.12, 0.62]) p.push(put(rb(0.1, 1.0, 0.1, 0.04), WOOD_DARK, [x, 0.62, 0.08], [-0.25, 0, 0]))
-      p.push(put(rb(0.9, 0.08, 0.36, 0.03), WOOD_DARK, [0.25, 0.18, 0.2]))
-      p.push(put(rb(0.4, 0.06, 0.24, 0.025), WOOD, [0.25, 0.22, 0.6], [0.2, 0, 0]))
-      // the flyer's stand
-      for (const x of [-0.46, -0.88]) p.push(put(rb(0.1, 0.48, 0.1, 0.04), WOOD_DARK, [x, 0.4, 0.3]))
-      // the distaff: a tall stick with a fluffy bundle of fleece waiting to be spun
-      p.push(put(rb(0.09, 0.92, 0.09, 0.035), WOOD_DARK, [-0.84, 0.6, -0.4]))
-      p.push(put(ball(0.2), LOOK.wool, [-0.84, 1.12, -0.4], [0, 0, 0], [1, 1.25, 1]))
-      p.push(put(ball(0.14), LOOK.wool, [-0.76, 0.98, -0.32]))
-      p.push(...setAt(inlet(c), -0.5, -EDGE), ...setAt(outlet(c, good('yarn').clone().scale(1.15, 1.15, 1.15), 0.4, 0.36), -0.5, EDGE))
+      p.push(put(rb(0.16, 1.18, 0.16, 0.06), WOOD_DARK, [0.06, 0.7, -0.6]))
+      p.push(put(rb(0.62, 0.12, 0.14, 0.05), WOOD_DARK, [-0.22, 1.24, -0.6]))
+      const hood = new SphereGeometry(0.5, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2)
+      p.push(put(hood, shade(c, 1.25), [-0.45, 1.0, -0.12], [0, 0, 0], [1, 0.8, 1.1]))
+      p.push(put(ring(0.5, 0.06), c, [-0.45, 1.0, -0.12], [Math.PI / 2, 0, 0], [1, 1.1, 1]))
+      // the tray of curlers
+      p.push(put(rb(0.6, 0.08, 0.4, 0.03), WOOD, [0.5, 0.36, 0.4]))
+      for (let i = 0; i < 4; i++) p.push(put(cyl(0.06, 0.32, 12), LOOK.colors[i]!, [0.3 + i * 0.13, 0.46, 0.4], [Math.PI / 2, 0, 0]))
+      // the giant curler: a ridged roller on a post
+      p.push(put(rb(0.1, 0.6, 0.1, 0.04), WOOD_DARK, [0.55, 0.45, -0.3]))
+      p.push(put(cyl(0.2, 0.62, 18), c, [0.55, 1.06, -0.3]))
+      for (const y of [0.84, 1.0, 1.14, 1.28]) p.push(put(ring(0.2, 0.035), shade(c, 0.8), [0.55, y, -0.3], [Math.PI / 2, 0, 0]))
+      p.push(...gates(c, 0.78))
       return {
         body: model(p),
-        top: 1.62,
+        top: 1.75,
         parts: [
           {
             geo: () =>
-              cached('spinWheel', () => {
-                // a deep rim, so the wheel stays a wheel when seen from the side
-                const w: BufferGeometry[] = [put(ring(0.6, 0.1), WOOD, [0, 0, 0], [0, 0, 0], [1, 1, 1.5]), put(ring(0.48, 0.06), c, [0, 0, 0], [0, 0, 0], [1, 1, 1.6])]
-                for (let i = 0; i < 6; i++) w.push(put(rb(0.09, 1.08, 0.09, 0.035), WOOD_DARK, [0, 0, 0], [0, 0, (i / 6) * Math.PI]))
-                w.push(put(cyl(0.15, 0.2, 16), c, [0, 0, 0], [Math.PI / 2, 0, 0]))
-                return model(w)
+              cached('curlRack', () => {
+                const r: BufferGeometry[] = [put(cyl(0.05, 0.06, 10), INKY, [0, 0, 0])]
+                for (let i = 0; i < 4; i++) {
+                  const a = (i / 4) * Math.PI * 2
+                  r.push(put(cyl(0.05, 0.18, 10), LOOK.colors[i]!, [Math.cos(a) * 0.14, 0.06, Math.sin(a) * 0.14]))
+                }
+                return model(r)
               }),
-            at: [0.25, 0.92, 0.12],
-            tilt: [-0.55, 0, 0],
-            motion: 'spinZ-',
-          },
-          {
-            geo: () => cached('bobbin', () => model([put(cyl(0.07, 0.5, 12), WOOD_DARK, [0, 0, 0], [0, 0, Math.PI / 2]), put(cyl(0.14, 0.26, 16), LOOK.yarn, [0, 0, 0], [0, 0, Math.PI / 2]), put(cyl(0.17, 0.07, 16), c, [-0.16, 0, 0], [0, 0, Math.PI / 2]), put(cyl(0.17, 0.07, 16), c, [0.16, 0, 0], [0, 0, Math.PI / 2])])),
-            at: [-0.67, 0.68, 0.3],
-            motion: 'spinX',
+            at: [0.55, 1.4, -0.3],
+            motion: 'spinY',
           },
         ],
       }
     }
-    case 'felter': {
-      // a stamp mill: a tall wooden frame with a cap in the machine's colour, two heavy square stamps on long rods through
-      // it that rise and drop onto cream sheets of felt in the trough below; the drive gear on the front post turns the
-      // cams that lift them; a gearbox behind, beside the tray the wool comes in by; a sheet of felt slides out down the
-      // chute in front
+    case 'knit': {
+      // a knitting arch over the sheep's lane: on its beam a big ball of yarn pierced by two huge needles that click while
+      // it knits — its silhouette — and beside it a basket of balls with a striped scarf hanging off a peg
       const p = plinth(1.84, 1.84)
-      p.push(put(cyl(0.7, 0.28, 24, 0.66), WOOD_DARK, [0, 0.28, 0.3], [0, 0, 0], [1.08, 1, 0.62]))
-      p.push(put(cyl(0.62, 0.06, 24), shade(WOOD_DARK, 0.8), [0, 0.42, 0.3], [0, 0, 0], [1.08, 1, 0.62]))
-      for (const [x, a] of [
-        [-0.32, 0.12],
-        [0.3, -0.1],
+      for (const x of [-0.92, 0.02]) p.push(put(rb(0.16, 1.1, 0.2, 0.06), WOOD_DARK, [x, 0.67, 0]))
+      p.push(put(rb(1.1, 0.12, 0.26, 0.05), c, [-0.45, 1.18, 0]))
+      p.push(knitSign().clone().scale(1.7, 1.7, 1.7).translate(-0.45, 1.52, 0))
+      p.push(put(cyl(0.26, 0.26, 16, 0.2), '#c9935a', [0.5, 0.27, 0.42]))
+      for (const [x, z, k] of [
+        [0.42, 0.38, 0],
+        [0.6, 0.48, 1],
+        [0.5, 0.52, 2],
       ] as const)
-        p.push(put(rb(0.5, 0.07, 0.42, 0.03), LOOK.felt, [x, 0.47, 0.3], [0, a, 0]))
-      // the frame: two stout posts, a guide rail and the top beam with its coloured cap
-      for (const x of [-0.8, 0.8]) p.push(put(rb(0.18, 1.5, 0.2, 0.06), WOOD_DARK, [x, 0.87, 0.3]))
-      p.push(put(rb(1.7, 0.12, 0.16, 0.05), WOOD, [0, 1.02, 0.3]))
-      p.push(put(rb(1.84, 0.22, 0.26, 0.08), WOOD, [0, 1.58, 0.3]))
-      p.push(put(rb(1.9, 0.08, 0.32, 0.035), c, [0, 1.72, 0.3]))
-      // the gearbox behind
-      p.push(put(rb(1.0, 0.62, 0.42, 0.1), WOOD, [0.32, 0.46, -0.52]))
-      p.push(put(rb(1.04, 0.08, 0.46, 0.04), c, [0.32, 0.79, -0.52]))
-      p.push(...setAt(inlet(c, 0.3), -0.5, -EDGE), ...setAt(outlet(c, good('felt'), 0.3, 0.38), -0.5, EDGE))
-      const stampGeo = () =>
-        cached('felterStamp', () =>
-          model([
-            put(rb(0.36, 0.3, 0.32, 0.07), WOOD, [0, 0.15, 0]),
-            put(rb(0.38, 0.07, 0.34, 0.03), INKY, [0, 0.07, 0]),
-            put(rb(0.38, 0.07, 0.34, 0.03), INKY, [0, 0.25, 0]),
-            put(cyl(0.075, 1.3, 12), WOOD_DARK, [0, 0.95, 0]),
-            // the tappet the cam lifts it by
-            put(rb(0.1, 0.08, 0.2, 0.03), METAL, [0, 0.82, 0.12]),
-            put(rb(0.2, 0.08, 0.2, 0.03), INKY, [0, 1.25, 0]),
-          ]),
-        )
+        p.push(put(ball(0.1), LOOK.colors[k]!, [x, 0.46, z]))
+      // a peg with a scarf in stripes
+      p.push(put(rb(0.1, 1.0, 0.1, 0.04), WOOD_DARK, [0.6, 0.6, -0.5]))
+      p.push(put(rb(0.36, 0.06, 0.08, 0.03), WOOD, [0.48, 1.06, -0.5]))
+      LOOK.colors.forEach((k, i) => p.push(put(rb(0.16, 0.12, 0.04, 0.02), k, [0.38, 0.97 - i * 0.12, -0.5])))
+      p.push(...gates(c, 0.78))
+      const needle = (flip: boolean) => () =>
+        cached('needle' + flip, () => {
+          const g = model([put(cyl(0.05, 1.0, 10), METAL, [0, 0.2, 0]), put(ball(0.11), LOOK.coin, [0, 0.72, 0])])
+          g.rotateZ(flip ? -0.5 : 0.5)
+          return g
+        })
       return {
         body: model(p),
-        top: 2.05,
+        top: 2.2,
         parts: [
-          { geo: stampGeo, at: [-0.34, 0.45, 0.3], motion: 'stamp' },
-          { geo: stampGeo, at: [0.34, 0.45, 0.3], motion: 'stamp', phase: Math.PI },
-          { geo: () => cached('felterGear', () => model(gear(0.24, 8, shade(c, 0.85)))), at: [0.8, 1.2, 0.46], tilt: [0, Math.PI / 2, 0], motion: 'spinX' },
+          { geo: needle(false), at: [-0.45, 1.5, 0.08], motion: 'snip' },
+          { geo: needle(true), at: [-0.45, 1.5, 0.08], motion: 'snip-' },
         ],
       }
     }
-    case 'workshop': {
-      // a craft workshop: a booth whose sign on the roof is a big ball of yarn pierced by two huge knitting needles — its
-      // silhouette — a table with spools in it; goods come in through a hatch in its back wall, and what it makes (the
-      // recipe) shows big on a cream stand in front, over the chute it leaves by
+    case 'bath': {
+      // a little log bathhouse the sheep walk through: log walls either side of their lane, a gabled roof, a chimney
+      // puffing steam; beside it a tub of water with a ladle and a birch besom
       const p = plinth(1.84, 1.84)
-      p.push(put(rb(0.96, 0.42, 0.6, 0.06), WOOD, [0.3, 0.36, -0.4]))
-      p.push(put(rb(1.02, 0.08, 0.66, 0.035), shade(WOOD, 1.2), [0.3, 0.6, -0.4]))
-      p.push(put(rb(1.04, 0.085, 0.2, 0.03), c, [0.3, 0.605, -0.4]))
-      // the booth: a back wall with the hatch on the way in, two posts, a round awning striped mustard and cream,
-      // scalloped along the front
-      // two hatches, one for each good of the recipe (the second by the other back cell, grid.ts machineIns)
-      for (const x of [-0.77, 0, 0.77]) p.push(put(rb(x ? 0.12 : 0.4, 0.9, 0.14, 0.05), WOOD_DARK, [x, 0.62, -0.72]))
-      for (const x of [-0.5, 0.5]) {
-        p.push(put(rb(0.6, 0.36, 0.14, 0.05), WOOD_DARK, [x, 0.89, -0.72]))
-        p.push(put(rb(0.64, 0.08, 0.18, 0.035), c, [x, 0.7, -0.72]))
-        p.push(...setAt(inlet(c, 0.3), x, -EDGE))
+      for (const x of [-0.92, 0.02])
+        for (let i = 0; i < 4; i++) p.push(put(cyl(0.08, 1.5, 10), i % 2 ? WOOD : shade(WOOD, 0.88), [x, 0.26 + i * 0.16, 0], [Math.PI / 2, 0, 0]))
+      for (const s of [-1, 1]) p.push(put(rb(0.72, 0.06, 1.62, 0.02), '#9b5a3c', [-0.45 + s * 0.27, 1.06, 0], [0, 0, s * -0.55]))
+      p.push(put(rb(0.08, 0.07, 1.64, 0.03), shade('#9b5a3c', 0.78), [-0.45, 1.24, 0]))
+      p.push(put(rb(0.18, 0.4, 0.18, 0.04), '#b8b2a6', [-0.18, 1.3, -0.4]))
+      // the tub, its water in the station's colour, a ladle in it; the besom leaning on it
+      p.push(put(cyl(0.3, 0.34, 18, 0.26), WOOD, [0.5, 0.3, 0.32]))
+      for (const y of [0.22, 0.4]) p.push(put(cyl(0.31, 0.05, 18), INKY, [0.5, y, 0.32]))
+      p.push(put(cyl(0.26, 0.04, 18), c, [0.5, 0.46, 0.32]))
+      p.push(put(cyl(0.035, 0.5, 8), WOOD_DARK, [0.6, 0.58, 0.32], [0, 0, -0.6]))
+      p.push(put(rb(0.08, 0.5, 0.08, 0.03), WOOD_DARK, [0.55, 0.45, -0.45], [0.2, 0, 0.1]))
+      p.push(put(ball(0.16), '#7cbf5a', [0.55, 0.72, -0.5], [0, 0, 0], [1, 1.4, 0.8]))
+      p.push(...gates(c, 0.78))
+      return {
+        body: model(p),
+        top: 1.9,
+        parts: [
+          {
+            geo: () => cached('steam', () => model([put(ball(0.12), '#ffffff', [0, 0, 0]), put(ball(0.09), '#f2f6fb', [0.08, 0.16, 0.02]), put(ball(0.07), '#ffffff', [-0.02, 0.3, -0.02])])),
+            at: [-0.18, 1.6, -0.4],
+            motion: 'bob',
+          },
+        ],
       }
-      for (const x of [-0.8, 0.8]) p.push(put(rb(0.12, 1.1, 0.12, 0.04), WOOD_DARK, [x, 0.66, -0.12]))
-      const STRIPES = 7
-      for (let i = 0; i < STRIPES; i++)
-        p.push(put(new CylinderGeometry(0.56, 0.56, 1.9 / STRIPES, 16, 1, false, 0, Math.PI), i % 2 ? LOOK.awningLight : LOOK.workshopRoof, [-0.95 + (i + 0.5) * (1.9 / STRIPES), 1.16, -0.47], [0, 0, Math.PI / 2], [1, 1, 0.62]))
-      p.push(put(rb(1.94, 0.08, 0.1, 0.035), shade(LOOK.workshopRoof, 0.78), [0, 1.17, -0.12]))
-      for (let i = 0; i < STRIPES; i++) p.push(put(ball(0.13), i % 2 ? LOOK.awningLight : LOOK.workshopRoof, [-0.95 + (i + 0.5) * (1.9 / STRIPES), 1.12, -0.11], [0, 0, 0], [1.05, 0.8, 0.55]))
-      // its sign on the roof: a big ball of yarn with two huge knitting needles through it
-      p.push(put(ball(0.32), '#6fa8f0', [-0.1, 1.66, -0.56]))
-      p.push(put(ring(0.32, 0.055), shade('#6fa8f0', 0.78), [-0.1, 1.66, -0.56], [0.6, 0, 0]))
-      p.push(put(ring(0.32, 0.055), shade('#6fa8f0', 0.78), [-0.1, 1.66, -0.56], [-0.3, 1.1, 0]))
-      for (const tilt of [0.42, -0.32]) {
-        p.push(put(cyl(0.065, 1.1, 12), METAL, [-0.1, 1.9, -0.54], [0.1, 0, tilt]))
-        p.push(put(ball(0.13), '#f2c14e', [-0.1 - Math.sin(tilt) * 0.55, 1.9 + Math.cos(tilt) * 0.55, -0.54 + 0.06]))
-      }
-      const spools = [LOOK.pyarn, LOOK.yarn, LOOK.pwool]
-      spools.forEach((col, i) => p.push(put(cyl(0.1, 0.19, 14), col, [0.36 + i * 0.2, 0.74, -0.32])))
-      // the stand (its product is a part of Machines.tsx, at WORKSHOP_SHOW) and the chute in front of it
-      p.push(put(cyl(0.3, 0.14, 22), STONE_DARK, [WORKSHOP_SHOW[0], 0.2, WORKSHOP_SHOW[2]]))
-      p.push(put(cyl(0.27, 0.07, 22), STONE_A, [WORKSHOP_SHOW[0], 0.3, WORKSHOP_SHOW[2]]))
-      p.push(...setAt(outlet(c, null, 0.36, 0.32), -0.5, EDGE))
-      return { body: model(p), top: 2.3, parts: [] }
     }
     case 'shearer': {
       // a big striped tent on four stout posts that the sheep walk under, a shearing stand inside, giant chunky shears
@@ -659,20 +612,20 @@ function build(type: BuildingId): MachineSpec {
       }
     }
     case 'dyer': {
-      // a dyeing arch the sheep walk under: two striped posts with a beam, a big tub of pink dye on top that rocks and
-      // drips onto them, a vat of dye beside their lane, pots of berry dye by it; the dye comes in on the right
+      // a dyeing arch the sheep walk under: two striped posts with a beam, a big tub of dye on top that rocks and drips
+      // every colour onto them, a vat of dye beside their lane, pots of berry dye by it; the dye comes in on the right
       const p = plinth(1.84, 1.84)
       for (const sx of [-1, 1]) {
         p.push(put(rb(0.22, 1.1, 0.22, 0.07), c, [sx * 0.76, 0.68, 0]))
         for (const y of [0.4, 0.8]) p.push(put(rb(0.24, 0.1, 0.24, 0.04), '#ffffff', [sx * 0.76, y, 0]))
       }
       p.push(put(rb(1.74, 0.16, 0.3, 0.06), WOOD_DARK, [0, 1.28, 0]))
-      // the vat by the lane, brimful of pink, with dark hoops
+      // the vat by the lane, brimful of colour, with dark hoops
       p.push(put(cyl(0.34, 0.5, 22, 0.3), WOOD, [0.46, 0.4, -0.4]))
       for (const y of [0.26, 0.56]) p.push(put(cyl(0.35, 0.06, 22), INKY, [0.46, y, -0.4]))
-      p.push(put(cyl(0.3, 0.05, 22), LOOK.pyarn, [0.46, 0.66, -0.4]))
-      // the pink puddle in the lane where the sheep stand, and pots of dye
-      p.push(put(cyl(0.4, 0.03, 22), LOOK.pwool, [-0.46, 0.16, 0]))
+      p.push(put(cyl(0.3, 0.05, 22), LOOK.colors[0]!, [0.46, 0.66, -0.4]))
+      // splashes of every colour in the lane where the sheep stand, and pots of dye
+      LOOK.colors.forEach((k, i) => p.push(put(cyl(0.16, 0.03, 16), k, [-0.62 + (i % 2) * 0.32, 0.16 + i * 0.002, -0.3 + i * 0.2])))
       for (const [x, z] of [
         [0.62, 0.52],
         [0.36, 0.62],
@@ -688,14 +641,14 @@ function build(type: BuildingId): MachineSpec {
               cached('dyeTub', () => {
                 const t: BufferGeometry[] = [put(cyl(0.34, 0.34, 20, 0.28), shade(c, 1.1), [0, 0, 0])]
                 t.push(put(cyl(0.35, 0.06, 20), INKY, [0, 0.12, 0]))
-                t.push(put(cyl(0.3, 0.05, 20), LOOK.pyarn, [0, 0.16, 0]))
-                // drips falling from its spout
-                for (const [x, y] of [
-                  [0.36, -0.12],
-                  [0.38, -0.32],
-                  [0.34, -0.5],
+                t.push(put(cyl(0.3, 0.05, 20), LOOK.colors[3]!, [0, 0.16, 0]))
+                // drips of every colour falling from its spout
+                for (const [x, y, k] of [
+                  [0.36, -0.12, 0],
+                  [0.38, -0.32, 1],
+                  [0.34, -0.5, 2],
                 ] as const)
-                  t.push(put(ball(0.06), LOOK.pyarn, [x, y, 0], [0, 0, 0], [0.8, 1.2, 0.8]))
+                  t.push(put(ball(0.06), LOOK.colors[k]!, [x, y, 0], [0, 0, 0], [0.8, 1.2, 0.8]))
                 return model(t)
               }),
             at: [-0.5, 1.56, 0],

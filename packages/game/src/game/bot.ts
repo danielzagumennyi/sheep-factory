@@ -1,8 +1,8 @@
-import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type Dir, type ItemId } from './balance'
+import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type ItemId } from './balance'
 import { get, isBeltLike, owned, plotAdjacent, reachCells, residents, roomFor, sowable, targetOk } from './grid'
-import { buyPlot, buySheep, place, rotate } from './actions/build'
+import { buyPlot, buySheep, place } from './actions/build'
 import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from './actions/hand'
-import { PLAN, applyStep, finishJob, landReady, pieceCost, pieces, plotsToBuy } from './plan'
+import { DYE_GATES, PLAN, applyStep, landReady, pieceCost, pieces, plotsToBuy } from './plan'
 import { FIXED_DT, stepSimulation } from './systems'
 import { hungry, loopHasFeeder } from './systems/sheep'
 import { buy, openAsks, sell } from './systems/village'
@@ -15,16 +15,16 @@ import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, stockOf, toSto
  * docks, sell what nothing asks for, sow when the meadows run low. Machines get their goods only by belt. It is a
  * measure, not a model of the best play: `pnpm simulate` prints the time of every level.
  */
-export function createBot(w: World) {
+export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) {
   const gs = () => res(w, GameState)
   const un = () => res(w, Unlocks)
-  const has = (id: BuildingId | 'valenki') => (id === 'valenki' ? un().recipes.has('valenki') : un().unlocked.has(id))
+  const has = (id: BuildingId) => un().unlocked.has(id)
   const done = new Set<string>()
 
   // ---------------------------------------------------------------- building the plan
   /** The next job of the plan open to build: its buildings open, its land risen. Null when there is none. */
   function next() {
-    for (const j of PLAN) if (!done.has(j.id) && j.needs.every(has) && landReady(w, j)) return j
+    for (const j of PLAN) if (!done.has(j.id) && j.needs.every(has) && (j.after ?? []).every((id) => done.has(id)) && landReady(w, j)) return j
     return null
   }
   const progress = new Map<string, number>()
@@ -52,10 +52,7 @@ export function createBot(w: World) {
       if (!p.every((s) => applyStep(w, s))) break
       if (c >= 10) n++
       if (i + 1 < ps.length) progress.set(j.id, i + 1)
-      else {
-        finishJob(w, j)
-        done.add(j.id)
-      }
+      else done.add(j.id)
     }
     return n
   }
@@ -145,40 +142,16 @@ export function createBot(w: World) {
   }
 
   /**
-   * Lines set to what the village asks now, as a player would: A's wool goes to the carder only while the shop wants
-   * roving or the atelier yarn, the roving on to the spinner only while yarn is wanted. A dyer gets its dye only while
-   * pink is short: with the workshop holding pink yarn but no white yarn or felt, the dye goes to the dead end, so the
-   * next sheep shear white.
+   * The dye set to what the village asks now, as a player would: a dye station gets its dye only while a client asks for
+   * the coloured good its loop gives, so the rest of the time its sheep pass it white — or always (`colour`), on the
+   * main menu's farm, which is only to look at.
    */
   function adapt() {
     const want = asked()
-    const set = (x: number, y: number, side: 'l' | 'f' | 'r', rule: 'any' | 'off') => {
-      const b = get(w, x, y)
-      if (b?.type === 'splitter' && b.rules) b.rules[side] = rule
+    for (const g of DYE_GATES) {
+      const b = get(w, g.at[0], g.at[1])
+      if (b?.type === 'splitter' && b.rules) b.rules.f = opts.colour === 'always' || want.has(g.good) ? 'any' : 'off'
     }
-    set(14, 14, 'l', want.has('roving') || want.has('yarn') ? 'any' : 'off')
-    set(15, 17, 'l', want.has('yarn') ? 'any' : 'off')
-    set(15, 17, 'f', want.has('roving') || !want.has('yarn') ? 'any' : 'off')
-    // X's carder only while roving is wanted
-    set(34, 13, 'r', want.has('roving') ? 'any' : 'off')
-    // the dye splitters before the dyers (E at (24,8), W at (3,8)) and the workshops whose white input they starve
-    for (const [dye, shop, white] of [
-      [[24, 8], [26, 15], 'yarn'],
-      [[3, 8], [5, 15], 'felt'],
-    ] as const) {
-      const ws = get(w, shop[0], shop[1])
-      const whiteShort = !!ws && ws.type === 'workshop' && (ws.inv.pyarn ?? 0) >= 2 && (ws.inv[white] ?? 0) < 2
-      set(dye[0], dye[1], 'f', whiteShort ? 'off' : 'any')
-    }
-  }
-
-  /** A carder before there is a splitter: the wool line turns into it while the shop asks for roving. */
-  function carderToggle() {
-    if (done.has('A.split') || !done.has('A.carder')) return
-    const b = get(w, 14, 14)
-    if (!b || b.type !== 'belt') return
-    const want: Dir = asked().has('roving') ? 0 : 1
-    while (b.dir !== want) rotate(w, b)
   }
 
   /** Sheep for every pen with room, once sheep are for sale, keeping a little for the next building. Returns how many. */
@@ -199,7 +172,6 @@ export function createBot(w: World) {
     un().cardQ.length = 0
     hand()
     const built = build()
-    carderToggle()
     adapt()
     sowing()
     const buys = built + sheep()

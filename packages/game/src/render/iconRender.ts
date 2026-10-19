@@ -53,7 +53,7 @@ const stock = () =>
 /** A berry bush, its berries on. */
 const bush = () => model([bushBody().clone(), ...[[0.12, 0.38, 0.2], [-0.16, 0.33, 0.18], [0.02, 0.48, 0.12], [0.24, 0.26, 0.05], [-0.04, 0.28, 0.27]].map((c) => put(ball(0.05), LOOK.berry, c as [number, number, number]))])
 
-const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'mower', 'berry', 'seeder', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'workshop']
+const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'comb', 'curl', 'knit', 'bath', 'mower', 'berry', 'seeder', 'splitter', 'merger']
 function geometryOf(kind: RenderedIcon): BufferGeometry {
   if ((MACHINES as string[]).includes(kind)) {
     // a 2×1 lies along z; for its icon it is turned to lie across the frame, machine on the left

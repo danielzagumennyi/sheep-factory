@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, RECIPE_ORDER, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
+import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
 import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pastureAt, plotPrice, reachOf, terr, whyNot } from './grid'
-import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setRecipe, setSeed } from './actions/build'
+import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setSeed } from './actions/build'
 import { dropSheep, gather, handClick, pickSheep, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
+import { shearYield } from './systems/machines'
 import { penIn, toRoam } from './systems/sheep'
 import { dockAccept, nearestStall, openAsks, openLevel, sell, sellPrice, buy, buyPrice, stallX } from './systems/village'
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
-import { blankBuilding, createGameWorld, DEMO, makePen, Field, Flock, float, Fx, GameState, Market, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
+import { blankBuilding, createGameWorld, DEMO, makePen, Field, Flock, float, Fx, GameState, Market, noMarks, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -27,7 +28,6 @@ function world(opts: { all?: boolean } = { all: true }) {
   const w = penned(createGameWorld({ seed: 3 }))
   if (opts.all) {
     for (const b of TOOL_ORDER) res(w, Unlocks).unlocked.add(b)
-    for (const r of RECIPE_ORDER) res(w, Unlocks).recipes.add(r)
     // everything open: sheep eat, the market trades
     res(w, GameState).food = true
     for (const s of res(w, Flock).sheep) s.fed = false
@@ -280,13 +280,13 @@ describe('pens and sheep (GDD 5)', () => {
     expect(s.home).toBe(0)
     // belts and a machine about: for a minute it never stands on the machine, a pen or land not its own
     place(w, 'belt', at[0] + 1, at[1], 0)
-    expect(place(w, 'carder', at[0] - 2, at[1] - 2, 0)).toBe(true)
-    const carder = get(w, at[0] - 2, at[1] - 2)!
+    expect(place(w, 'comb', at[0] - 2, at[1] - 2, 0)).toBe(true)
+    const comb = get(w, at[0] - 2, at[1] - 2)!
     for (let t = 0; t < 60; t += 1 / 60) {
       stepSimulation(w)
       const x = Math.floor(s.px),
         y = Math.floor(s.py)
-      expect(owned(w, x, y) && !pastureAt(w, x, y) && get(w, x, y) !== carder, `${x},${y}`).toBe(true)
+      expect(owned(w, x, y) && !pastureAt(w, x, y) && get(w, x, y) !== comb, `${x},${y}`).toBe(true)
     }
     // built over, it runs to the nearest free ground at once
     const [x, y] = [Math.floor(s.px), Math.floor(s.py)]
@@ -473,67 +473,92 @@ describe('stations on the sheep loop (GDD 5)', () => {
     run(w, 3)
     expect(sheepOf(w).some((s) => s.state !== 'pasture')).toBe(true)
   })
-  it('the dyer colours a fluffy sheep, which shears pink; with no dye it lets the sheep pass white', () => {
+  it('the dye station colours a fluffy sheep, which shears coloured; with no dye it lets the sheep pass white', () => {
     const w = world()
     loopA(w, true)
     const dy = get(w, 14, 11)!,
       sh = get(w, 16, 11)!
     dy.inv.dye = 1
     run(w, 12)
-    const wool = sh.pile.map((q) => q.kind)
-    expect(wool).toContain('pwool')
+    expect(sh.pile.map((q) => q.kind)).toContain('cwool')
     expect(dy.count).toBe(1)
     run(w, 10)
     expect(sh.count).toBeGreaterThan(1)
   })
 })
 
-describe('machines (GDD 4.3)', () => {
-  it('a carder makes pink from pink as it makes white from white', () => {
-    const w = world()
-    place(w, 'carder', 16, 16, 0)
-    const m = get(w, 16, 16)!
-    m.inv = { pwool: 2 }
-    run(w, 3.2)
-    expect(m.pile.map((q) => q.kind)).toEqual(['proving'])
+/** The first pen's loop through the salon: its stations from the pen's way out in the order given, the shearer, and back round. */
+function salon(w: World, stations: readonly BuildingId[]) {
+  // the pen (11..13 × 11..13) gives out at (14,12) and takes in at (12,10)
+  const x0 = 14
+  stations.forEach((t, i) => expect(place(w, t, x0 + i * 2, 11, 0), t).toBe(true))
+  const sx = x0 + stations.length * 2
+  place(w, 'shearer', sx, 11, 0)
+  const end = sx + 2
+  place(w, 'belt', end, 12, 3)
+  place(w, 'belt', end, 11, 3)
+  for (let x = end; x > 12; x--) place(w, 'belt', x, 10, 2)
+  place(w, 'belt', 12, 10, 1)
+  return get(w, sx, 11)!
+}
+
+describe('the salon (GDD 5)', () => {
+  it('shearing gives by how many of the three steps a sheep went through; the bath gives felt whatever else; the dye colours', () => {
+    const s = { marks: noMarks() } as SheepT
+    const of = (m: Partial<SheepT['marks']>) => shearYield({ ...s, marks: { ...noMarks(), ...m } })
+    expect(of({})).toEqual(['wool', 2])
+    expect(of({ curl: true })).toEqual(['thread', 2])
+    expect(of({ knit: true, comb: true })).toEqual(['yarn', 2])
+    expect(of({ comb: true, curl: true, knit: true })).toEqual(['sweater', 1])
+    expect(of({ bath: true, comb: true, curl: true })).toEqual(['felt', 2])
+    expect(of({ dye: true })).toEqual(['cwool', 2])
+    expect(of({ dye: true, comb: true, curl: true, knit: true })).toEqual(['csweater', 1])
   })
-  it("a workshop takes its recipe's two goods by two ways in, each only its own", () => {
+  it('the stations work in any order: curl before comb shears yarn, and the sheep comes out plain again', () => {
     const w = world()
-    place(w, 'workshop', 16, 16, 0)
-    const m = get(w, 16, 16)!
-    setRecipe(w, m, 'sweater')
-    const ins = inCells(w, m)
-    expect(ins.map((c) => c.takes)).toEqual(['yarn', 'pyarn'])
-    // yarn into the pink yarn's way is refused, and the other way round
-    place(w, 'belt', ins[0]!.x, ins[0]!.y, 0)
-    place(w, 'belt', ins[1]!.x, ins[1]!.y, 0)
-    onBelt(w, ins[0]!.x, ins[0]!.y, 'pyarn')
-    onBelt(w, ins[1]!.x, ins[1]!.y, 'yarn')
-    run(w, 0.3)
-    expect(m.inv).toEqual({})
-    onBelt(w, ins[0]!.x, ins[0]!.y, 'yarn')
-    onBelt(w, ins[1]!.x, ins[1]!.y, 'pyarn')
-    run(w, 6.5)
-    expect(m.count).toBe(1)
+    const sh = salon(w, ['curl', 'comb'])
+    for (const s of sheepOf(w)) s.fed = true
+    res(w, GameState).food = false
+    run(w, 14)
+    expect(sh.count).toBeGreaterThan(0)
+    expect(sh.pile.length).toBeGreaterThan(0)
+    expect(new Set(sh.pile.map((q) => q.kind))).toEqual(new Set(['yarn']))
+    expect(get(w, 14, 11)!.count).toBeGreaterThan(0)
+    // shorn, a sheep's marks are gone
+    const shorn = sheepOf(w).filter((q) => q.wool < 1 && q.state !== 'machine')
+    expect(shorn.length).toBeGreaterThan(0)
+    for (const q of shorn) expect(q.marks).toEqual(noMarks())
   })
-  it('a recipe switch gives back what it held', () => {
+  it('a station passes a sheep it has marked already, and a shorn one', () => {
     const w = world()
-    place(w, 'workshop', 16, 16, 0)
-    const m = get(w, 16, 16)!
-    setRecipe(w, m, 'sweater')
+    const sh = salon(w, ['comb', 'comb'])
+    res(w, GameState).food = false
+    run(w, 14)
+    expect(get(w, 14, 11)!.count).toBeGreaterThan(0)
+    expect(get(w, 16, 11)!.count).toBe(0)
+    expect(new Set(sh.pile.map((q) => q.kind))).toEqual(new Set(['thread']))
+  })
+  it('the bath stands only by water', () => {
+    const w = world()
+    expect(whyNot(w, 'bath', 16, 16, 0)).toBe('needWater')
+    expect(whyNot(w, 'bath', 19, 16, 0)).toBe('')
+  })
+  it('shearing by hand gives what the shearer would', () => {
+    const w = world()
+    const s = sheepOf(w)[0]!
+    s.marks = { ...noMarks(), comb: true, dye: true }
     res(w, Stock).n = {}
-    m.inv = { yarn: 2, pyarn: 1 }
-    setRecipe(w, m, 'valenki')
-    expect(res(w, Stock).n).toEqual({ yarn: 2, pyarn: 1 })
-    expect(m.recipe).toBe('valenki')
+    for (let i = 0; i < 3; i++) shearClick(w, s)
+    expect(res(w, Stock).n).toEqual({ cthread: 2 })
+    expect(s.marks).toEqual(noMarks())
   })
   it('the hand never loads a machine: a click on one only selects it', () => {
     const w = world()
-    place(w, 'carder', 16, 16, 0)
-    res(w, Stock).n.wool = 10
+    place(w, 'feeder', 16, 16, 0)
+    res(w, Stock).n.hay = 10
     handClick(w, 16.5, 16.5)
     expect(get(w, 16, 16)!.inv).toEqual({})
-    expect(stockOf(w, 'wool')).toBe(10)
+    expect(stockOf(w, 'hay')).toBe(10)
     expect(res(w, Ui).sel).toEqual({ kind: 'b', key: key(16, 16) })
   })
 })
@@ -542,28 +567,29 @@ describe('building', () => {
   it('removing returns the coins and keeps the goods; no copy costs more', () => {
     const w = world()
     const c0 = res(w, GameState).coins
-    place(w, 'carder', 16, 16, 0)
+    place(w, 'feeder', 16, 16, 0)
     const c1 = res(w, GameState).coins
-    place(w, 'carder', 16, 18, 0)
+    place(w, 'feeder', 16, 18, 0)
     expect(c0 - c1).toBe(c1 - res(w, GameState).coins)
     const m = get(w, 16, 16)!
-    m.inv.wool = 3
+    m.inv.hay = 3
+    const hay = stockOf(w, 'hay')
     remove(w, 16, 16)
     remove(w, 16, 18)
     expect(res(w, GameState).coins).toBe(c0)
-    expect(stockOf(w, 'wool')).toBe(3)
+    expect(stockOf(w, 'hay')).toBe(hay + 3)
   })
   it('a moved machine keeps what it holds and costs nothing; a move called off puts it back', () => {
     const w = world()
-    place(w, 'carder', 16, 16, 0)
+    place(w, 'feeder', 16, 16, 0)
     const m = get(w, 16, 16)!
-    m.inv.wool = 3
+    m.inv.hay = 3
     const c0 = res(w, GameState).coins
     expect(liftUp(w, m)).toBe(true)
     expect(putDown(w, 16, 40, 0)).toBe(false)
     expect(putDown(w, 16, 18, 1)).toBe(true)
     expect(get(w, 17, 19)).toBe(m)
-    expect(m.inv.wool).toBe(3)
+    expect(m.inv.hay).toBe(3)
     expect(res(w, GameState).coins).toBe(c0)
     liftUp(w, m)
     putBack(w)
@@ -592,7 +618,7 @@ describe('building', () => {
     expect(inCells(w, one('merger')).map((c) => c.d).sort()).toEqual([0, 1, 3])
     expect(outCells(one('splitter')).map((c) => c.d).sort()).toEqual([0, 1, 3])
     for (const t of ['mower', 'berry'] as const) expect(inCells(w, one(t))).toEqual([])
-    for (const t of ['carder', 'spinner', 'felter'] as const) expect(inCells(w, one(t)).length, t).toBe(1)
+    for (const t of ['comb', 'curl', 'knit', 'bath'] as const) expect(inCells(w, one(t)).length, t).toBe(1)
     for (const t of ['feeder', 'dyer'] as const) expect(inCells(w, one(t)).length, t).toBe(2)
   })
 })
@@ -708,7 +734,6 @@ describe('the village (GDD 7–8)', () => {
       f = res(w, Field)
     expect(gs.endless).toBe(true)
     for (const t of TOOL_ORDER) expect(un.unlocked.has(t), t).toBe(true)
-    expect([...un.recipes].sort()).toEqual([...RECIPE_ORDER].sort())
     expect(gs.trade && gs.food).toBe(true)
     expect([f.top, f.right]).toEqual([0, GRID.cols])
     expect(row(w).w).toBe(GRID.cols)
@@ -803,11 +828,8 @@ describe('what each way in and out shows (GDD 4.1)', () => {
     expect(outs(feeder)).toEqual(['sheep'])
     expect(ins(blankBuilding('dyer', 12, 15, 1))).toEqual(['sheep', 'dye'])
     expect(outs(blankBuilding('shearer', 12, 15, 2)).sort()).toEqual(['sheep', 'wool'])
-    const ws = blankBuilding('workshop', 12, 15, 1)
-    ws.recipe = 'valenki'
-    expect(ins(ws)).toEqual(['felt', 'pyarn'])
-    expect(outs(ws)).toEqual(['valenki'])
-    expect(ins(blankBuilding('carder', 12, 15, 0))).toEqual(['wool'])
+    expect(ins(blankBuilding('comb', 12, 15, 0))).toEqual(['sheep'])
+    expect(outs(blankBuilding('comb', 12, 15, 0))).toEqual(['sheep'])
     expect(outs(blankBuilding('mower', 12, 15, 0))).toEqual(['hay'])
     // a splitter or a belt takes anything: no icon
     expect(ins(blankBuilding('splitter', 12, 15, 0))).toEqual([null])

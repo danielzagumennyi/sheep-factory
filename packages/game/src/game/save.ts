@@ -1,6 +1,6 @@
-import { BUILDINGS, LEVELS, MARKET, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import { BUILDINGS, ITEMS, LEVELS, MARKET, dimsOf, type BuildingId, type CardId, type ItemId, type ResId, type TerrainId } from './balance'
 import { sendHome } from './systems/sheep'
-import { stallX } from './systems/village'
+import { openLevel, stallX } from './systems/village'
 import {
   Field,
   Flock,
@@ -27,6 +27,7 @@ import {
   type TruckT,
   type World,
   type WorldOptions,
+  noMarks,
 } from './world'
 
 /**
@@ -39,7 +40,7 @@ import {
  */
 
 /** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 4
+export const SAVE_VERSION = 5
 /** The level the market starts trading at (a version-1 save knew no `trade`). */
 const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
@@ -81,17 +82,78 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
     }
     return s
   },
+  // 5: the salon (19.10.2026): everything is made on the sheep. The goods-only machines are gone — their coins come back,
+  // what they held goes to the stock — and the stations they opened with take their place in the levels (the carder's
+  // level opens the comb, the spinner's the curl, the felter's the bath, the workshop's the knitting); the felt boots'
+  // level went with them, so a level past it is one earlier. Pink goods are the coloured ones, roving is thread, felt
+  // boots are sold. A level whose asks were for goods that are gone is opened anew.
+  4: (g) => {
+    const s = g as GameSave & { unlocks: { recipes?: string[] }; ui: { recipe?: string } }
+    const RENAME: Record<string, string> = { carder: 'comb', spinner: 'curl', felter: 'bath', workshop: 'knit' }
+    const GOOD: Record<string, ItemId | null> = { pwool: 'cwool', roving: 'thread', proving: 'cthread', pyarn: 'cyarn', valenki: null }
+    const good = (k: string) => (k in GOOD ? GOOD[k]! : (k as ItemId))
+    const stock: Partial<Record<ItemId, number>> = {}
+    const add = (k: string, n: number) => {
+      const to = good(k)
+      if (to) stock[to] = (stock[to] ?? 0) + n
+      else s.gs.coins += Math.round(n * 13)
+    }
+    for (const [k, n] of Object.entries(s.stock)) add(k, n ?? 0)
+    s.plant = s.plant.filter((b) => {
+      if (!(b.type in RENAME)) return true
+      s.gs.coins += b.paid
+      for (const [k, n] of Object.entries(b.inv)) add(k, n ?? 0)
+      for (const q of [b.item, ...b.buf, ...b.pile, ...b.outs.map((o) => o.item)]) if (q && q.sheep === undefined) add(q.kind, 1)
+      return false
+    })
+    for (const b of s.plant) {
+      const old = b as BuildingSave & { recipe?: unknown; slot: (BuildingSave['slot'] & { job?: unknown }) | null }
+      delete old.recipe
+      if (old.slot?.job !== undefined) old.slot = null
+      for (const q of [b.item, ...b.buf, ...b.pile, ...b.outs.map((o) => o.item)])
+        if (q && q.sheep === undefined && q.kind !== 'sheep') {
+          const to = good(q.kind)
+          if (to) q.kind = to
+        }
+      b.buf = b.buf.filter((q) => q.kind in ITEMS || q.sheep !== undefined)
+      b.pile = b.pile.filter((q) => q.kind in ITEMS)
+      b.outs = b.outs.filter((o) => o.item.kind in ITEMS || o.item.sheep !== undefined)
+      if (b.item && !(b.item.kind in ITEMS) && b.item.sheep === undefined) b.item = null
+      if (b.rules) for (const k of ['l', 'f', 'r'] as const) b.rules[k] = (good(b.rules[k]) ?? 'any') as typeof b.rules.l
+      b.inv = Object.fromEntries(Object.entries(b.inv).flatMap(([k, n]) => (good(k) ? [[good(k)!, n]] : [])))
+    }
+    s.stock = stock
+    for (const q of s.flock.sheep) {
+      const sh = q as SheepT & { pink?: boolean }
+      sh.marks = { ...noMarks(), dye: !!sh.pink }
+      delete sh.pink
+    }
+    const ren = <T extends string>(a: T[]) => a.map((id) => (RENAME[id] ?? id) as T).filter((id) => id !== ('valenki' as T))
+    s.unlocks = { ...s.unlocks, unlocked: ren(s.unlocks.unlocked), fresh: ren(s.unlocks.fresh), cardQ: ren(s.unlocks.cardQ), seen: ren(s.unlocks.seen) }
+    delete s.unlocks.recipes
+    delete s.ui.recipe
+    if (s.gs.level > 16) s.gs.level--
+    // asks for goods that are gone are opened anew once the world is up
+    if (s.market.asks.some((a) => !(a.kind in ITEMS))) {
+      s.market.asks = []
+      s.market.trucks = []
+      reopen.add(s)
+    }
+    return s
+  },
 }
+/** Saves whose level has to be opened anew once loaded: its asks were for goods that are gone. */
+const reopen = new WeakSet<object>()
 
 /** A good as saved: the sheep it carries by its id. */
 type ItemSave = Omit<Item, 'sheep'> & { sheep?: number }
-/** A building as saved: its goods as ItemSave, the sheep in its slot by id, its job by what it makes. */
+/** A building as saved: its goods as ItemSave, the sheep in its slot by id. */
 type BuildingSave = Omit<Building, 'item' | 'buf' | 'outs' | 'pile' | 'slot'> & {
   item: ItemSave | null
   buf: ItemSave[]
   outs: { item: ItemSave; dir: Building['dir'] }[]
   pile: ItemSave[]
-  slot: { sheep?: number; pass?: boolean; job?: ItemId } | null
+  slot: { sheep?: number; pass?: boolean } | null
 }
 
 export interface GameSave {
@@ -110,9 +172,9 @@ export interface GameSave {
   flock: { sheep: SheepT[]; pastures: PastureT[]; penUid: number }
   market: { asks: AskT[]; trucks: TruckT[]; askUid: number }
   stock: Partial<Record<ItemId, number>>
-  unlocks: { unlocked: BuildingId[]; recipes: RecipeId[]; fresh: BuildingId[]; cardQ: CardId[]; seen: CardId[]; events: string[]; shownEver: CardId[] }
-  /** The player's last picks: the recipe a new workshop starts with, what the hand sows. */
-  ui: { recipe: RecipeId; seed: ResId }
+  unlocks: { unlocked: BuildingId[]; fresh: BuildingId[]; cardQ: CardId[]; seen: CardId[]; events: string[]; shownEver: CardId[] }
+  /** The player's last pick: what the hand sows. */
+  ui: { seed: ResId }
   stats: ReturnType<typeof res<typeof Stats>>
   rng: number
 }
@@ -147,7 +209,6 @@ function buildingOut(b: Building): BuildingSave {
     slot: b.slot && {
       ...(b.slot.pass !== undefined ? { pass: b.slot.pass } : {}),
       ...(b.slot.sheep ? { sheep: b.slot.sheep.id } : {}),
-      ...(b.slot.job ? { job: b.slot.job.out } : {}),
     },
   }
 }
@@ -187,8 +248,8 @@ export function saveGame(w: World): SaveData {
       flock: { sheep: copy(flock.sheep), pastures: copy(flock.pastures), penUid: flock.penUid },
       market: { asks: copy(market.asks), trucks: copy(market.trucks), askUid: market.askUid },
       stock: { ...res(w, Stock).n },
-      unlocks: { unlocked: [...un.unlocked], recipes: [...un.recipes], fresh: [...un.fresh], cardQ: [...un.cardQ], seen: [...un.seen], events: [...un.events], shownEver: [...un.shownEver] },
-      ui: { recipe: ui.recipe, seed: ui.seed },
+      unlocks: { unlocked: [...un.unlocked], fresh: [...un.fresh], cardQ: [...un.cardQ], seen: [...un.seen], events: [...un.events], shownEver: [...un.shownEver] },
+      ui: { seed: ui.seed },
       stats: { ...res(w, Stats) },
       rng: res(w, Rng).next.state,
     },
@@ -196,9 +257,6 @@ export function saveGame(w: World): SaveData {
 }
 
 // ---------------------------------------------------------------- loading
-
-/** Every job a machine can be busy with, by what it makes (each good is made by one job). */
-const JOB_BY_OUT: ReadonlyMap<ItemId, Job> = new Map([...Object.values(BUILDINGS).flatMap((d) => d.jobs ?? []), ...Object.values(RECIPES)].map((j) => [j.out, j]))
 
 /** A save brought up to this version, or null when it is no save of ours (or one newer than this build). */
 function upgrade(data: unknown): GameSave | null {
@@ -267,7 +325,6 @@ function fill(w: World, g: GameSave) {
     const out: NonNullable<Building['slot']> = {}
     if (sl.pass !== undefined) out.pass = sl.pass
     if (sl.sheep !== undefined) out.sheep = sheepOf(sl.sheep)
-    if (sl.job) out.job = JOB_BY_OUT.get(sl.job)
     return out
   }
   const plant = res(w, Plant)
@@ -292,15 +349,16 @@ function fill(w: World, g: GameSave) {
   res(w, Stock).n = { ...g.stock }
   const un = res(w, Unlocks)
   un.unlocked = new Set(g.unlocks.unlocked)
-  un.recipes = new Set(g.unlocks.recipes)
   un.fresh = new Set(g.unlocks.fresh)
   un.cardQ = [...g.unlocks.cardQ]
   un.seen = new Set(g.unlocks.seen)
   un.events = new Set(g.unlocks.events)
   un.shownEver = [...g.unlocks.shownEver]
-  Object.assign(res(w, Ui), { recipe: g.ui.recipe, seed: g.ui.seed })
+  Object.assign(res(w, Ui), { seed: g.ui.seed })
   Object.assign(res(w, Stats), g.stats)
   res(w, Rng).next.state = g.rng
   // a sheep that was in the hand walks home; one in a pen that is gone roams
   for (const s of flock.sheep) if (s.state === 'held' || (s.state === 'pasture' && !penOf(w, s.home))) sendHome(w, s)
+  // a level whose asks were for goods that are gone is opened anew: its asks and trucks (its cards are seen)
+  if (reopen.has(g)) openLevel(w, gs.level)
 }

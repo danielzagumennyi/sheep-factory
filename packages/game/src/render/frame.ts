@@ -1,11 +1,12 @@
 import { DIRS, type ItemId } from '@/game/balance'
-import { beltInDir, feeds, get, isBeltLike, targetOk } from '@/game/grid'
+import { beltInDir, feeds, get, inCell, isBeltLike, isStation, outCells, targetOk } from '@/game/grid'
 import { Flock, Plant, res, type SheepT, type World } from '@/game/world'
 import { beltPoint } from './kit'
 
 /**
  * What the views draw this frame, gathered once by GameLoop right after the simulation steps: where every good on a
- * belt, pile or the ground sits, and where each sheep is (in the pasture, on a belt, in a shearer). Views only read it.
+ * belt, pile or the ground sits, and where each sheep is (in the pasture, on a belt, walking through a station). Views
+ * only read it.
  */
 export interface GoodSpot {
   kind: ItemId
@@ -30,8 +31,9 @@ export const frame = {
 }
 
 const yawOfDir = (d: number) => -d * (Math.PI / 2)
-/** How high a sheep walks over a belt: on its slats. */
-const BELT_LIFT = 0.2
+/** How high a sheep walks over a belt: on its slats; through a station: on its plinth. */
+const BELT_LIFT = 0.2,
+  PLINTH_LIFT = 0.14
 
 export function collectFrame(world: World) {
   frame.goods.length = 0
@@ -62,7 +64,17 @@ export function collectFrame(world: World) {
         pz = b.pileY + 0.5
       b.pile.forEach((it, i) => frame.goods.push({ kind: it.kind as ItemId, x: px - 0.18 + i * 0.18, z: pz + 0.1 - i * 0.08, y: 0.1 + i * 0.05 }))
     }
-    if (b.type === 'shearer' && b.slot?.sheep) frame.sheep.set(b.slot.sheep, { x: b.x + 0.5, z: b.y + 0.5, yaw: yawOfDir(b.dir), inMachine: true })
+    // a station's sheep walks its lane under the arch while it is worked on, from the way in to the way out, and waits at
+    // the way out for room: so what the salon did to it shows as it goes (the author, 19.10.2026)
+    if (isStation(b) && (b.slot?.sheep || b.outs.some((o) => o.item.sheep))) {
+      const a = inCell(b),
+        o = outCells(b).find((c) => c.d === b.dir)
+      if (a && o) {
+        const lane = (k: number) => ({ x: a.sx + 0.5 + (o.sx - a.sx) * k, z: a.sy + 0.5 + (o.sy - a.sy) * k, yaw: yawOfDir(b.dir), inMachine: false, lift: PLINTH_LIFT })
+        if (b.slot?.sheep) frame.sheep.set(b.slot.sheep, lane(b.total > 0 ? 1 - Math.max(0, b.timer) / b.total : 0.5))
+        for (const q of b.outs) if (q.item.sheep && !frame.sheep.has(q.item.sheep)) frame.sheep.set(q.item.sheep, lane(1))
+      }
+    }
   }
   for (const s of res(world, Flock).sheep) {
     if (frame.sheep.has(s)) continue

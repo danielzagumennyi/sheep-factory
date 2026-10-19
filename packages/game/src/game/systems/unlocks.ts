@@ -27,8 +27,8 @@ export function queueCard(w: World, id: CardId, alsoUnlock = true) {
 }
 
 /**
- * Open a building (the workshop comes knowing the sweater), a recipe or trade (the market's trading post), with its card. The feeder brings
- * food into the game: from now on a shorn sheep has to eat before its fleece grows again.
+ * Open a building or trade (the market's trading post), with its card. The feeder brings food into the game: from now
+ * on a shorn sheep has to eat before its fleece grows again.
  */
 export function unlock(w: World, id: OpenId) {
   const un = res(w, Unlocks)
@@ -45,13 +45,6 @@ export function unlock(w: World, id: OpenId) {
     // a fluffy sheep's next fleece is the first that needs a meal; a shorn one finishes the fleece it grows
     for (const s of res(w, Flock).sheep) if (s.wool >= 1) s.fed = false
   }
-  if (id === 'valenki') {
-    if (un.recipes.has('valenki')) return
-    un.recipes.add('valenki')
-    queueCard(w, 'valenki', false)
-    return
-  }
-  if (id === 'workshop') un.recipes.add('sweater')
   if (un.unlocked.has(id)) return
   queueCard(w, id)
 }

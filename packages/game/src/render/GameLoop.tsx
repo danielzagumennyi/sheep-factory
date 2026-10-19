@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
-import { CAMERA, GRID, ITEMS, LEVELS, RECIPE_ORDER, TOOL_ORDER, type ItemId } from '@/game/balance'
+import { CAMERA, COLORED, GRID, ITEMS, LEVELS, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { buildPrice, get, outCells, residents } from '@/game/grid'
 import { remove, rotate } from '@/game/actions/build'
@@ -150,10 +150,7 @@ export function GameLoop() {
       coins: (n: number) => (res(world, GameState).coins += n),
       speed: (n: number) => (res(world, GameState).speed = n),
       start: () => useAppStore.getState().start(),
-      unlockAll: () => {
-        TOOL_ORDER.forEach((t) => res(world, Unlocks).unlocked.add(t))
-        RECIPE_ORDER.forEach((r) => res(world, Unlocks).recipes.add(r))
-      },
+      unlockAll: () => TOOL_ORDER.forEach((t) => res(world, Unlocks).unlocked.add(t)),
       /** Screen point (CSS px) of a field point, for scripted clicks. */
       project: (x: number, z: number) => {
         const v = new Vector3(x, 0, z).project(camera)
@@ -331,14 +328,13 @@ function metGoods(world: World): ItemId[] {
   const met = new Set<ItemId>(['wool', 'hay'])
   for (const [k, n] of Object.entries(res(world, Stock).n)) if (n) met.add(k as ItemId)
   for (const a of res(world, Market).asks) met.add(a.kind)
+  // what the salon's stations open: a step up for each, felt from the bath, every one coloured from the dye station
   const un = res(world, Unlocks)
-  if (un.unlocked.has('carder')) met.add('roving')
-  if (un.unlocked.has('spinner')) met.add('yarn')
-  if (un.unlocked.has('felter')) met.add('felt')
+  const steps = (['comb', 'curl', 'knit'] as const).filter((t) => un.unlocked.has(t)).length
+  for (const k of (['thread', 'yarn', 'sweater'] as const).slice(0, steps)) met.add(k)
+  if (un.unlocked.has('bath')) met.add('felt')
   if (un.unlocked.has('berry')) met.add('dye')
-  if (un.unlocked.has('dyer')) for (const k of ['pwool', 'proving', 'pyarn'] as const) met.add(k)
-  if (un.recipes.has('sweater')) met.add('sweater')
-  if (un.recipes.has('valenki')) met.add('valenki')
+  if (un.unlocked.has('dyer')) for (const k of [...met]) if (COLORED[k]) met.add(COLORED[k])
   return (Object.keys(ITEMS) as ItemId[]).filter((k) => met.has(k))
 }
 
@@ -378,9 +374,7 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
     goal: goalOf(world),
     asks: res(world, Market).asks.map((a) => ({ id: a.id, client: a.client, kind: a.kind, have: a.have, total: a.total, price: ITEMS[a.kind].price })),
     tools: barOf(useAppStore.getState().bar, un.unlocked).map((t) => (t ? { id: t, price: buildPrice(world, t), short: gs.coins < buildPrice(world, t), fresh: un.fresh.has(t) } : null)),
-    recipes: [...un.recipes],
     tool: ui.tool,
-    recipe: ui.recipe,
     seed: ui.seed,
     met: metGoods(world),
     sel: ui.sel,
