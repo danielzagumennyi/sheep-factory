@@ -151,7 +151,7 @@ function pausedNudge(w: World) {
   res(w, GameState).pauseNudge++
 }
 
-/** A sheep can be taken from a pen, from beside a station and off a belt. */
+/** A sheep can be taken from a pen, off a belt and wherever it roams; one half shorn by hand keeps its clicks. */
 export function pickSheep(w: World, s: SheepT) {
   for (const b of res(w, Plant).b.values()) {
     if (b.item?.sheep === s) b.item = null
@@ -159,7 +159,6 @@ export function pickSheep(w: World, s: SheepT) {
     if (b.outs.length) b.outs = b.outs.filter((o) => o.item.sheep !== s)
   }
   s.state = 'held'
-  s.clicks = 0
 }
 
 /** Drop a held sheep: into a pen, onto an empty belt, into a free station — or it roams from there (the author: «игроку надо их перемещать»). */

@@ -300,6 +300,29 @@ describe('pens and sheep (GDD 5)', () => {
     run(w, SHEEP.grow + 1)
     expect(s.wool).toBe(1)
   })
+  it('a sheep half shorn by hand is carried with its clicks kept; a shearer shears it whole and its clicks go', () => {
+    const w = world()
+    const s = sheepOf(w)[0]!
+    s.wool = 1
+    shearClick(w, s)
+    shearClick(w, s)
+    pickSheep(w, s)
+    expect(s.state).toBe('held')
+    const p = pen0(w)
+    dropSheep(w, s, p.x + 1.5, p.y + 1.5)
+    expect([s.state, s.clicks]).toEqual(['pasture', 2])
+    shearClick(w, s)
+    expect([s.wool, s.clicks]).toEqual([0, 0])
+    // half shorn, it rides a belt into a shearer: shorn whole, it is free to walk out of its pen again
+    s.wool = 1
+    shearClick(w, s)
+    const [ax, ay] = anchorForInput('shearer', p.dir, p.exit.x, p.exit.y)
+    expect(place(w, 'shearer', ax, ay, p.dir)).toBe(true)
+    pickSheep(w, s)
+    dropSheep(w, s, ax + 0.5, ay + 0.5)
+    run(w, 5)
+    expect([s.wool < 1, s.clicks]).toEqual([true, 0])
+  })
   it('a sheep a station lets out with nothing on its way out roams off, and the station is free', () => {
     const w = world()
     res(w, Unlocks).cardQ.length = 0

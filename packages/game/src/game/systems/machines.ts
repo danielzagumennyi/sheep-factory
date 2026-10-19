@@ -80,6 +80,7 @@ function finishMachine(w: World, m: Building) {
         const kind = s.pink ? 'pwool' : 'wool'
         puff(w, m.x + 1, m.y + 1, s.pink ? LOOK.pinkFleece : LOOK.wool, 8)
         s.wool = 0
+        s.clicks = 0
         s.pink = false
         for (let i = 0; i < 2; i++) m.outs.push({ item: newItem(kind), dir: ((m.dir + 1) % 4) as 0 | 1 | 2 | 3 })
       } else if (def.station === 'feed') s.fed = true
