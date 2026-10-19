@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, RECIPE_ORDER, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
-import { anchorForInput, get, inCells, inGood, outCells, outGood, plotPrice, reachOf, whyNot } from './grid'
+import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pastureAt, plotPrice, reachOf, terr, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setRecipe, setSeed } from './actions/build'
-import { dropSheep, gather, handClick, shearClick } from './actions/hand'
+import { dropSheep, gather, handClick, pickSheep, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
+import { penIn } from './systems/sheep'
 import { dockAccept, nearestStall, openAsks, openLevel, sell, sellPrice, buy, buyPrice, stallX } from './systems/village'
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
-import { blankBuilding, createGameWorld, DEMO, Field, Flock, float, Fx, GameState, Market, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
+import { blankBuilding, createGameWorld, DEMO, makePen, Field, Flock, float, Fx, GameState, Market, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -15,8 +16,15 @@ afterEach(() => {
   worlds = []
 })
 /** A fresh long game with everything open, plenty of coins and the plots of rows 1–3 bought. */
+/** The first pen, where the sheep roam at the start, with all of them in it (as the game began before they roamed). */
+function penned(w: World) {
+  const p = makePen(w, START.pen.x, START.pen.y, START.pen.dir)
+  res(w, Flock).pastures.push(p)
+  for (const s of res(w, Flock).sheep) penIn(w, s, p)
+  return w
+}
 function world(opts: { all?: boolean } = { all: true }) {
-  const w = createGameWorld({ seed: 3 })
+  const w = penned(createGameWorld({ seed: 3 }))
   if (opts.all) {
     for (const b of TOOL_ORDER) res(w, Unlocks).unlocked.add(b)
     for (const r of RECIPE_ORDER) res(w, Unlocks).recipes.add(r)
@@ -203,7 +211,7 @@ describe('pens and sheep (GDD 5)', () => {
     expect(s.home).toBe(p.id)
   })
   it('before the feeder there is no food: a shorn sheep grows its fleece by itself; the feeder brings food in', () => {
-    const w = startWorld({ seed: 1 })
+    const w = penned(startWorld({ seed: 1 }))
     worlds.push(w)
     res(w, Unlocks).cardQ.length = 0
     expect(res(w, GameState).food).toBe(false)
@@ -218,30 +226,100 @@ describe('pens and sheep (GDD 5)', () => {
     run(w, SHEEP.grow + 1)
     expect(s.wool).toBe(0)
   })
-  it('the first level opens the shearer, and the belt once it stands; the market comes at its own level', () => {
+  it('the first level: the sheep roam and are shorn by hand; then the pen, then the shearer and the belt once it stands; trade at its own level', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
-    const un = res(w, Unlocks)
-    expect(un.cardQ).toEqual(['shearer'])
-    expect(un.unlocked.has('belt')).toBe(false)
+    const un = res(w, Unlocks),
+      gs = res(w, GameState)
+    expect(un.cardQ).toEqual(['shear'])
+    expect(un.unlocked.size).toBe(0)
+    expect(res(w, Flock).pastures).toEqual([])
+    expect(sheepOf(w).every((s) => s.state === 'roam' && s.wool === 1)).toBe(true)
     // the market takes goods from the start; its trading post comes only at its level
     expect(row(w)).toBeTruthy()
     expect(part(w, 'stall').length).toBe(MARKET.stalls.length)
     expect(part(w, 'buy')).toEqual([])
-    expect(res(w, GameState).trade).toBe(false)
+    expect(gs.trade).toBe(false)
+    // shorn by hand, the wool goes to the stock and the post's truck takes it from there: the pen's level opens
+    park(w)
+    for (let n = 0; n < 60 && gs.level === 0; n++) {
+      for (const s of sheepOf(w)) if (s.wool >= 1) for (let i = 0; i < 3; i++) shearClick(w, s)
+      run(w, 1)
+    }
+    expect(gs.level).toBe(1)
+    expect(un.unlocked.has('pen')).toBe(true)
+    expect(un.unlocked.has('shearer')).toBe(false)
+    // the shearer's level: once it stands on a pen's way out, the belt
+    openLevel(w, LEVELS.findIndex((L) => L.open.includes('shearer')))
     un.cardQ.length = 0
-    const p = res(w, Flock).pastures[0]!
+    expect(un.unlocked.has('belt')).toBe(false)
+    expect(place(w, 'pen', START.pen.x, START.pen.y, START.pen.dir)).toBe(true)
+    const p = pen0(w)
     const [ax, ay] = anchorForInput('shearer', p.dir, p.exit.x, p.exit.y)
     expect(place(w, 'shearer', ax, ay, p.dir)).toBe(true)
     expect(un.unlocked.has('belt')).toBe(true)
     expect(un.cardQ).toEqual(['belt'])
-    // no market to sell to yet
+    // no trade yet
     res(w, Stock).n.wool = 5
     expect(sell(w, 'wool', 5)).toBe(0)
     openLevel(w, LEVELS.findIndex((L) => L.open.includes('market')))
-    expect(res(w, GameState).trade).toBe(true)
+    expect(gs.trade).toBe(true)
     expect(part(w, 'buy').length).toBe(1)
     expect(sell(w, 'wool', 5)).toBe(5)
+  })
+  it('a sheep with no pen roams the own land: round buildings and pens, over belts, never off its land; built over, it runs off', () => {
+    const w = world()
+    const s = sheepOf(w)[0]!
+    // put down on the grass of own land it roams from there, in no pen
+    const free = (x: number, y: number) => owned(w, x, y) && !get(w, x, y) && !pastureAt(w, x, y) && !['rock', 'tree', 'water', 'bush'].includes(terr(w, x, y))
+    let at: [number, number] = [0, 0]
+    for (let y = 18; y >= 6 && !at[0]; y--) for (let x = 20; x < 30; x++) if (free(x, y) && free(x + 1, y) && free(x, y - 1)) at = [x, y]
+    pickSheep(w, s)
+    dropSheep(w, s, at[0] + 0.5, at[1] + 0.5)
+    expect(s.state).toBe('roam')
+    expect(s.home).toBe(0)
+    // belts and a machine about: for a minute it never stands on the machine, a pen or land not its own
+    place(w, 'belt', at[0] + 1, at[1], 0)
+    expect(place(w, 'carder', at[0] - 2, at[1] - 2, 0)).toBe(true)
+    const carder = get(w, at[0] - 2, at[1] - 2)!
+    for (let t = 0; t < 60; t += 1 / 60) {
+      stepSimulation(w)
+      const x = Math.floor(s.px),
+        y = Math.floor(s.py)
+      expect(owned(w, x, y) && !pastureAt(w, x, y) && get(w, x, y) !== carder, `${x},${y}`).toBe(true)
+    }
+    // built over, it runs to the nearest free ground at once
+    const [x, y] = [Math.floor(s.px), Math.floor(s.py)]
+    if (!get(w, x, y)) expect(place(w, 'mower', x, y, 0)).toBe(true)
+    stepSimulation(w)
+    expect(get(w, Math.floor(s.px), Math.floor(s.py))).toBeFalsy()
+    // grazing, its fleece grows by itself, food or not
+    res(w, GameState).food = true
+    for (let i = 0; i < 3; i++) shearClick(w, s)
+    expect(s.wool).toBe(0)
+    run(w, SHEEP.grow + 1)
+    expect(s.wool).toBe(1)
+  })
+  it('a sheep a station lets out with nothing on its way out roams off, and the station is free', () => {
+    const w = world()
+    res(w, Unlocks).cardQ.length = 0
+    const p = pen0(w)
+    const [ax, ay] = anchorForInput('shearer', p.dir, p.exit.x, p.exit.y)
+    expect(place(w, 'shearer', ax, ay, p.dir)).toBe(true)
+    run(w, 12)
+    const shearer = get(w, ax, ay)!
+    const out = sheepOf(w).filter((s) => s.state === 'roam')
+    expect(out.length).toBeGreaterThan(0)
+    for (const s of out) {
+      expect(s.home).toBe(0)
+      expect(s.wool).toBeLessThan(1)
+    }
+    expect(shearer.status).not.toBe('wait')
+    // carried back, it lives in the pen again
+    const s = out[0]!
+    pickSheep(w, s)
+    dropSheep(w, s, p.x + 1.5, p.y + 1.5)
+    expect([s.state, s.home]).toEqual(['pasture', p.id])
   })
   it('a shorn sheep grows its next fleece only once fed; the hand feeds it one hay from the stock', () => {
     const w = world()

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { TOOL_ORDER, type Dir } from './balance'
+import { START, TOOL_ORDER, type Dir } from './balance'
 import { anchorForInput, beltAutoDir, get, machineIns, outCells } from './grid'
 import { buySheep, place, remove, rotate } from './actions/build'
 import { pathDirs, routeCells } from './actions/path'
 import { stepSimulation } from './systems'
-import { createGameWorld, Field, Flock, GameState, Unlocks, key, newItem, res, stockOf, type PastureT, type World } from './world'
+import { penIn } from './systems/sheep'
+import { createGameWorld, Field, Flock, GameState, Unlocks, key, makePen, newItem, res, stockOf, type PastureT, type World } from './world'
 
 /**
  * Everything connects whatever order it is built in (the author: a building that «не работало, но после переустановки
@@ -18,8 +19,15 @@ afterEach(() => {
   for (const w of worlds) w.destroy()
   worlds = []
 })
+/** The first pen, where the sheep roam at the start, with all of them in it (as the game began before they roamed). */
+function penned(w: World) {
+  const p = makePen(w, START.pen.x, START.pen.y, START.pen.dir)
+  res(w, Flock).pastures.push(p)
+  for (const s of res(w, Flock).sheep) penIn(w, s, p)
+  return w
+}
 function world() {
-  const w = createGameWorld({ seed: 3 })
+  const w = penned(createGameWorld({ seed: 3 }))
   for (const b of TOOL_ORDER) res(w, Unlocks).unlocked.add(b)
   res(w, GameState).coins = 5000
   worlds.push(w)
@@ -133,7 +141,7 @@ describe('connections, in any order', () => {
       expect(sh.count, order).toBeGreaterThan(2)
       expect(res(w, Flock).sheep.filter((s) => s.state === 'pasture' && s.wool < 0.1).length, order).toBeGreaterThan(2)
       expect(
-        res(w, Flock).sheep.some((s) => s.state === 'waiting'),
+        res(w, Flock).sheep.some((s) => s.state === 'roam'),
         order,
       ).toBe(false)
     }
@@ -186,7 +194,7 @@ describe('connections, in any order', () => {
     expect(crossed).toBeGreaterThan(0)
     expect(mine.filter((s) => s.home === a.id).length).toBe(4)
     expect(mine.filter((s) => s.home === b.id).length).toBe(4)
-    expect(mine.some((s) => s.state === 'waiting')).toBe(false)
+    expect(mine.some((s) => s.state === 'roam')).toBe(false)
   })
   it('a splitter or a merger set on a line keeps its goods flowing', () => {
     const w = world()

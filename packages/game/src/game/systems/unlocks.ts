@@ -1,4 +1,4 @@
-import { BUILDINGS, GRID, LEVELS, LOW_LAND, ONCE_CARDS, type BuildingId, type CardId } from '../balance'
+import { BUILDINGS, GRID, LEVELS, LOW_LAND, ONCE_CARDS, type BuildingId, type CardId, type OpenId } from '../balance'
 import { owned, plotOnIsland, plotRes } from '../grid'
 import { Field, Flock, GameState, Unlocks, addMarket, key, res, unkey, type World } from '../world'
 
@@ -30,8 +30,10 @@ export function queueCard(w: World, id: CardId, alsoUnlock = true) {
  * Open a building (the workshop comes knowing the sweater), a recipe or trade (the market's trading post), with its card. The feeder brings
  * food into the game: from now on a shorn sheep has to eat before its fleece grows again.
  */
-export function unlock(w: World, id: BuildingId | 'valenki' | 'market') {
+export function unlock(w: World, id: OpenId) {
   const un = res(w, Unlocks)
+  // the first level's card: shearing by hand, nothing to build
+  if (id === 'shear') return queueCard(w, 'shear', false)
   if (id === 'market') {
     res(w, GameState).trade = true
     addMarket(w)

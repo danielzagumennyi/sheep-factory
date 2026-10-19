@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
-import { CAMERA, GRID, ITEMS, RECIPE_ORDER, TOOL_ORDER, type ItemId } from '@/game/balance'
+import { CAMERA, GRID, ITEMS, LEVELS, RECIPE_ORDER, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { buildPrice, get, outCells } from '@/game/grid'
+import { buildPrice, get, outCells, residents } from '@/game/grid'
 import { remove, rotate } from '@/game/actions/build'
 import { createBot, runBot } from '@/game/bot'
 import { buildShowcase } from '@/game/showcase'
@@ -13,7 +13,7 @@ import { FIXED_DT, isFrozen, stepSimulation } from '@/game/systems'
 import { openAsks } from '@/game/systems/village'
 import { hungry, loopHasFeeder } from '@/game/systems/sheep'
 import { startWorld } from '@/game/start'
-import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, stockOf, type World } from '@/game/world'
+import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, type World } from '@/game/world'
 import { BINDINGS, type Action } from '@/input/bindings'
 import { SLOTS, barOf, useAppStore } from '@/app/store'
 import { renderIcons } from './iconRender'
@@ -296,6 +296,9 @@ const _v = new Vector3()
 let autoTimer = 0
 let stressTimer = 0
 
+/** The level the shearer comes at: the first steps' hints run till it is done. */
+const SHEARER_LEVEL = LEVELS.findIndex((L) => L.open.includes('shearer'))
+
 function goalOf(world: World): GoalHud {
   const gs = res(world, GameState),
     flock = res(world, Flock),
@@ -303,19 +306,22 @@ function goalOf(world: World): GoalHud {
   if (gs.strayT > 0) return { tone: 'warn', icon: 'sheep', text: 'strayGoal' }
   // hungry sheep at home with no feeder with hay on their loop (food comes with the feeder)
   if (flock.sheep.some((s) => hungry(s) && !loopHasFeeder(world, penOf(world, s.home)!))) return { tone: 'warn', icon: 'feeder', text: 'hungryGoal' }
-  if (flock.sheep.some((s) => s.state === 'waiting')) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
-  // the first steps: the shearer on the pen's way out, the belt back in, the wool onto the truck
+  // the first steps: the roaming sheep shorn by hand, a pen they are carried into, the shearer on its way out, the belt
+  // back in, the wool on to the market
   const plant = [...res(world, Plant).b.values()]
-  if (gs.level === 0 && !plant.some((b) => b.type === 'shearer')) return { tone: 'plain', icon: 'shearer', text: 'shearerGoal' }
+  const roaming = flock.sheep.filter((s) => s.state === 'roam')
+  if (gs.level === 0 && roaming.some((s) => s.wool >= 1)) return { tone: 'plain', icon: 'shear', text: 'shearGoal' }
+  if (un.unlocked.has('pen') && !flock.pastures.length) return { tone: 'plain', icon: 'pen', text: 'penGoal' }
+  if (gs.level <= SHEARER_LEVEL && un.unlocked.has('shearer') && !plant.some((b) => b.type === 'shearer')) return { tone: 'plain', icon: 'shearer', text: 'shearerGoal' }
   if (un.unlocked.has('belt') && !plant.some((b) => b.type === 'belt')) return { tone: 'plain', icon: 'belt', text: 'loopGoal' }
+  if (roaming.length && flock.pastures.some((p) => residents(world, p) < p.cap)) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
   // the shearer's wool piling up beside it with nothing on its wool side: a belt takes it to the post
   const woolPiles = plant.some((b) => {
     if (b.type !== 'shearer' || !b.pile.length) return false
     const c = outCells(b).find((o) => o.d === (b.dir + 1) % 4)
     return !!c && !get(world, c.x, c.y)
   })
-  if (gs.level === 0 && woolPiles) return { tone: 'plain', icon: 'wool', text: 'woolGoal' }
-  if (gs.level === 0 && stockOf(world, 'wool')) return { tone: 'plain', icon: 'wool', text: 'postGoal' }
+  if (gs.level === SHEARER_LEVEL && woolPiles) return { tone: 'plain', icon: 'wool', text: 'woolGoal' }
   const a = openAsks(world).sort((p, q) => p.have / p.total - q.have / q.total)[0]
   return a ? { tone: 'plain', icon: a.kind, text: 'order', params: { have: a.have, total: a.total, kind: a.kind } } : null
 }

@@ -1,13 +1,15 @@
-import { DIRS, SHEEP, type Dir } from '../balance'
-import { get, inGrid, isStation, outCells, pastureAt, step } from '../grid'
-import { Flock, GameState, Plant, Rng, Time, key, newItem, pastureSpot, penOf, res, type Building, type PastureT, type SheepT, type World } from '../world'
+import { DIRS, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
+import { get, inGrid, isBeltLike, isStation, outCells, owned, pastureAt, step, terr } from '../grid'
+import { Flock, GameState, Plant, Rng, Time, key, newItem, pastureSpot, penOf, puff, res, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 
 /**
- * Sheep and pens (GDD 5). Until food comes into the game (the feeder's level) a shorn sheep grows its next fleece by
- * itself; from then on only once it has eaten: at a feeder on the loop, or from the hand. A fluffy sheep walks out
- * through its pen's exit by itself when a belt or a station stands there; so does a hungry one when its pen's loop has
- * a feeder with hay, to eat on its way round. Otherwise it waits in the pen. A pen takes in four sheep at most.
+ * Sheep and pens (GDD 5). A sheep with no pen roams the own land and grazes (ROAM): the game starts so, and a sheep a
+ * station lets out with no belt to take it roams off; the player carries it into a pen. In a pen, until food comes
+ * into the game (the feeder's level) a shorn sheep grows its next fleece by itself; from then on only once it has
+ * eaten: at a feeder on the loop, or from the hand. A fluffy sheep walks out through its pen's exit by itself when a
+ * belt or a station stands there; so does a hungry one when its pen's loop has a feeder with hay, to eat on its way
+ * round. Otherwise it waits in the pen. A pen takes in four sheep at most.
  */
 
 /** A sheep in its pen, shorn, that hasn't eaten. */
@@ -22,7 +24,112 @@ export function toPasture(w: World, s: SheepT, p: PastureT, x: number, y: number
   const t = pastureSpot(w, p)
   s.tx = t.x
   s.ty = t.y
-  s.waitAt = null
+}
+
+/** Ground a roaming sheep may stop on: own land with nothing built, no pen, none of ROAM's blocking ground. */
+export function grazeable(w: World, x: number, y: number) {
+  return inGrid(x, y) && owned(w, x, y) && !get(w, x, y) && !pastureAt(w, x, y) && !ROAM.blocking.includes(terr(w, x, y) as never)
+}
+/** Ground it may walk over: that, or a belt, a splitter or a merger (it steps over them). */
+function walkable(w: World, x: number, y: number) {
+  if (!inGrid(x, y) || !owned(w, x, y) || pastureAt(w, x, y) || ROAM.blocking.includes(terr(w, x, y) as never)) return false
+  const b = get(w, x, y)
+  return !b || isBeltLike(b)
+}
+/** A spot with free ground all round it, ROAM.room cells each way: a sheep there stands clear of fences and buildings. */
+const roomy = (w: World, x: number, y: number) =>
+  grazeable(w, Math.floor(x - ROAM.room), Math.floor(y - ROAM.room)) &&
+  grazeable(w, Math.floor(x + ROAM.room), Math.floor(y - ROAM.room)) &&
+  grazeable(w, Math.floor(x - ROAM.room), Math.floor(y + ROAM.room)) &&
+  grazeable(w, Math.floor(x + ROAM.room), Math.floor(y + ROAM.room))
+/** The straight way from one point to another is walkable all along. */
+function clearWay(w: World, x0: number, y0: number, x1: number, y1: number) {
+  const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 0.2)
+  for (let i = 1; i <= n; i++) if (!walkable(w, Math.floor(x0 + ((x1 - x0) * i) / n), Math.floor(y0 + ((y1 - y0) * i) / n))) return false
+  return true
+}
+/** The middle of the free ground nearest to a point; null when the own land has none. */
+export function nearestGround(w: World, x: number, y: number) {
+  const cx = Math.floor(x),
+    cy = Math.floor(y)
+  for (let r = 0; r < GRID.cols; r++) {
+    let best: { x: number; y: number } | null = null,
+      bd = Infinity
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !grazeable(w, cx + dx, cy + dy)) continue
+        const d = Math.hypot(cx + dx + 0.5 - x, cy + dy + 0.5 - y)
+        if (d < bd) {
+          bd = d
+          best = { x: cx + dx + 0.5, y: cy + dy + 0.5 }
+        }
+      }
+    if (best) return best
+  }
+  return null
+}
+
+/** A sheep put down, let out of a station or left with no pen roams from a point — from the nearest free ground if that is not. It belongs to no pen. */
+export function toRoam(w: World, s: SheepT, x: number, y: number) {
+  const at = grazeable(w, Math.floor(x), Math.floor(y)) ? { x, y } : nearestGround(w, x, y)
+  s.state = 'roam'
+  s.home = 0
+  s.via = null
+  if (at) {
+    s.px = at.x
+    s.py = at.y
+  }
+  s.tx = s.px
+  s.ty = s.py
+  s.wanderT = ROAM.rest
+}
+
+/** A roaming sheep: grazes and grows its fleece, now and then walks a little way to a spot it can reach straight. */
+function roam(w: World, s: SheepT, dt: number) {
+  if (s.wool < 1) {
+    s.wool = Math.min(1, s.wool + dt / SHEEP.grow)
+    // it has grazed: put into a pen, its next fleece still grows once without a meal
+    if (s.wool >= 1) s.fed = true
+  }
+  // built over, or a pen put down on it: off it runs to the nearest free ground
+  if (!walkable(w, Math.floor(s.px), Math.floor(s.py))) {
+    const at = nearestGround(w, s.px, s.py)
+    if (!at) return
+    puff(w, s.px, s.py, LOOK.wool, 3)
+    s.px = s.tx = at.x
+    s.py = s.ty = at.y
+    return
+  }
+  s.wanderT -= dt
+  if (s.wanderT <= 0) {
+    const rnd = res(w, Rng).next
+    s.wanderT = ROAM.rest + rnd() * ROAM.restMore
+    for (let i = 0; i < ROAM.tries; i++) {
+      const tx = s.px + (rnd() * 2 - 1) * ROAM.reach,
+        ty = s.py + (rnd() * 2 - 1) * ROAM.reach
+      if (!roomy(w, tx, ty) || !clearWay(w, s.px, s.py, tx, ty)) continue
+      s.tx = tx
+      s.ty = ty
+      break
+    }
+  }
+  const dx = s.tx - s.px,
+    dy = s.ty - s.py,
+    dist = Math.hypot(dx, dy)
+  if (dist <= 0.02) return
+  const v = Math.min(dist, SHEEP.walk * dt),
+    nx = s.px + (dx / dist) * v,
+    ny = s.py + (dy / dist) * v
+  // something was built on its way: it stops and looks for another spot
+  if (!walkable(w, Math.floor(nx), Math.floor(ny))) {
+    s.tx = s.px
+    s.ty = s.py
+    s.wanderT = Math.min(s.wanderT, 0.5)
+    return
+  }
+  s.px = nx
+  s.py = ny
+  s.face = (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3) as Dir
 }
 
 /**
@@ -41,16 +148,20 @@ export function crossPen(w: World, s: SheepT, p: PastureT, x: number, y: number)
   const [dx, dy] = DIRS[p.dir]!
   s.tx = p.exit.x - dx + 0.5
   s.ty = p.exit.y - dy + 0.5
-  s.waitAt = null
   return true
 }
 
-export function sendHome(w: World, s: SheepT) {
-  const flock = res(w, Flock)
-  const p = penOf(w, s.home) ?? flock.pastures[0]
-  if (!p) return
+/** A sheep into a pen, at a spot of its own there. */
+export function penIn(w: World, s: SheepT, p: PastureT) {
   const t = pastureSpot(w, p)
   toPasture(w, s, p, t.x, t.y)
+}
+
+/** A sheep back to its pen; one with no pen (or whose pen is gone) roams from where it is. */
+export function sendHome(w: World, s: SheepT) {
+  const p = penOf(w, s.home)
+  if (!p) return toRoam(w, s, s.px, s.py)
+  penIn(w, s, p)
 }
 
 /** The feeder on the way out of a pen, before the way comes back in — through any other pens the loop crosses. */
@@ -100,6 +211,10 @@ export function sheepSystem(w: World, dt: number) {
       crossing(w, s, dt)
       continue
     }
+    if (s.state === 'roam') {
+      roam(w, s, dt)
+      continue
+    }
     if (s.state !== 'pasture') continue
     const p = penOf(w, s.home)
     if (!p) continue
@@ -138,9 +253,6 @@ export function sheepSystem(w: World, dt: number) {
       s.face = (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3) as Dir
     }
   }
-  // a sheep waiting beside a removed station goes home
-  const plant = res(w, Plant)
-  for (const s of flock.sheep) if (s.state === 'waiting' && s.waitAt && !plant.b.get(s.waitAt)) sendHome(w, s)
 }
 
 /** A sheep crossing another pen walks briskly to its way out and leaves by it as soon as the gate is free. */

@@ -75,12 +75,13 @@ export interface Building {
 }
 
 /** `transit`: crossing a pen that is not its own, from its way in to its way out, on the way home round a shared loop. */
-export type SheepState = 'pasture' | 'belt' | 'machine' | 'waiting' | 'held' | 'transit'
+/** In its pen, on a belt, in a station, roaming the own land (GDD 5), in the hand, crossing another pen on its way home. */
+export type SheepState = 'pasture' | 'belt' | 'machine' | 'roam' | 'held' | 'transit'
 export interface SheepT {
   id: number
   name: string
   wool: number
-  /** The pen it lives in (its id). */
+  /** The pen it lives in (its id; 0 for one that never had one). A sheep roaming out of its pen keeps its place there. */
   home: number
   /** The pen it is crossing on its way home (state `transit`), or null. */
   via: number | null
@@ -97,7 +98,6 @@ export interface SheepT {
   /** Its fleece went through the dyer: it shears pink. */
   pink: boolean
   face: Dir
-  waitAt: string | null
 }
 
 /** A pen (GDD 5): a 3×3 building of its own, with a way out and a way in, for PEN.cap sheep. */
@@ -356,8 +356,8 @@ export function emptyWorld(opts: WorldOptions = {}): World {
 }
 
 /**
- * A fresh long game (docs/05-REWORK.md): the map's terrain, the four central plots, the first pen with its fluffy
- * sheep, the market. The village's first level (asks, docks, cards) is opened by `startWorld`.
+ * A fresh long game (docs/05-REWORK.md): the map's terrain, the four central plots, the fluffy sheep roaming them (no
+ * pen yet: the author, 19.10.2026), the market. The village's first level (asks, cards) is opened by `startWorld`.
  */
 export function createGameWorld(opts: WorldOptions = {}): World {
   const world = emptyWorld(opts)
@@ -374,9 +374,11 @@ export function createGameWorld(opts: WorldOptions = {}): World {
     f.forSale.add(key(Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)))
   }
   addMarket(world)
-  const p = makePen(world, START.pen.x, START.pen.y, START.pen.dir)
-  res(world, Flock).pastures.push(p)
-  for (let i = 0; i < START.sheep; i++) res(world, Flock).sheep.push(makeSheep(world, p.id, true))
+  const rnd = res(world, Rng).next
+  for (let i = 0; i < START.sheep; i++) {
+    const at = { x: START.pen.x + 0.5 + rnd() * 3, y: START.pen.y + 0.5 + rnd() * 3 }
+    res(world, Flock).sheep.push(makeSheep(world, 0, true, at))
+  }
   return world
 }
 
@@ -443,19 +445,22 @@ export function pastureSpot(world: World, p: PastureT) {
   return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
 }
 
-/** A new sheep in pen `home`: fluffy (the flock a game starts with, a bought one) or shorn; hungry only once sheep need food. */
-export function makeSheep(world: World, home: number, fluffy = true): SheepT {
+/**
+ * A new sheep in pen `home`: fluffy (the flock a game starts with, a bought one) or shorn; hungry only once sheep need
+ * food. With no pen (`home` 0) it roams from `at`.
+ */
+export function makeSheep(world: World, home: number, fluffy = true, at0?: { x: number; y: number }): SheepT {
   const gs = res(world, GameState),
     flock = res(world, Flock)
-  const p = penOf(world, home)!
-  const at = pastureSpot(world, p)
+  const p = penOf(world, home)
+  const at = p ? pastureSpot(world, p) : (at0 ?? { x: START.pen.x + 1.5, y: START.pen.y + 1.5 })
   return {
     id: ++gs.uid,
     name: SHEEP_NAMES[flock.sheep.length % SHEEP_NAMES.length]!,
     wool: fluffy ? 1 : 0,
     home,
     via: null,
-    state: 'pasture',
+    state: p ? 'pasture' : 'roam',
     px: at.x,
     py: at.y,
     tx: at.x,
@@ -466,7 +471,6 @@ export function makeSheep(world: World, home: number, fluffy = true): SheepT {
     fed: !gs.food,
     pink: false,
     face: 0,
-    waitAt: null,
   }
 }
 

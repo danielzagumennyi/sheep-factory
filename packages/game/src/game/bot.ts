@@ -1,5 +1,5 @@
 import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type Dir, type ItemId } from './balance'
-import { get, isBeltLike, owned, plotAdjacent, residents, reachCells, sowable, targetOk } from './grid'
+import { get, isBeltLike, owned, plotAdjacent, reachCells, residents, roomFor, sowable, targetOk } from './grid'
 import { buyPlot, buySheep, place, rotate } from './actions/build'
 import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from './actions/hand'
 import { PLAN, applyStep, finishJob, landReady, pieceCost, pieces, plotsToBuy } from './plan'
@@ -77,13 +77,17 @@ export function createBot(w: World) {
     const flock = res(w, Flock)
     // shear by hand only a pen with nothing on its way out yet (no loop); feed where no feeder is on its loop
     for (const s of flock.sheep) {
-      const p = flock.pastures.find((q) => q.id === s.home)!
-      // a sheep waiting beside a shearer with no belt yet: taken home by hand
-      if (s.state === 'waiting') {
-        pickSheep(w, s)
-        dropSheep(w, s, p.x + 1.5, p.y + 1.5)
+      // a roaming sheep: carried into a pen with room; with none yet, shorn where it grazes
+      if (s.state === 'roam') {
+        const p = flock.pastures.find((q) => roomFor(w, q, s))
+        if (p) {
+          pickSheep(w, s)
+          dropSheep(w, s, p.x + 1.5, p.y + 1.5)
+        } else if (s.wool >= 1) for (let i = s.clicks; i < 3; i++) shearClick(w, s)
+        continue
       }
       if (s.state !== 'pasture') continue
+      const p = flock.pastures.find((q) => q.id === s.home)!
       const ex = get(w, p.exit.x, p.exit.y)
       if (s.wool >= 1 && !ex) for (let i = s.clicks; i < 3; i++) shearClick(w, s)
       if (hungry(s) && !loopHasFeeder(w, p)) {

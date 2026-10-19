@@ -16,6 +16,7 @@ import {
   addMarket,
   emptyWorld,
   key,
+  penOf,
   res,
   type AskT,
   type Building,
@@ -38,7 +39,7 @@ import {
  */
 
 /** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 3
+export const SAVE_VERSION = 4
 /** The level the market starts trading at (a version-1 save knew no `trade`). */
 const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
@@ -60,6 +61,23 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
       if (!a) continue
       t.tx = stallX(a.stall) - 0.5
       if (t.state !== 'arrive' && t.state !== 'leave') t.x = t.tx
+    }
+    return s
+  },
+  // 4: sheep roam (19.10.2026). A first level of shearing by hand came before the others and the pen's level before the
+  // shearer's, so a level is now one later — the shearer's (then first) is now third; what the levels up to it open is
+  // open. A sheep that waited beside a station roams
+  3: (g) => {
+    const s = g as GameSave
+    const old = s.gs.level
+    s.gs = { ...s.gs, level: old === 0 ? 2 : old === 1 ? 1 : old + 1 }
+    for (const L of LEVELS.slice(0, s.gs.level + 1))
+      for (const id of [...L.open, ...(L.after ? [L.after.open] : [])]) if (id in BUILDINGS && !s.unlocks.unlocked.includes(id as BuildingId)) s.unlocks.unlocked.push(id as BuildingId)
+    if (!s.unlocks.seen.includes('shear')) s.unlocks.seen.push('shear')
+    for (const q of s.flock.sheep) {
+      const sh = q as SheepT & { waitAt?: string | null }
+      if ((sh.state as string) === 'waiting') Object.assign(sh, { state: 'roam', home: 0, tx: sh.px, ty: sh.py })
+      delete sh.waitAt
     }
     return s
   },
@@ -283,6 +301,6 @@ function fill(w: World, g: GameSave) {
   Object.assign(res(w, Ui), { recipe: g.ui.recipe, seed: g.ui.seed })
   Object.assign(res(w, Stats), g.stats)
   res(w, Rng).next.state = g.rng
-  // a sheep that was in the hand walks home; one whose pen is gone goes to the first
-  for (const s of flock.sheep) if (s.state === 'held' || !flock.pastures.some((p) => p.id === s.home)) sendHome(w, s)
+  // a sheep that was in the hand walks home; one in a pen that is gone roams
+  for (const s of flock.sheep) if (s.state === 'held' || (s.state === 'pasture' && !penOf(w, s.home))) sendHome(w, s)
 }

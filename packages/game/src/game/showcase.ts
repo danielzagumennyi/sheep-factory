@@ -2,6 +2,8 @@ import { GRID, PEN, RECIPE_ORDER, TOOL_ORDER } from './balance'
 import { createBot } from './bot'
 import { PLAN, applyJob } from './plan'
 import { stepSimulation } from './systems'
+import { roomFor } from './grid'
+import { penIn } from './systems/sheep'
 import { Field, Flock, GameState, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
 
 /**
@@ -27,6 +29,11 @@ export function buildShowcase(w: World, warmup = 90) {
   addMarket(w)
   for (const j of PLAN) applyJob(w, j, true)
   const flock = res(w, Flock)
+  // the sheep that roamed at the start live in pens on a finished farm
+  for (const s of flock.sheep) {
+    const p = s.state === 'roam' ? flock.pastures.find((q) => roomFor(w, q, s)) : null
+    if (p) penIn(w, s, p)
+  }
   for (const p of flock.pastures) while (flock.sheep.filter((s) => s.home === p.id).length < PEN.cap) flock.sheep.push(makeSheep(w, p.id, true))
   keepFull(w)
   un.cardQ.length = 0

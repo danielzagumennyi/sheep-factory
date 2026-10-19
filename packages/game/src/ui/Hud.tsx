@@ -732,7 +732,7 @@ function NewCard() {
   const menuOver = useAppStore((s) => s.menuOver)
   if (!card || menuOver) return null
   const c = CARD_TEXT[card]
-  const icon = card === 'market' ? 'coin' : card === 'land' || card === 'island' ? 'meadow' : card === 'chapter' ? 'sheep' : card
+  const icon = card === 'market' ? 'coin' : card === 'land' || card === 'island' ? 'meadow' : card === 'chapter' || card === 'shear' ? 'sheep' : card
   const close = () => {
     res(world, Unlocks).cardQ.shift()
     useHudStore.getState().set({ card: res(world, Unlocks).cardQ[0] ?? null })

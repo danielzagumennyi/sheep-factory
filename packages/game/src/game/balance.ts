@@ -26,9 +26,9 @@ export interface GrowDef {
  * straight down; then the far row. The new plots hold fresh deposits, for sale.
  */
 export const ISLAND_GROW: readonly GrowDef[] = [
-  { level: 6, right: 40 },
-  { level: 11, right: 48 },
-  { level: 13, top: 0 },
+  { level: 7, right: 40 },
+  { level: 12, right: 48 },
+  { level: 14, top: 0 },
 ]
 
 /** The long game is kept as it goes (app/saves.ts): every this many seconds, besides when the page is hidden or left. */
@@ -88,6 +88,14 @@ export const SHEEP = {
   transit: 1.4,
   transitMax: 2,
 } as const
+
+/**
+ * A sheep with no pen roams the own land (the author, 19.10.2026: «овцы вообще просто бегают по всей территории»): to a
+ * spot up to `reach` cells away that it can walk to in a straight line (`tries` spots looked at), with free ground
+ * `room` cells round it so it stands clear of fences and buildings; there it grazes `rest` seconds and up to `restMore` more. It walks round buildings, pens and the `blocking` ground and steps over
+ * belts without stopping on them; built over, it runs to the nearest free ground. Grazing, its fleece grows by itself.
+ */
+export const ROAM = { reach: 3, tries: 8, room: 0.3, rest: 2, restMore: 3, blocking: ['rock', 'tree', 'water', 'bush'] as readonly TerrainId[] } as const
 
 /**
  * A pen is a building of its own (GDD 5): 3×3, any number of them, each for four sheep (the author, 17.10.2026: «в одном
@@ -528,8 +536,10 @@ export type ClientId = 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fai
 /** The clients, each with its truck, in the order the village meets them. */
 export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
 
-/** «Новое» cards: one per thing a level opens (its id), and a few hints. */
-export type CardId = BuildingId | 'valenki' | 'market' | 'land' | 'island' | 'chapter'
+/** «Новое» cards: one per thing a level opens (its id), and a few hints; `shear` is the first level's, shearing by hand. */
+export type CardId = BuildingId | 'valenki' | 'market' | 'shear' | 'land' | 'island' | 'chapter'
+/** What a level may open: a building, the felt boots, trade, or the first level's card on shearing by hand. */
+export type OpenId = BuildingId | 'valenki' | 'market' | 'shear'
 /** Cards shown once per game, not once per run. */
 export const ONCE_CARDS: readonly CardId[] = ['land']
 
@@ -538,19 +548,21 @@ export const ONCE_CARDS: readonly CardId[] = ['land']
  * what the clients ask. A level is done when every ask is (the economy model showed why: by coins alone raw wool
  * would do). A client whose ask is done takes more of anything at the market's price.
  *
- * Every part of the game comes in its turn (the author, 17.10.2026): the first level teaches shearing only — the
- * shearer, and once it stands the belt that brings the sheep back (`after`); no food and no market yet. Pens and sheep
- * come apart, the market later, and food only with the feeder: until then a shorn sheep grows its fleece by itself.
+ * Every part of the game comes in its turn (the author, 17.10.2026): the first level teaches shearing by hand only —
+ * the sheep roam, nothing to build (the author, 19.10.2026); then the pen they are carried into; then the shearer on
+ * its way out, and once it stands the belt that brings the sheep back (`after`). Buying sheep comes apart, the
+ * trading post later, and food only with the feeder: until then a shorn sheep grows its fleece by itself.
  */
 export interface LevelDef {
-  open: readonly (BuildingId | 'valenki' | 'market')[]
+  open: readonly OpenId[]
   /** One more thing within the level, once the player has placed the first (the belt, after the shearer). */
   after?: { placed: BuildingId; open: BuildingId }
   asks: readonly (readonly [ClientId, ItemId, number])[]
 }
 export const LEVELS: readonly LevelDef[] = [
-  { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, asks: [['post', 'wool', 10]] },
-  { open: ['pen'], asks: [['post', 'wool', 30]] },
+  { open: ['shear'], asks: [['post', 'wool', 10]] },
+  { open: ['pen'], asks: [['post', 'wool', 20]] },
+  { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, asks: [['post', 'wool', 30]] },
   { open: ['sheep'], asks: [['post', 'wool', 40]] },
   {
     open: ['carder'],
@@ -667,8 +679,8 @@ export const AFTER = { grow: 1.3 } as const
 // ---------------------------------------------------------------- the long game's map (GDD 2, 6.2)
 
 /**
- * How the game starts: coins for the shearer and the belt loop that brings its sheep back, the first pen with four
- * fluffy sheep in it, and the four central plots.
+ * How the game starts: coins for the first pen, the shearer and the belt loop that brings its sheep back; four fluffy
+ * sheep roaming round where the first pen will stand (`pen`, the bot's), and the four central plots.
  */
 export const START = {
   coins: 80,

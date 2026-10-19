@@ -64,10 +64,10 @@ export function Flock3D() {
         continue
       }
       seen.add(s.id)
-      const hop = (s.state === 'pasture' || s.state === 'transit') && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
+      const hop = (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam') && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
       // the whole sheep: where it stands, which way it faces, a waddle while it walks
       const base = poseOf(s.id).base
-      base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : 0) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
+      base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0)) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
       const pose = poseOf(s.id)
       pose.legs.copy(base)
       meshes.legs.setMatrixAt(nl++, pose.legs)
@@ -84,7 +84,7 @@ export function Flock3D() {
         meshes.skin.setMatrixAt(ns++, pose.fleece)
       }
       // a slow nod while it grazes
-      const nod = 0.2 + (s.state === 'pasture' && !hop ? Math.sin(t * 1.3 + s.id * 1.7) * 0.1 : 0)
+      const nod = 0.2 + ((s.state === 'pasture' || s.state === 'roam') && !hop ? Math.sin(t * 1.3 + s.id * 1.7) * 0.1 : 0)
       pose.head.multiplyMatrices(base, _m.compose(_p.set(0.34, 0.45, 0), _q.setFromEuler(_e.set(0, 0, nod)), _s.set(0.78, 0.78, 0.78)))
       meshes.head.setMatrixAt(nh++, pose.head)
     }
@@ -118,7 +118,7 @@ function poseOf(id: number): SheepPose {
   return p
 }
 
-/** A sheep's bubble — ready to shear, or waiting to be taken home — following it; what the pasture lacks shows over the pasture. */
+/** A sheep's bubble — ready to shear, in a pen or roaming — following it; what the pasture lacks shows over the pasture. */
 function SheepBubble({ s }: { s: SheepT }) {
   const g = useRef<Group>(null)
   const [need, setNeed] = useState('')
@@ -127,8 +127,8 @@ function SheepBubble({ s }: { s: SheepT }) {
     const spot = frame.sheep.get(s)
     if (!g.current) return
     g.current.visible = !!spot && !spot.inMachine
-    if (spot) g.current.position.set(spot.x, s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : 0, spot.z)
-    const n = s.state === 'pasture' ? (s.wool >= 1 ? 'shear' : '') : s.state === 'waiting' ? 'sheep' : ''
+    if (spot) g.current.position.set(spot.x, s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0), spot.z)
+    const n = (s.state === 'pasture' || s.state === 'roam') && s.wool >= 1 ? 'shear' : ''
     if (n !== need) setNeed(n)
     if (s.clicks !== clicks) setClicks(s.clicks)
   })
@@ -137,7 +137,7 @@ function SheepBubble({ s }: { s: SheepT }) {
       {(need || clicks > 0) && (
         <Html position={[0, 0.9, 0]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
           <div className={'bubble bubble--' + (need || 'shear')}>
-            {need === 'sheep' ? '?' : need ? <Icon kind={need} size={16} /> : null}
+            {need ? <Icon kind={need} size={16} /> : null}
             {clicks > 0 && (
               <span className="bubble__clicks">
                 {Array.from({ length: HAND.shearClicks }, (_, i) => (

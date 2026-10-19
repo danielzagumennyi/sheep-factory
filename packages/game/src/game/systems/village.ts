@@ -90,7 +90,7 @@ export function startVillage(w: World) {
 }
 
 /** Every card the game can show: the buildings, the felt boots, trade, the hints, the chapter. */
-const ALL_CARDS: readonly CardId[] = [...(Object.keys(BUILDINGS) as CardId[]), 'valenki', 'market', 'land', 'island', 'chapter']
+const ALL_CARDS: readonly CardId[] = [...(Object.keys(BUILDINGS) as CardId[]), 'valenki', 'market', 'shear', 'land', 'island', 'chapter']
 
 /**
  * The endless mode (the author, 19.10.2026: «бесконечный режим где сразу всё доступно»): all that the levels open is

@@ -77,7 +77,8 @@ export const CLIENT_NAMES: Readonly<Record<ClientId, Text>> = {
 export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = {
   shearer: { title: { ru: 'Стригальня', en: 'Shearer' }, text: { ru: 'Ставь на выход загона', en: 'Put it on the pen’s way out' } },
   belt: { title: { ru: 'Лента', en: 'Belt' }, text: { ru: 'Петля от стригальни обратно во вход', en: 'A loop from the shearer back in' } },
-  pen: { title: { ru: 'Загон', en: 'Pen' }, text: { ru: 'Новый дом для четырёх овец', en: 'A new home for four sheep' } },
+  pen: { title: { ru: 'Загон', en: 'Pen' }, text: { ru: 'Поставь и перетащи туда овец', en: 'Place it, drag the sheep in' } },
+  shear: { title: { ru: 'Стрижка', en: 'Shearing' }, text: { ru: 'Три клика по пушистой овце', en: 'Three clicks on a fluffy sheep' } },
   sheep: { title: { ru: 'Овцы', en: 'Sheep' }, text: { ru: 'Купи овцу и посели в загон', en: 'Buy a sheep, put it in a pen' } },
   mower: { title: { ru: 'Сенокос', en: 'Mower' }, text: { ru: 'Косит покос вокруг. Скошенное исчезает', en: 'Mows around itself. Mown cells go' } },
   feeder: { title: { ru: 'Овцы едят', en: 'Sheep eat' }, text: { ru: 'Кормушка на петлю, сено справа', en: 'A feeder on the loop, hay from the right' } },

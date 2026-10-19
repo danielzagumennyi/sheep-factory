@@ -1,4 +1,4 @@
-import { BUILDINGS, GRID, PEN, PLOTS, dimsOf, type BuildingId, type Dir, type RecipeId } from './balance'
+import { BUILDINGS, GRID, PEN, PLOTS, START, dimsOf, type BuildingId, type Dir, type RecipeId } from './balance'
 import { get, plotOnIsland, plotPrice } from './grid'
 import { buyPlot, place, remove, setRecipe } from './actions/build'
 import { Field, Flock, GameState, key, res, type SplitRule, type World } from './world'
@@ -83,7 +83,8 @@ const downBranch = (px: number, py: number, m: BuildingId): Step[] => [
 ]
 
 export const PLAN: readonly Job[] = [
-  // ---------------------------------------------------------------- A, the first pen (11,11)
+  // ---------------------------------------------------------------- A, the first pen (11,11), where the sheep roam at the start
+  { id: 'A.pen', needs: ['pen'], steps: [{ pen: [START.pen.x, START.pen.y], d: START.pen.dir }] },
   { id: 'A.shearer', needs: ['shearer'], steps: [{ b: 'shearer', x: 14, y: 11, d: 0 }] },
   {
     id: 'A.loop',

@@ -33,9 +33,10 @@ export const UI = {
   // ---- goal line ----
   strayGoal: { ru: 'Груз на пути овец', en: 'Goods in the sheep lane' },
   hungryGoal: { ru: 'Овцам нужна кормушка с сеном', en: 'Sheep need a feeder with hay' },
-  waitingGoal: { ru: 'Верни овцу в загон', en: 'Take the sheep home' },
+  waitingGoal: { ru: 'Перетащи овцу в загон', en: 'Drag the sheep into a pen' },
+  shearGoal: { ru: 'Стриги пушистых овец', en: 'Shear the fluffy sheep' },
+  penGoal: { ru: 'Поставь загон', en: 'Put down a pen' },
   shearerGoal: { ru: 'Стригальню — на выход загона', en: 'The shearer on the pen’s way out' },
-  postGoal: { ru: 'Отдай шерсть на рынке', en: 'Hand the wool in at the market' },
   loopGoal: { ru: 'Лента от стригальни во вход', en: 'A belt from the shearer back in' },
   woolGoal: { ru: 'Шерсть — лентой к рынку', en: 'Belt the wool to the market' },
   // ---- popups ----

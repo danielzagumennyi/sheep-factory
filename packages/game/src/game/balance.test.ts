@@ -14,10 +14,13 @@ describe('the village (GDD 7–8)', () => {
       if (L.after) expect(L.open, 'opened by what it opens').toContain(L.after.placed)
     }
     for (const t of TOOL_ORDER) expect(seen.has(t), t).toBe(true)
-    // the first level teaches shearing only: no food (the feeder) and no market until later, sheep apart from pens
+    // the first level teaches shearing by hand only, the sheep roaming; then the pen, then the shearer with its belt;
+    // no food (the feeder) and no trade until later, buying sheep apart from pens
     const at = (id: string) => LEVELS.findIndex((L) => L.open.includes(id as never) || L.after?.open === id)
-    expect(LEVELS[0]!.open).toEqual(['shearer'])
-    expect(LEVELS[0]!.after?.open).toBe('belt')
+    expect(LEVELS[0]!.open).toEqual(['shear'])
+    expect(at('pen')).toBe(1)
+    expect(at('shearer')).toBe(2)
+    expect(LEVELS[2]!.after?.open).toBe('belt')
     expect(at('pen')).toBeLessThan(at('sheep'))
     expect(at('market')).toBeGreaterThan(at('sheep'))
     expect(at('feeder')).toBeGreaterThan(at('mower'))

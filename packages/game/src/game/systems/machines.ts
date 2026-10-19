@@ -1,7 +1,8 @@
-import { BELT, BUILDINGS, GRID, LOOK, PRODUCERS, SEED, SHEEP, SOW, type BuildingId, type ResId } from '../balance'
+import { BELT, BUILDINGS, LOOK, PRODUCERS, SEED, SHEEP, SOW, type BuildingId, type ResId } from '../balance'
 import { freeCell, get, inGrid, isMachine, jobsOf, outCells, pastureAt, reachOf, sowable } from '../grid'
 import { Field, GameState, Plant, key, newItem, puff, res, unkey, type Building, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
+import { toRoam } from './sheep'
 
 /**
  * Machines (GDD 4.3). A machine starts a job when its inputs hold one of its jobs whole; a producer takes one unit from
@@ -97,7 +98,7 @@ function finishMachine(w: World, m: Building) {
 /**
  * One finished output tries to leave. It goes to whatever takes it on an output cell (a belt, a pen, a dock, a
  * machine); a full receiver makes it wait. With nothing there it drops onto a small pile on a free output cell. A sheep
- * with nowhere to go waits beside the station for the player.
+ * with nowhere to go roams off over the own land (the author, 19.10.2026: «просто дальше бегают по всей территории»).
  */
 function pushOut(w: World, m: Building, o: Building['outs'][number]) {
   const cells = outCells(m).filter((c) => c.d === o.dir)
@@ -105,12 +106,9 @@ function pushOut(w: World, m: Building, o: Building['outs'][number]) {
     const c = cells[0]!
     const s = o.item.sheep
     if (!(inGrid(c.x, c.y) && get(w, c.x, c.y)) && !pastureAt(w, c.x, c.y)) {
-      s.state = 'waiting'
-      s.px = Math.min(GRID.cols - 0.3, Math.max(0.3, c.x + 0.5))
-      s.py = Math.min(GRID.rows - 0.3, Math.max(0.3, c.y + 0.5))
-      s.waitAt = key(m.x, m.y)
-      m.status = 'wait'
-      return false
+      toRoam(w, s, c.x + 0.5, c.y + 0.5)
+      m.status = ''
+      return true
     }
     const ok = tryPush(w, o.item, c.sx, c.sy, o.dir)
     m.status = ok ? '' : 'jam'

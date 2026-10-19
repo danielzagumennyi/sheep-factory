@@ -3,7 +3,7 @@ import { get, inGrid, isBeltLike, isStation, owned, pastureAt, plotOf, plotPrice
 import { Field, Flock, GameState, Plant, Stats, Ui, float, key, newItem, puff, res, stockAdd, stockTake, toStock, type Building, type SheepT, type World } from '../world'
 import { enterBelt, machineAccept } from '../systems/belts'
 import { takeRes } from '../systems/machines'
-import { hungry, sendHome, toPasture } from '../systems/sheep'
+import { hungry, sendHome, toPasture, toRoam } from '../systems/sheep'
 import { pileHere } from './build'
 
 /**
@@ -18,7 +18,7 @@ export function sheepAt(w: World, x: number, y: number): SheepT | null {
   let best: SheepT | null = null,
     bd: number = SHEEP.pickR
   for (const s of res(w, Flock).sheep) {
-    if (s.state !== 'pasture' && s.state !== 'transit' && s.state !== 'waiting' && s.state !== 'belt') continue
+    if (s.state !== 'pasture' && s.state !== 'transit' && s.state !== 'roam' && s.state !== 'belt') continue
     const r = s.wool >= 1 ? SHEEP.pickRFluffy : SHEEP.pickR,
       d = Math.hypot(s.px - x, s.py - y)
     if (d < r && d < bd + (r - SHEEP.pickR)) {
@@ -162,7 +162,7 @@ export function pickSheep(w: World, s: SheepT) {
   s.clicks = 0
 }
 
-/** Drop a held sheep: into a pen, onto an empty belt, into a free station — or it walks home. */
+/** Drop a held sheep: into a pen, onto an empty belt, into a free station — or it roams from there (the author: «игроку надо их перемещать»). */
 export function dropSheep(w: World, s: SheepT, px: number, py: number) {
   const x = Math.floor(px),
     y = Math.floor(py)
@@ -185,5 +185,6 @@ export function dropSheep(w: World, s: SheepT, px: number, py: number) {
     return
   }
   if (b && isStation(b) && !b.slot && machineAccept(w, b, it, 'sheep')) return
-  sendHome(w, s)
+  // anywhere else on the own land it roams from where it was put down; off it, from the nearest free ground
+  toRoam(w, s, px, py)
 }

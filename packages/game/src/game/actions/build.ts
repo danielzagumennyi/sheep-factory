@@ -118,7 +118,7 @@ function stand(w: World, b: Building, cells: [number, number][]) {
   if (b.type !== 'belt') puff(w, b.x + b.w / 2, b.y + b.h / 2, LOOK.dust, 10)
 }
 
-/** Take a building off the field, everything in it kept; sheep waiting at it go home, its pile goes to the stock. */
+/** Take a building off the field, everything in it kept; its pile goes to the stock. */
 function takeOff(w: World, b: Building) {
   const plant = res(w, Plant)
   res(w, GameState).plantVersion++
@@ -126,7 +126,6 @@ function takeOff(w: World, b: Building) {
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
   for (const q of b.pile) toStock(w, q)
   b.pile = []
-  for (const s of res(w, Flock).sheep) if (s.state === 'waiting' && s.waitAt === key(b.x, b.y)) sendHome(w, s)
 }
 
 /**
@@ -215,7 +214,6 @@ export function remove(w: World, x: number, y: number): boolean {
   res(w, GameState).plantVersion++
   plant.b.delete(key(x, y))
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
-  for (const s of res(w, Flock).sheep) if (s.state === 'waiting' && s.waitAt === key(x, y)) sendHome(w, s)
   const ui = res(w, Ui)
   if (ui.sel?.kind === 'b' && ui.sel.key === key(x, y)) ui.sel = null
   sound(w, 'remove')
