@@ -1,5 +1,5 @@
 import { BUILDINGS, DIRS, GRID, type Dir } from '../balance'
-import { beltAutoDir, freeCell, get, inGrid, isBeltLike, outCells, owned, pastureAt, step, targetOk, terr } from '../grid'
+import { beltAutoDir, freeCell, get, inGrid, isBeltLike, isStation, outCells, pastureAt, step, targetOk } from '../grid'
 import { Flock, GameState, res, type World } from '../world'
 import { noMoney, place } from './build'
 
@@ -27,7 +27,7 @@ export function routeCells(w: World, a: Cell, b: Cell): Cell[] | null {
   let out: Cell[] | null = null
   if (a.x === b.x && a.y === b.y) out = [{ x: a.x, y: a.y }]
   else {
-    const pass = (x: number, y: number) => (x === b.x && y === b.y) || freeCell(w, x, y) || (terr(w, x, y) === 'bridge' && owned(w, x, y) && !get(w, x, y))
+    const pass = (x: number, y: number) => (x === b.x && y === b.y) || freeCell(w, x, y)
     const K = (x: number, y: number, d: number) => (y * GRID.cols + x) * 5 + (d + 1)
     const dist = new Map<number, number>(),
       prev = new Map<number, number>()
@@ -80,12 +80,12 @@ export const stepDir = (a: Cell, b: Cell): Dir => {
   return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3
 }
 
-/** Does the belt line starting here lead to a shearer or back into a pasture (the sheep's lane)? */
+/** Does the belt line starting here lead to a station or back into a pen (the sheep's lane)? */
 function sheepLane(w: World, x: number, y: number) {
   for (let i = 0; i < 40; i++) {
     const t = inGrid(x, y) ? get(w, x, y) : null
     if (!t) return false
-    if (t.type === 'shearer') return true
+    if (isStation(t)) return true
     if (!isBeltLike(t)) return false
     ;[x, y] = step(x, y, t.dir)
     if (pastureAt(w, x, y)) return true
@@ -99,7 +99,7 @@ function sheepSource(w: World, c: Cell) {
       const sx = c.x - DIRS[d]![0],
         sy = c.y - DIRS[d]![1]
       const t = inGrid(sx, sy) ? get(w, sx, sy) : null
-      return !!t && t.type === 'shearer' && t.dir === d && outCells(t).some((o) => o.d === d && o.x === c.x && o.y === c.y)
+      return !!t && isStation(t) && t.dir === d && outCells(t).some((o) => o.d === d && o.x === c.x && o.y === c.y)
     }) ||
     sheepLane(w, c.x, c.y)
   )

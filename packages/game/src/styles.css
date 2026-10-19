@@ -122,10 +122,6 @@ button:focus-visible {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.stars3 {
-  color: var(--warn);
-  letter-spacing: 1px;
-}
 .day small {
   font-weight: 600;
   color: var(--ink-soft);
@@ -220,7 +216,7 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ===== right: orders ===== */
+/* ===== right: the village's asks ===== */
 .ov-orders {
   right: 12px;
   top: 60px;
@@ -400,7 +396,7 @@ button:focus-visible {
   gap: 6px;
 }
 
-/* ===== bottom left, over the frame counter: the barn's stock, which is the hand (a column of goods, as in Tower Factory) ===== */
+/* ===== bottom left, over the frame counter: the stock, which is the hand (a column of goods, as in Tower Factory) ===== */
 .ov-stock {
   left: 12px;
   bottom: 70px;
@@ -449,7 +445,7 @@ button:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* the market: one row per good — stock, sell price, buy price */
+/* the trading post: one row per good — stock, sell price, buy price */
 .trade {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1165,6 +1161,18 @@ button:focus-visible {
 .title-btn--main:hover {
   filter: brightness(1.06);
 }
+.title-btn small {
+  margin-left: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+/* «Новая игра» asking once more before it replaces the kept game */
+.btn--sure,
+.btn--sure:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+}
 .title-panel {
   pointer-events: auto;
   align-self: center;
@@ -1261,19 +1269,9 @@ button:focus-visible {
   background: var(--good);
   border-radius: 99px;
 }
-.load__lvl,
 .load__cells {
   display: inline-flex;
   gap: 3px;
-}
-.load__lvl i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--line);
-}
-.load__lvl i.on {
-  background: var(--warn);
 }
 .load__row {
   display: flex;

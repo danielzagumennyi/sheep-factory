@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Color } from 'three'
-import { GRID, ISLAND, LOOK } from '@/game/balance'
+import { GRID, ISLAND, LOOK, ROAD } from '@/game/balance'
 import { Batch, useInstanced } from './instancing'
 import { mat, vmat } from './kit'
 import { fenceSpan, pine, tile } from './models'
+import { island } from './island'
 
 const _c = new Color()
 const hash = (n: number) => {
@@ -32,7 +33,7 @@ export function Props() {
     // the dock row: two rows of warm stone slabs of mixed lengths with dark gaps, now and then one missing
     // from one edge of the island to the other, like the road below it
     const p0 = -ISLAND.margin + 0.28,
-      p1 = GRID.cols + ISLAND.margin - 0.28
+      p1 = island.right + ISLAND.margin - 0.28
     for (let row = 0; row < 2; row++) {
       let x = p0 + (row ? 0 : 0.25),
         n = row * 1000
@@ -50,13 +51,13 @@ export function Props() {
     const m = ISLAND.margin - 0.42,
       R = ISLAND.corner
     const x0 = -m,
-      x1 = GRID.cols + m,
-      z0 = -m,
+      x1 = island.right + m,
+      z0 = island.top - m,
       z1 = GRID.rows + m
     for (let x = x0 + R; x + 1 <= x1 - R; x += 1) b.fence.put(x + 0.5, 0, z0, 0)
     for (let x = x0 + R; x + 1 <= x1 - R; x += 1) b.fence.put(x + 0.5, 0, z1, 0)
-    const road0 = GRID.roadY - 0.2,
-      road1 = GRID.roadY + 3.2
+    const road0 = ROAD.row - 0.2,
+      road1 = ROAD.row + 2.2
     for (const fx of [x0, x1])
       for (let z = z0 + R; z + 1 <= z1 - R; z += 1) {
         if (z + 1 > road0 && z < road1) continue

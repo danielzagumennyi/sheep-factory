@@ -70,10 +70,11 @@ export function Pointer() {
         // capture is a nicety
       }
       down = { sx: e.clientX, sy: e.clientY, p, moved: false, cam: { x: cam.x, z: cam.z } }
-      // on pause the hand doesn't pick sheep up (the author)
+      // on pause the hand doesn't pick sheep up (the author); one being shorn by hand is carried too, its clicks kept
+      // (the author: «невозможно перетаскивать овцу которую начали стричь») — a click is told from a drag by the move
       if (ui.tool === 'hand' && res(world, GameState).speed > 0) {
         const s = under(e).sheep
-        if (s && !(s.wool >= 1 && s.clicks > 0)) down.sheep = s
+        if (s) down.sheep = s
       }
       if (ui.tool === 'belt' && !ui.pending && !ui.moving && (freeCell(world, c.x, c.y) || get(world, c.x, c.y)?.type === 'belt')) down.paint = c
       if (ui.tool === 'erase') {
@@ -204,7 +205,7 @@ export function Pointer() {
         const [ax, ay] = anchorAt(ui.tool, ui.rot, p.x, p.y)
         if (ui.moving) {
           if (putDown(world, ax, ay, ui.rot)) setTool(world, 'hand')
-        } else if (place(world, ui.tool, ax, ay, ui.rot) && !BUILDINGS[ui.tool].onBelt) setTool(world, 'hand')
+        } else if (place(world, ui.tool, ax, ay, ui.rot) && !BUILDINGS[ui.tool].onBelt && !BUILDINGS[ui.tool].repeat) setTool(world, 'hand')
       }
     }
     const onCancel = () => {

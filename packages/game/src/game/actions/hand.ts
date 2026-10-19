@@ -1,16 +1,16 @@
-import { GRID, HAND, LOOK, SHEEP, type ItemId } from '../balance'
-import { capOf, get, inGrid, isBeltLike, owned, pastureAt, plotOf, plotPrice, terr, wantsOf } from '../grid'
+import { GRID, HAND, LOOK, SHEEP } from '../balance'
+import { get, inGrid, isBeltLike, isStation, owned, pastureAt, plotOf, plotPrice, roomFor, terr } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, float, key, newItem, puff, res, stockAdd, stockTake, toStock, type Building, type SheepT, type World } from '../world'
 import { enterBelt, machineAccept } from '../systems/belts'
 import { takeRes } from '../systems/machines'
-import { sendHome, toPasture } from '../systems/sheep'
+import { hungry, sendHome, toPasture, toRoam } from '../systems/sheep'
 import { pileHere } from './build'
 
 /**
- * The hand (GDD 3), which is the barn's stock (the author: «этот склад и рука одно и тоже»): one click gathers one
- * item on the player's own land, a fluffy sheep is shorn in three clicks, a pile or a good on a belt is picked up — all
- * into the stock, with no limit. A click on a building opens its popup, where a machine, a feeder or a trough is
- * loaded from the stock and a dock or the market is loaded or traded with, the player picking what and how much.
+ * The hand (GDD 3), which is the stock (the author: «этот склад и рука одно и тоже»): one click gathers one item from
+ * own land, a fluffy sheep is shorn in three clicks, a hungry one is fed one hay from the stock, a pile or a good on a
+ * belt is picked up — all into the stock, with no limit. Machines take only from belts (docs/05-REWORK.md): a click on
+ * one selects it; a click on a market stall, the trading post or a pen opens its popup: the stall's ask, trade, sheep.
  */
 
 /** The sheep under a ground point (cells), if any: fluffy sheep are bigger targets. */
@@ -18,7 +18,7 @@ export function sheepAt(w: World, x: number, y: number): SheepT | null {
   let best: SheepT | null = null,
     bd: number = SHEEP.pickR
   for (const s of res(w, Flock).sheep) {
-    if (s.state !== 'pasture' && s.state !== 'waiting' && s.state !== 'belt') continue
+    if (s.state !== 'pasture' && s.state !== 'transit' && s.state !== 'roam' && s.state !== 'belt') continue
     const r = s.wool >= 1 ? SHEEP.pickRFluffy : SHEEP.pickR,
       d = Math.hypot(s.px - x, s.py - y)
     if (d < r && d < bd + (r - SHEEP.pickR)) {
@@ -31,36 +31,40 @@ export function sheepAt(w: World, x: number, y: number): SheepT | null {
 
 export function shearClick(w: World, s: SheepT) {
   s.clicks++
-  puff(w, s.px, s.py, LOOK.wool, 4)
+  puff(w, s.px, s.py, s.pink ? LOOK.pinkFleece : LOOK.wool, 4)
   if (s.clicks >= HAND.shearClicks) {
     s.clicks = 0
     s.wool = 0
-    stockAdd(w, 'wool', 2)
+    stockAdd(w, s.pink ? 'pwool' : 'wool', 2)
+    s.pink = false
     float(w, s.px, s.py - 0.4, '+2', 'accent')
     res(w, Stats).handShear++
   }
 }
 
-/** Put up to n of a good from the stock into a building that stores it (its popup's «+N»), as much as it has room for; how many went. */
-export function feed(w: World, b: Building, k: ItemId, n: number = capOf(b)) {
-  if (!wantsOf(b)?.[k]) return 0
-  const got = stockTake(w, k, Math.min(n, capOf(b) - (b.inv[k] ?? 0)))
-  if (got) b.inv[k] = (b.inv[k] ?? 0) + got
-  return got
+/** Feed a hungry sheep one hay from the stock: its next fleece grows. */
+export function feedSheep(w: World, s: SheepT) {
+  if (!stockTake(w, 'hay', 1)) {
+    float(w, s.px, s.py - 0.4, 'noHay', 'bad')
+    return false
+  }
+  s.fed = true
+  puff(w, s.px, s.py, LOOK.hay, 4)
+  return true
 }
 
 /** The game is paused: the hand only opens popups, it doesn't work the field (the author: no shearing on pause). */
 export const handStill = (w: World) => res(w, GameState).speed === 0
 
-/** One click on a resource cell: one item into the stock (meadow → hay, bush → dye, water → water). */
+/** One click on a resource cell of own land: one item into the stock (meadow → hay, bush → dye). */
 export function gather(w: World, x: number, y: number) {
   const k = key(x, y),
     r = res(w, Field).res.get(k)
-  if (!r) return false
+  if (!r || !owned(w, x, y)) return false
   takeRes(w, k)
-  stockAdd(w, r.t === 'meadow' ? 'hay' : r.t === 'bush' ? 'dye' : 'water')
-  float(w, x + 0.5, y, '+1', r.t === 'water' ? 'water' : 'accent')
-  if (r.t !== 'water') puff(w, x + 0.5, y + 0.5, r.t === 'bush' ? LOOK.berry : LOOK.meadowEar, 3)
+  stockAdd(w, r.t === 'meadow' ? 'hay' : 'dye')
+  float(w, x + 0.5, y, '+1', 'accent')
+  puff(w, x + 0.5, y + 0.5, r.t === 'bush' ? LOOK.berry : LOOK.meadowEar, 3)
   return true
 }
 
@@ -74,8 +78,8 @@ export function takePile(w: World, m: Building) {
 }
 
 /**
- * A click with the hand at a ground point (cells): shear a sheep, pick up a pile or a belt's good, gather a resource
- * on own land, open a popup (a building, a plot for sale, a pasture) — in that order.
+ * A click with the hand at a ground point (cells): shear or feed a sheep, pick up a pile or a belt's good, gather a
+ * resource on own land, open a popup (a building, a plot for sale, a pen) — in that order.
  */
 export function handClick(w: World, px: number, py: number) {
   const ui = res(w, Ui)
@@ -86,6 +90,11 @@ export function handClick(w: World, px: number, py: number) {
   if (s && s.wool >= 1 && s.state !== 'machine') {
     if (still) return pausedNudge(w)
     shearClick(w, s)
+    return
+  }
+  if (s && hungry(s)) {
+    if (still) return pausedNudge(w)
+    feedSheep(w, s)
     return
   }
   if (!inGrid(x, y)) return
@@ -100,9 +109,9 @@ export function handClick(w: World, px: number, py: number) {
     clickBuilding(w, b)
     return
   }
-  // a resource is gathered by hand on own land only (the author, 16.10.2026); on land for sale a click opens the plot
+  // a resource is gathered by hand on own land only (docs/05-REWORK.md); machines take only from own land too
   const t = terr(w, x, y)
-  if ((t === 'meadow' || t === 'bush' || t === 'water') && owned(w, x, y)) {
+  if ((t === 'meadow' || t === 'bush') && owned(w, x, y)) {
     if (still) return pausedNudge(w)
     if (gather(w, x, y)) return
   }
@@ -120,15 +129,18 @@ export function handClick(w: World, px: number, py: number) {
 }
 
 /**
- * A click on a building, wherever on its model it lands (the pointer picks it by its model): a belt gives up its good,
- * otherwise the building is selected — its popup is where it is loaded from the stock (the author: a click that fed
- * the machine by itself was «крайне неочевидная логика»), a dock's or the market's where goods are loaded and traded.
+ * A click on a building, wherever on its model it lands (the pointer picks it by its model): a belt gives up its
+ * good, anything else is selected but the market's row, which only takes goods in.
  */
 export function clickBuilding(w: World, b: Building) {
   const ui = res(w, Ui)
   if (isBeltLike(b) && b.item && !b.item.sheep && !handStill(w)) {
     toStock(w, b.item)
     b.item = null
+    return
+  }
+  if (b.part === 'row') {
+    ui.sel = null
     return
   }
   ui.sel = ui.sel?.kind === 'b' && ui.sel.key === key(b.x, b.y) ? null : { kind: 'b', key: key(b.x, b.y) }
@@ -139,7 +151,7 @@ function pausedNudge(w: World) {
   res(w, GameState).pauseNudge++
 }
 
-/** A sheep can be taken from the pasture, from beside a machine and off a belt. */
+/** A sheep can be taken from a pen, off a belt and wherever it roams; one half shorn by hand keeps its clicks. */
 export function pickSheep(w: World, s: SheepT) {
   for (const b of res(w, Plant).b.values()) {
     if (b.item?.sheep === s) b.item = null
@@ -147,16 +159,20 @@ export function pickSheep(w: World, s: SheepT) {
     if (b.outs.length) b.outs = b.outs.filter((o) => o.item.sheep !== s)
   }
   s.state = 'held'
-  s.clicks = 0
 }
 
-/** Drop a held sheep: into a pasture, onto an empty belt, into a free shearer — or it walks home. */
+/** Drop a held sheep: into a pen, onto an empty belt, into a free station — or it roams from there (the author: «игроку надо их перемещать»). */
 export function dropSheep(w: World, s: SheepT, px: number, py: number) {
   const x = Math.floor(px),
     y = Math.floor(py)
   const pa = pastureAt(w, x, y)
   if (pa) {
-    toPasture(w, s, pa, px, py)
+    // a full pen takes no one more: the sheep goes back home
+    if (roomFor(w, pa, s)) toPasture(w, s, pa, px, py)
+    else {
+      float(w, px, py - 0.4, 'noRoom', 'bad')
+      sendHome(w, s)
+    }
     return
   }
   const b = inGrid(x, y) ? get(w, x, y) : null,
@@ -167,6 +183,7 @@ export function dropSheep(w: World, s: SheepT, px: number, py: number) {
     b.item = it
     return
   }
-  if (b && b.type === 'shearer' && !b.slot && machineAccept(w, b, it)) return
-  sendHome(w, s)
+  if (b && isStation(b) && !b.slot && machineAccept(w, b, it, 'sheep')) return
+  // anywhere else on the own land it roams from where it was put down; off it, from the nearest free ground
+  toRoam(w, s, px, py)
 }

@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { BUILDINGS, RECIPES, RECIPE_ORDER, dimsOf, type BuildingId, type ItemId, type RecipeId } from '@/game/balance'
+import { BUILDINGS, RECIPES, RECIPE_ORDER, SEED, dimsOf, type BuildingId, type Job, type ItemId, type RecipeId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { buildPrice, inCells, outCells } from '@/game/grid'
-import { buyPrice, sellPrice } from '@/game/systems/orders'
+import { buyPrice, sellPrice } from '@/game/systems/village'
 import { Unlocks, blankBuilding, res } from '@/game/world'
 import { barOf, useAppStore } from '@/app/store'
 import { useT } from '@/i18n'
@@ -16,10 +16,11 @@ import { recipeOf } from './Hud'
 /** The book's shelves: buildings by what they do, then the goods (the author's «словарь»). */
 const GROUPS: readonly { title: keyof typeof UI; ids: readonly BuildingId[] }[] = [
   { title: 'groupBelts', ids: ['belt', 'splitter', 'merger'] },
-  { title: 'groupLand', ids: ['mower', 'pump', 'berry', 'barn'] },
-  { title: 'groupWool', ids: ['shearer', 'carder', 'spinner', 'felter', 'workshop'] },
+  { title: 'groupSheep', ids: ['pen', 'sheep', 'shearer', 'feeder', 'dyer'] },
+  { title: 'groupLand', ids: ['mower', 'berry', 'sow', 'seeder'] },
+  { title: 'groupWool', ids: ['carder', 'spinner', 'felter', 'workshop'] },
 ]
-const GOODS: readonly ItemId[] = ['hay', 'water', 'dye', 'wool', 'roving', 'yarn', 'felt', 'cyarn', 'sweater', 'valenki']
+const GOODS: readonly ItemId[] = ['hay', 'dye', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'sweater', 'valenki']
 
 /** A line of goods: n× icon + … → icon. */
 function Line({ inp, out }: { inp: readonly (readonly [string, number])[]; out: readonly (readonly [string, number])[] }) {
@@ -39,12 +40,27 @@ function Line({ inp, out }: { inp: readonly (readonly [string, number])[]; out: 
     </span>
   )
 }
-const recipeLine = (r: RecipeId) => <Line key={r} inp={Object.entries(RECIPES[r].inp) as [string, number][]} out={[[RECIPES[r].out, 1]]} />
+const jobLine = (j: Job) => <Line key={j.out} inp={Object.entries(j.inp) as [string, number][]} out={[[j.out, 1]]} />
+const recipeLine = (r: RecipeId) => jobLine(RECIPES[r])
+
+/** Who makes a good: a station on the loop, a producer, a machine's job, or the workshop's recipe. */
+function makerOf(k: ItemId): { by: BuildingId; job?: Job } | null {
+  if (k === 'wool') return { by: 'shearer' }
+  if (k === 'pwool') return { by: 'dyer' }
+  for (const b of Object.keys(BUILDINGS) as BuildingId[]) {
+    const d = BUILDINGS[b]
+    if (d.gives === k) return { by: b }
+    const job = d.jobs?.find((j) => j.out === k)
+    if (job) return { by: b, job }
+  }
+  const r = RECIPE_ORDER.find((q) => RECIPES[q].out === k)
+  return r ? { by: 'workshop', job: RECIPES[r] } : null
+}
 
 /**
  * The book of every building and good, as Tower Factory's build menu (the author): a shelf of tiles on the left, the one
  * under the pointer described on the right — what it makes, its ways in and out, its size and price; a good's maker and
- * market prices. In a mission a click on an open building builds it, and a number key puts the building under the
+ * market prices. In a game a click on an open building builds it, and a number key puts the building under the
  * pointer into that quick-bar slot. The game waits while it is open; B or Esc closes it.
  */
 export function Book() {
@@ -81,6 +97,8 @@ export function Book() {
     const [w, h] = dimsOf(id, 0)
     const slot = bar.indexOf(id)
     const r = recipeOf(id)
+    // a pen and the sowing hand have no belt ways to count
+    const plain = id !== 'belt' && id !== 'pen' && id !== 'sow' && id !== 'sheep'
     detail = (
       <>
         <div className="book__hero">
@@ -88,17 +106,24 @@ export function Book() {
         </div>
         <h2>{t(BUILDING_TEXT[id].name)}</h2>
         <p className="book__desc">{t(BUILDING_TEXT[id].desc)}</p>
-        <div className="book__recipes">{id === 'workshop' ? recipes.map(recipeLine) : r && <Line inp={r[0]} out={r[1]} />}</div>
+        <div className="book__recipes">
+          {id === 'workshop' ? recipes.map(recipeLine) : def.jobs && def.jobs.length > 1 ? def.jobs.map(jobLine) : r && <Line inp={r[0]} out={r[1]} />}
+          {(id === 'sow' || id === 'seeder') && <Line inp={[[SEED.bush, 1]]} out={[['bush', 1]]} />}
+        </div>
         <div className="book__facts">
-          {id !== 'belt' && <span className="chip chip--in">{t(UI.ins, { n: inCells(world, probe).length })}</span>}
-          {id !== 'belt' && <span className="chip chip--out">{t(UI.outs, { n: outCells(probe).length })}</span>}
-          <span className="chip">
-            {w}×{h}
-          </span>
-          <span className="chip">
-            <Icon kind="coin" size={14} />
-            {inRun ? buildPrice(world, id) : def.cost}
-          </span>
+          {plain && <span className="chip chip--in">{t(UI.ins, { n: inCells(world, probe).length })}</span>}
+          {plain && <span className="chip chip--out">{t(UI.outs, { n: outCells(probe).length })}</span>}
+          {id !== 'sow' && id !== 'sheep' && (
+            <span className="chip">
+              {w}×{h}
+            </span>
+          )}
+          {id !== 'sow' && (
+            <span className="chip">
+              <Icon kind="coin" size={14} />
+              {inRun ? buildPrice(world, id) : def.cost}
+            </span>
+          )}
         </div>
         {!isOpen(id) ? (
           <p className="book__hint">
@@ -114,9 +139,8 @@ export function Book() {
     )
   } else {
     const k = pick as ItemId
-    const maker = (Object.keys(BUILDINGS) as BuildingId[]).find((b) => BUILDINGS[b].out === k || BUILDINGS[b].gives === k) ?? (RECIPE_ORDER.some((q) => RECIPES[q].out === k) ? 'workshop' : null)
-    const how = RECIPE_ORDER.find((q) => RECIPES[q].out === k)
-    const made = k === 'wool' ? recipeOf('shearer') : how ? null : maker ? recipeOf(maker) : null
+    const maker = makerOf(k)
+    const made = maker && !maker.job ? recipeOf(maker.by) : null
     detail = (
       <>
         <div className="book__hero">
@@ -127,18 +151,16 @@ export function Book() {
         <div className="book__recipes">
           {maker && (
             <span className="book__maker">
-              <Icon kind={k === 'wool' ? 'shearer' : maker} size={26} />
-              {how ? recipeLine(how) : made && <Line inp={made[0]} out={made[1]} />}
+              <Icon kind={maker.by} size={26} />
+              {maker.job ? jobLine(maker.job) : made && <Line inp={made[0]} out={made[1]} />}
             </span>
           )}
         </div>
         <div className="book__facts">
           <span className="chip">{t(UI.marketPrice)}</span>
-          {sellPrice(k) > 0 && (
-            <span className="chip chip--good">
-              +{sellPrice(k)} <Icon kind="coin" size={14} />
-            </span>
-          )}
+          <span className="chip chip--good">
+            +{sellPrice(k)} <Icon kind="coin" size={14} />
+          </span>
           <span className="chip">
             −{buyPrice(k)} <Icon kind="coin" size={14} />
           </span>

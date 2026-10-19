@@ -68,7 +68,7 @@ export function shade(hex: string, k: number) {
 /** A workshop's product, shown big on its stand so the recipe reads from afar (and, smaller, as a good). */
 export const product = (kind: ItemId) =>
   cached('product' + kind, () => {
-    const c: string = { sweater: LOOK.sweater, valenki: LOOK.valenki, cyarn: LOOK.cyarn, yarn: LOOK.yarn }[kind as string] ?? '#ffffff'
+    const c: string = { sweater: LOOK.sweater, valenki: LOOK.valenki, pyarn: LOOK.pyarn, yarn: LOOK.yarn }[kind as string] ?? '#ffffff'
     switch (kind) {
       case 'sweater':
         return model([
@@ -267,6 +267,20 @@ export const sheepLegs = () =>
     return model(p)
   })
 
+/** A whole sheep in full fleece, standing still and facing a little towards the camera: its icon, and a sheep in hand. */
+export const sheepModel = () =>
+  cached('sheepWhole', () => {
+    const head = sheepHead().clone()
+    head.scale(0.78, 0.78, 0.78)
+    head.translate(0.34, 0.45, 0)
+    const body = fleece().clone()
+    body.scale(1.12, 1.12, 1.12)
+    body.translate(-0.02, 0.35, 0)
+    const g = model([sheepLegs().clone(), body, head])
+    g.rotateY(-0.5)
+    return g
+  })
+
 // ---------------------------------------------------------------- decor (scattered on free land)
 
 /** Three five-petal flowers of one colour on stems, with broad leaves. */
@@ -313,7 +327,7 @@ export const mushroom = () =>
     return model(p)
   })
 
-// ---------------------------------------------------------------- the road: trucks, docks, the market
+// ---------------------------------------------------------------- the road: trucks and the market
 
 /** A chunky little lorry facing +X: rounded cab with windows, a cream cargo box with a stripe, fat wheels. */
 export const truckBody = () =>
@@ -343,49 +357,125 @@ export const truckBody = () =>
     return model(p)
   })
 
-/** A 2×1 loading platform of planks, with stacks of crates at its back. */
-export const dockBody = () =>
-  cached('dock', () => {
-    const p: BufferGeometry[] = [put(rb(1.9, 0.12, 0.88, 0.035), WOOD_DARK, [0, 0.06, 0])]
-    for (let i = 0; i < 7; i++) p.push(put(rb(0.25, 0.035, 0.9, 0.014), i % 2 ? WOOD : shade(WOOD, 1.15), [-0.78 + i * 0.26, 0.13, 0]))
-    const crates: [number, number, number, number][] = [
-      [-0.64, 0.29, -0.24, 0],
-      [-0.3, 0.29, -0.26, 0.2],
-      [-0.48, 0.55, -0.25, 0.4],
-      [0.66, 0.29, -0.24, -0.15],
-    ]
-    for (const [x, y, z, r] of crates) {
-      p.push(put(rb(0.32, 0.28, 0.3, 0.05), '#d8a663', [x, y, z], [0, r, 0]))
-      p.push(put(rb(0.34, 0.05, 0.32, 0.02), WOOD_DARK, [x, y, z], [0, r, 0]))
-    }
+/**
+ * One cell of the market's row beside the field: a low wooden chute of planks along the row, with a lip on the stalls'
+ * side, where a belt hands its goods over and they slide along to a stall.
+ */
+export const intakeBody = () =>
+  cached('intake', () => {
+    const p: BufferGeometry[] = [put(rb(1.0, 0.1, 0.9, 0.03), WOOD_DARK, [0, 0.05, 0])]
+    for (let i = 0; i < 4; i++) p.push(put(rb(0.96, 0.035, 0.2, 0.012), i % 2 ? WOOD : shade(WOOD, 1.15), [0, 0.13 - i * 0.012, -0.32 + i * 0.22], [0.08, 0, 0]))
+    p.push(put(rb(1.0, 0.1, 0.06, 0.02), shade(WOOD_DARK, 0.9), [0, 0.15, 0.44]))
     return model(p)
   })
 
-/** The market: a 2×2 stall — stone floor, a long counter of goods under a pink-striped awning on four posts, crates. */
-export const marketBody = () =>
-  cached('market', () => {
-    const p: BufferGeometry[] = [put(rb(1.9, 0.1, 1.86, 0.04), STONE, [0, 0.05, 0])]
-    p.push(put(rb(1.6, 0.4, 0.5, 0.05), WOOD, [0, 0.3, 0.28]))
-    p.push(put(rb(1.66, 0.06, 0.56, 0.03), shade(WOOD, 1.25), [0, 0.53, 0.28]))
-    for (const x of [-0.84, 0.84]) for (const z of [-0.72, 0.5]) p.push(put(rb(0.1, 1.3, 0.1, 0.04), WOOD_DARK, [x, 0.7, z]))
-    for (let i = 0; i < 8; i++) p.push(put(rb(0.24, 0.06, 1.5, 0.025), i % 2 ? '#ffffff' : LOOK.accent, [-0.84 + i * 0.24, 1.3, -0.1], [0.22, 0, 0]))
-    for (let i = 0; i < 8; i++) p.push(put(ball(0.12), i % 2 ? '#ffffff' : LOOK.accent, [-0.84 + i * 0.24, 1.14, 0.62], [0, 0, 0], [1, 0.7, 0.6]))
-    // goods on the counter
-    const goods: [string, number][] = [
-      [LOOK.hay, -0.56],
-      [LOOK.cyarn, -0.2],
-      [LOOK.wool, 0.16],
-      [LOOK.sweater, 0.52],
+/**
+ * The market's stalls past the row, `MARKET.stallW` wide and two deep, their counter at the front by the road where
+ * goods wait and from where they go into the truck parked there (STALL.counter: its top and how far forward); the
+ * height goods slide along the chute at.
+ */
+export const STALL = { counterY: 0.45, counterZ: 0.62, chuteY: 0.14 } as const
+/** Four stalls, each its own: a striped awning, a flat canopy, two parasols, a tent (the author: «4 разных»). */
+export const STALL_LOOKS = 4
+
+/**
+ * What every stall stands on and sells from: a plank floor, the counter at the front, a few crates and a basket at the
+ * back. Each roof covers only the back, behind the counter, so what waits on the counter is never under it.
+ */
+function stallBase(top: string, crate: string): BufferGeometry[] {
+  const p: BufferGeometry[] = [put(rb(2.9, 0.05, 1.9, 0.02), shade(WOOD, 1.2), [0, 0.025, 0])]
+  p.push(put(rb(2.6, 0.38, 0.4, 0.05), WOOD, [0, 0.21, STALL.counterZ]))
+  p.push(put(rb(2.72, 0.05, 0.48, 0.02), top, [0, STALL.counterY - 0.025, STALL.counterZ]))
+  const crates: [number, number][] = [
+    [-1.05, -0.55],
+    [-0.62, -0.62],
+    [1.05, -0.58],
+  ]
+  for (const [x, z] of crates) {
+    p.push(put(rb(0.36, 0.3, 0.34, 0.05), crate, [x, 0.17, z]))
+    p.push(put(rb(0.38, 0.05, 0.36, 0.02), WOOD_DARK, [x, 0.19, z]))
+  }
+  return p
+}
+const post = (x: number, z: number, h: number) => put(cyl(0.035, h, 8), WOOD_DARK, [x, h / 2, z])
+
+export const stallBody = (i: number) =>
+  cached('stall' + i, () => {
+    switch (i % STALL_LOOKS) {
+      case 0: {
+        // a striped awning, red and white, high at the back and sloping down to a row of scallops over the counter's back
+        const p = stallBase('#f6d8a8', '#d8a663')
+        for (const x of [-1.32, 1.32]) p.push(post(x, 0.32, 0.98), post(x, -0.84, 1.26))
+        for (let k = 0; k < 8; k++) p.push(put(rb(0.36, 0.035, 1.24, 0.012), k % 2 ? '#ffffff' : '#e0525e', [-1.26 + k * 0.36, 1.12, -0.26], [0.22, 0, 0]))
+        for (let k = 0; k < 8; k++) p.push(put(ball(0.09), k % 2 ? '#ffffff' : '#e0525e', [-1.26 + k * 0.36, 0.95, 0.36], [0, 0, 0], [1.9, 0.7, 0.5]))
+        p.push(put(cyl(0.2, 0.18, 18, 0.24), '#e2c15e', [0.3, 0.12, -0.55]))
+        return model(p)
+      }
+      case 1: {
+        // a flat canopy in blue and white stripes running to the road, on four posts, with a blue valance
+        const p = stallBase('#dfe8f2', '#c9a06a')
+        for (const x of [-1.32, 1.32]) for (const z of [-0.84, 0.3]) p.push(post(x, z, 1.12))
+        for (let k = 0; k < 7; k++) p.push(put(rb(0.42, 0.04, 1.24, 0.012), k % 2 ? '#ffffff' : '#5b8fd6', [-1.26 + k * 0.42, 1.14, -0.26]))
+        p.push(put(rb(2.96, 0.12, 0.04, 0.012), '#5b8fd6', [0, 1.08, 0.36]))
+        p.push(put(cyl(0.18, 0.36, 18, 0.16), WOOD, [0.2, 0.2, -0.55]))
+        return model(p)
+      }
+      case 2: {
+        // two round parasols, green and cream, over barrels
+        const p = stallBase('#e8efd0', '#d3a15c')
+        for (const x of [-0.72, 0.72]) {
+          p.push(put(cyl(0.035, 1.2, 8), WOOD_DARK, [x, 0.6, -0.36]))
+          for (let k = 0; k < 8; k++) p.push(put(new ConeGeometry(0.76, 0.26, 3, 1, true, 0, Math.PI / 4), k % 2 ? '#fff6dc' : '#5fae6a', [x, 1.22, -0.36], [0, (k / 8) * Math.PI * 2, 0]))
+          p.push(put(ball(0.06), '#f2c14e', [x, 1.38, -0.36]))
+        }
+        p.push(put(cyl(0.17, 0.34, 18, 0.15), WOOD, [0.15, 0.19, -0.6]))
+        p.push(put(cyl(0.17, 0.34, 18, 0.15), shade(WOOD, 0.9), [0.52, 0.19, -0.5]))
+        return model(p)
+      }
+      default: {
+        // a little tent: a four-sided roof of orange and yellow on four posts, a pennant on top
+        const p = stallBase('#f7e3b0', '#d9a35f')
+        for (const x of [-1.3, 1.3]) for (const z of [-0.82, 0.3]) p.push(post(x, z, 0.95))
+        for (let k = 0; k < 4; k++) p.push(put(new ConeGeometry(1.95, 0.55, 1, 1, true, (k * Math.PI) / 2, Math.PI / 2), k % 2 ? '#ffd166' : '#f08a3c', [0, 1.22, -0.26], [0, Math.PI / 4, 0], [1, 1, 0.46]))
+        p.push(put(cyl(0.02, 0.36, 6), WOOD_DARK, [0, 1.62, -0.26]))
+        p.push(put(rb(0.22, 0.12, 0.02, 0.01), '#e0525e', [0.12, 1.74, -0.26]))
+        p.push(put(ball(0.16), '#e9d7a8', [0.35, 0.16, -0.58], [0, 0, 0], [1, 0.9, 1]))
+        p.push(put(ball(0.14), '#e2cc96', [0.68, 0.14, -0.5], [0, 0, 0], [1, 0.9, 1]))
+        return model(p)
+      }
+    }
+  })
+
+/**
+ * The trading post (the author: «отдельный блок где игрок будет именно покупать товары»): a closed wooden kiosk with a
+ * window and a counter to the road, a gabled roof and a big gold coin over the window; crates of goods beside it.
+ */
+export const buyBody = () =>
+  cached('buy', () => {
+    const p: BufferGeometry[] = [put(rb(2.9, 0.05, 1.9, 0.02), STONE, [0, 0.025, 0])]
+    // the kiosk: back and side walls, the front wall under and over the window
+    p.push(put(rb(1.9, 0.95, 0.1, 0.03), WALL, [-0.3, 0.5, -0.55]))
+    for (const x of [-1.22, 0.62]) p.push(put(rb(0.1, 0.95, 1.2, 0.03), WALL, [x, 0.5, 0.0]))
+    p.push(put(rb(1.9, 0.4, 0.1, 0.03), WOOD, [-0.3, 0.22, 0.55]))
+    p.push(put(rb(1.9, 0.18, 0.1, 0.03), WALL, [-0.3, 0.88, 0.55]))
+    p.push(put(rb(2.0, 0.05, 0.36, 0.02), shade(WOOD, 1.25), [-0.3, 0.44, 0.66]))
+    // the roof, two slopes, and its ridge
+    for (const s of [-1, 1]) p.push(put(rb(2.2, 0.06, 0.82, 0.02), '#b5523b', [-0.3, 1.16, s * 0.34], [s * 0.55, 0, 0]))
+    p.push(put(rb(2.22, 0.07, 0.08, 0.03), shade('#b5523b', 0.8), [-0.3, 1.38, 0]))
+    // the coin over the window
+    p.push(put(cyl(0.24, 0.07, 22), '#f2c14e', [-0.3, 1.1, 0.78], [Math.PI / 2, 0, 0]))
+    p.push(put(cyl(0.17, 0.08, 20), '#e2a93a', [-0.3, 1.1, 0.79], [Math.PI / 2, 0, 0]))
+    // crates and a sack of goods outside, east of the kiosk
+    const crates: [number, number, number][] = [
+      [1.05, 0.17, -0.35],
+      [1.05, 0.47, -0.35],
+      [1.1, 0.17, 0.2],
     ]
-    for (const [c, x] of goods) p.push(put(ball(0.15), c, [x, 0.68, 0.28]))
-    // crates and a barrel behind
-    p.push(put(rb(0.4, 0.34, 0.36, 0.05), '#d8a663', [-0.5, 0.27, -0.44]))
-    p.push(put(rb(0.42, 0.05, 0.38, 0.02), WOOD_DARK, [-0.5, 0.27, -0.44]))
-    p.push(put(cyl(0.2, 0.42, 18, 0.18), WOOD, [0.46, 0.31, -0.44]))
-    p.push(put(ball(0.14), LOOK.dye, [0.46, 0.55, -0.44]))
-    // a gold coin sign on the front post
-    p.push(put(cyl(0.18, 0.06, 20), '#f2c14e', [0, 1.62, 0.5], [Math.PI / 2, 0, 0]))
-    p.push(put(rb(0.06, 0.24, 0.06, 0.02), WOOD_DARK, [0, 1.42, 0.5]))
+    for (const [x, y, z] of crates) {
+      p.push(put(rb(0.36, 0.3, 0.34, 0.05), '#d8a663', [x, y, z]))
+      p.push(put(rb(0.38, 0.05, 0.36, 0.02), WOOD_DARK, [x, y + 0.02, z]))
+    }
+    p.push(put(ball(0.15), '#e9d7a8', [1.18, 0.15, 0.62], [0, 0, 0], [1, 0.9, 1]))
     return model(p)
   })
 
@@ -395,18 +485,24 @@ export const good = (kind: ItemId) =>
   cached('good' + kind, () => {
     switch (kind) {
       case 'wool':
-        return model([put(ball(0.12), LOOK.wool, [0, 0.11, 0]), put(ball(0.09), LOOK.wool, [0.1, 0.09, 0.04]), put(ball(0.09), LOOK.wool, [-0.09, 0.09, -0.03]), put(ball(0.08), LOOK.wool, [0.01, 0.18, 0.02])])
-      case 'roving': {
-        // a fat white rope of combed wool, coiled, with twist marks
-        const p: BufferGeometry[] = [put(new TorusGeometry(0.11, 0.075, 10, 20), LOOK.roving, [0, 0.075, 0], [Math.PI / 2, 0, 0])]
+      case 'pwool': {
+        // a fleece: white, or pink off a dyed sheep
+        const c = kind === 'pwool' ? LOOK.pwool : LOOK.wool
+        return model([put(ball(0.12), c, [0, 0.11, 0]), put(ball(0.09), c, [0.1, 0.09, 0.04]), put(ball(0.09), c, [-0.09, 0.09, -0.03]), put(ball(0.08), c, [0.01, 0.18, 0.02])])
+      }
+      case 'roving':
+      case 'proving': {
+        // a fat rope of combed wool, coiled, with twist marks
+        const c = kind === 'proving' ? LOOK.proving : LOOK.roving
+        const p: BufferGeometry[] = [put(new TorusGeometry(0.11, 0.075, 10, 20), c, [0, 0.075, 0], [Math.PI / 2, 0, 0])]
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2
-          p.push(put(rb(0.03, 0.16, 0.05, 0.012), shade(LOOK.roving, 0.84), [Math.cos(a) * 0.11, 0.08, Math.sin(a) * 0.11], [0, -a, 0.6]))
+          p.push(put(rb(0.03, 0.16, 0.05, 0.012), shade(c, 0.84), [Math.cos(a) * 0.11, 0.08, Math.sin(a) * 0.11], [0, -a, 0.6]))
         }
         return model(p)
       }
       case 'yarn':
-      case 'cyarn': {
+      case 'pyarn': {
         const g = product(kind).clone()
         g.scale(0.72, 0.72, 0.72)
         g.translate(0, 0.125, 0)
@@ -432,17 +528,6 @@ export const good = (kind: ItemId) =>
         return model([put(cyl(0.1, 0.16, 16, 0.085), LOOK.dye, [0, 0.08, 0]), put(cyl(0.07, 0.03, 14), shade(LOOK.dye, 1.4), [0, 0.165, 0]), put(cyl(0.045, 0.05, 10), '#c9935a', [0, 0.19, 0])])
       case 'hay':
         return model([put(rb(0.3, 0.2, 0.22, 0.05), LOOK.hay, [0, 0.1, 0]), put(rb(0.31, 0.21, 0.03, 0.012), WOOD, [0, 0.1, -0.06]), put(rb(0.31, 0.21, 0.03, 0.012), WOOD, [0, 0.1, 0.06])])
-      case 'water':
-        // a wooden bucket of water (the author: «капли воды замени на ведра»): two dark hoops, a metal handle
-        return model([
-          put(cyl(0.085, 0.16, 16, 0.11), '#c98f55', [0, 0.08, 0]),
-          put(cyl(0.09, 0.02, 16, 0.093), '#6b5444', [0, 0.04, 0]),
-          put(cyl(0.101, 0.02, 16, 0.104), '#6b5444', [0, 0.125, 0]),
-          // brimful, so the water shows from the side too
-          put(cyl(0.104, 0.03, 16, 0.108), LOOK.waterItem, [0, 0.158, 0]),
-          put(ball(0.02), '#ffffff', [-0.04, 0.175, 0.03]),
-          put(new TorusGeometry(0.105, 0.011, 6, 14, Math.PI), '#9aa3ad', [0, 0.155, 0]),
-        ])
       default:
         return model([put(ball(0.1), '#ffffff', [0, 0.1, 0])])
     }

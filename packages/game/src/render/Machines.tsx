@@ -2,27 +2,40 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, UPGRADE, dimsOf, type BuildingId, type ItemId } from '@/game/balance'
+import { BUILDINGS, LOOK, PRODUCERS, RECIPES, ROOF, type BuildingId, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { capOf, jobOf } from '@/game/grid'
+import { jobOf } from '@/game/grid'
 import { machineState } from '@/game/systems/machines'
-import { Plant, res, type Building } from '@/game/world'
+import { Plant, isOn, res, type Building } from '@/game/world'
 import { Icon } from '@/ui/Icon'
-import { GEO, flat, machineYaw, mat, vmat, yawOf } from './kit'
+import { GEO, machineYaw, mat, vmat, yawOf } from './kit'
 import { WORKSHOP_SHOW, machineModel, type PartSpec } from './machineModels'
 import { cached, product } from './models'
 import { frame } from './frame'
 
-/** The icon a producer shows when nothing is left in its reach. */
-const NEAR_ICON: Readonly<Record<string, string>> = { meadow: 'meadow', water: 'pond', bush: 'bush' }
+/** The icon a producer shows when nothing is left in its reach, and a seeder with no empty cell round it. */
+const NEAR_ICON: Readonly<Record<string, string>> = { meadow: 'meadow', bush: 'bush' }
 
 /** A building's own colour: its accents in the field, its stripe on the build tile. */
 export const MACHINE_COLOR = ROOF
 
 /** The colour a splitter shows for a rule: the good's own colour. */
-const RULE_COLOR: Readonly<Record<string, string>> = { wool: LOOK.wool, roving: LOOK.roving, yarn: LOOK.yarn, felt: LOOK.felt, dye: LOOK.dye, cyarn: LOOK.cyarn, sweater: LOOK.sweater, valenki: LOOK.valenki, hay: LOOK.hay, water: LOOK.waterItem, sheep: LOOK.skin }
+const RULE_COLOR: Readonly<Record<string, string>> = {
+  wool: LOOK.wool,
+  pwool: LOOK.pwool,
+  roving: LOOK.roving,
+  proving: LOOK.proving,
+  yarn: LOOK.yarn,
+  pyarn: LOOK.pyarn,
+  felt: LOOK.felt,
+  dye: LOOK.dye,
+  sweater: LOOK.sweater,
+  valenki: LOOK.valenki,
+  hay: LOOK.hay,
+  sheep: LOOK.skin,
+}
 
-/** Re-renders the list only when buildings are added, removed, turned, re-ruled or given a new recipe. */
+/** Re-renders the list only when buildings are added, removed, turned, re-ruled or given a new recipe or seed. */
 function useBuildings() {
   const { world } = useGame()
   const [list, setList] = useState<Building[]>([])
@@ -30,7 +43,7 @@ function useBuildings() {
   useFrame(() => {
     const b = res(world, Plant).b
     let s = ''
-    for (const q of b.values()) if (q.type !== 'belt' && q.type !== 'dock') s += q.type + q.x + ',' + q.y + q.dir + q.lvl + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + (q.recipe ?? '') + ';'
+    for (const q of b.values()) if (q.type !== 'belt' && q.type !== 'dock') s += q.type + q.x + ',' + q.y + q.dir + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + (q.recipe ?? '') + (q.seed ?? '') + ';'
     if (s === sig.current) return
     sig.current = s
     setList([...b.values()].filter((q) => q.type !== 'belt' && q.type !== 'dock'))
@@ -44,7 +57,7 @@ export function Machines() {
     <group>
       <MachineMeshes list={list} />
       {list.map((b) => (
-        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.recipe ?? '')} b={b} />
+        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.recipe ?? '') + (b.seed ?? '')} b={b} />
       ))}
     </group>
   )
@@ -55,7 +68,8 @@ const onShow = (kind: ItemId) => cached('show' + kind, () => product(kind).clone
 
 /**
  * One machine's bubble when it stands still (its moving part shows that it works): what it waits for, or a red «!»
- * when its output is blocked. Its body and parts are drawn with every other machine's (MachineMeshes).
+ * when its output is blocked. A station with no sheep in it says nothing: on a loop that is most of the time. Its body
+ * and parts are drawn with every other machine's (MachineMeshes).
  */
 function MachineView({ b }: { b: Building }) {
   const { world } = useGame()
@@ -65,11 +79,14 @@ function MachineView({ b }: { b: Building }) {
   const job = jobOf(b)
   useFrame(() => {
     const st = machineState(world, b)
-    const m = st.tone === 'ok' || (def.time === undefined && !job) ? '' : st.tone + ':' + (st.text === 'waitsFor' ? st.item : st.text === 'emptyAround' ? NEAR_ICON[def.near!] : st.text === 'waitsSheep' || st.text === 'sheepWaits' ? 'sheep' : '!')
+    const m =
+      st.tone === 'ok' || st.text === 'waitsSheep' || (def.time === undefined && !job)
+        ? ''
+        : st.tone + ':' + (st.text === 'waitsFor' ? st.item : st.text === 'emptyAround' ? NEAR_ICON[def.near!] : st.text === 'sheepWaits' ? 'sheep' : st.text === 'noRoom' ? NEAR_ICON[b.seed ?? 'meadow'] : '!')
     if (m !== mood) setMood(m)
   })
   if (type === 'splitter' || type === 'merger') return <BeltPiece b={b} />
-  if (!mood) return null
+  if (!mood || !isOn(world, 'tags')) return null
   const signY = machineModel(type).top + 0.3
   return (
     <Html position={[b.x + b.w / 2, signY + 0.25, b.y + b.h / 2]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
@@ -81,12 +98,12 @@ function MachineView({ b }: { b: Building }) {
 /** A machine just placed: it falls from the height it was held at (Ghost.tsx) for `fall` s, then settles for `settle` s. */
 const DROP = { lift: 0.24, fall: 0.16, settle: 0.24 } as const
 
-/** Is this machine at work: a job in hand, or a producer gathering? Its parts move only then. */
-const busyOf = (b: Building) => !!b.slot || (PRODUCERS.includes(b.type as BuildingId) && b.status === '' && b.prog > 0)
+/** Is this machine at work: a job in hand, or a producer gathering, or a seeder sowing? Its parts move only then. */
+const busyOf = (b: Building) => !!b.slot || ((PRODUCERS.includes(b.type as BuildingId) || b.type === 'seeder') && b.status === '' && b.prog > 0)
 
 /** What a workshop shows on its stand: the product of its recipe. */
-const showOf = (b: Building) => onShow(b.recipe ? RECIPES[b.recipe].out : 'cyarn')
-const SHOW: PartSpec = { geo: () => onShow('cyarn'), at: WORKSHOP_SHOW, motion: 'bob', scale: 1.9 }
+const showOf = (b: Building) => onShow(RECIPES[b.recipe ?? 'sweater'].out)
+const SHOW: PartSpec = { geo: () => onShow('sweater'), at: WORKSHOP_SHOW, motion: 'bob', scale: 1.9 }
 
 const _m = new Matrix4(),
   _n = new Matrix4(),
@@ -98,10 +115,10 @@ const _m = new Matrix4(),
   _e = new Euler()
 
 /**
- * Every machine's body, moving parts, product on show and level beads: one instanced mesh per model (the body of a
+ * Every machine's body, moving parts and product on show: one instanced mesh per model (the body of a
  * kind, each of its parts), posed in one pass each frame — 30 machines of five meshes each cost 300 draw calls with
  * their shadows, this costs about 40. The whole model turns with its building (machineYaw). A part moves while its
- * machine works: spins keep their angle per machine; a store's `fill` part stands as full as the store is.
+ * machine works: spins keep their angle per machine.
  */
 function MachineMeshes({ list }: { list: Building[] }) {
   const machines = useMemo(() => list.filter((b) => b.type !== 'splitter' && b.type !== 'merger'), [list])
@@ -126,16 +143,6 @@ function MachineMeshes({ list }: { list: Building[] }) {
     }
     return out
   }, [machines])
-  const beads = useMemo(() => {
-    const m = new InstancedMesh(GEO.ball(), mat('#f2c14e'), 256)
-    m.castShadow = true
-    m.frustumCulled = false
-    m.count = 0
-    const top = new InstancedMesh(GEO.ball(), flat(LOOK.warn), 128)
-    top.frustumCulled = false
-    top.count = 0
-    return { m, top }
-  }, [])
   useEffect(() => () => meshes.forEach((m) => m.dispose()), [meshes])
   // the angle each spinning part has turned to, per machine and part
   const spins = useRef(new Map<string, number>())
@@ -145,8 +152,6 @@ function MachineMeshes({ list }: { list: Building[] }) {
   const first = useRef(true)
   useFrame((state) => {
     for (const m of meshes.values()) m.count = 0
-    beads.m.count = 0
-    beads.top.count = 0
     const put = (g: BufferGeometry, mx: Matrix4) => {
       const mesh = meshes.get(g)
       if (mesh) mesh.setMatrixAt(mesh.count++, mx)
@@ -173,9 +178,6 @@ function MachineMeshes({ list }: { list: Building[] }) {
       }
       put(spec.body, base)
       const busy = busyOf(b)
-      // what a feeder or trough holds, as a share of what it can
-      const takes = b.type === 'dock' ? undefined : BUILDINGS[b.type].takes
-      const level = takes ? (b.inv[takes] ?? 0) / capOf(b) : 1
       const n = spec.parts.length + (b.type === 'workshop' ? 1 : 0)
       for (let i = 0; i < n; i++) {
         const pt = spec.parts[i] ?? SHOW
@@ -184,15 +186,9 @@ function MachineMeshes({ list }: { list: Building[] }) {
         let rx = 0,
           ry = 0,
           rz = 0,
-          py = 0,
-          sy = 1
+          py = 0
         let a = spins.current.get(k) ?? 0
         switch (pt.motion) {
-          case 'fill':
-            // nothing in it: nothing to show
-            if (level <= 0) continue
-            sy = level
-            break
           case 'spinX':
             if (busy) a += dt * 4
             rx = a
@@ -235,26 +231,18 @@ function MachineMeshes({ list }: { list: Building[] }) {
         spins.current.set(k, a)
         // where the part sits and how it leans at rest, then its own motion, then its size
         _m.compose(_p.set(...pt.at), _q.setFromEuler(_e.set(...(pt.tilt ?? [0, 0, 0]))), _s.set(1, 1, 1))
-        _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(pt.scale ?? 1, (pt.scale ?? 1) * sy, pt.scale ?? 1)))
+        _a.multiplyMatrices(_m, _b.compose(_p.set(0, py, 0), _q.setFromEuler(_e.set(rx, ry, rz)), _s.setScalar(pt.scale ?? 1)))
         put(pt === SHOW ? showOf(b) : pt.geo(), _a.premultiply(base))
       }
-      // the level beads in the model's front right-hand corner, turning with it: clear of its way in and out
-      const [mw, mh] = dimsOf(b.type as BuildingId, 1)
-      for (let i = 0; i < b.lvl - 1; i++) beads.m.setMatrixAt(beads.m.count++, _m.compose(_p.set(mw / 2 - 0.16, 0.18, mh / 2 - 0.12 - i * 0.14), _q.identity(), _s.setScalar(0.11)).premultiply(base))
-      if (b.lvl >= UPGRADE.maxLevel) beads.top.setMatrixAt(beads.top.count++, _m.compose(_p.set(cx, spec.top + 0.42, cz), _q.identity(), _s.setScalar(0.07)))
     }
     first.current = false
     for (const m of meshes.values()) m.instanceMatrix.needsUpdate = true
-    beads.m.instanceMatrix.needsUpdate = true
-    beads.top.instanceMatrix.needsUpdate = true
   })
   return (
     <group>
       {[...meshes.values()].map((m) => (
         <primitive key={m.uuid} object={m} />
       ))}
-      <primitive object={beads.m} />
-      <primitive object={beads.top} />
     </group>
   )
 }

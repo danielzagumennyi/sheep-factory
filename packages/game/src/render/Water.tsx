@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CapsuleGeometry, Color, CylinderGeometry, Mesh, MeshBasicMaterial } from 'three'
-import { GRID, LOOK, RES, WATER } from '@/game/balance'
+import { GRID, LOOK, WATER } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { Field, GameState, res, type World } from '@/game/world'
+import { Field, GameState, res, unkey, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { flat, model, vmat } from './kit'
 import { withReach } from './reach'
@@ -16,8 +16,8 @@ import { frame } from './frame'
  * stream»). Water cells are gameplay squares; the picture is not: a fine field over them (R samples a cell) is blurred
  * by half a cell, and its iso-line is the shore — straight runs stay straight, convex corners round, concave ones
  * fillet. The surface is the inside of that line, flat and unlit in hard steps of colour by distance to the shore
- * (foam, shallows, body, deep); a half-round green kerb runs along the line; a pumped cell weighs less, so the water
- * draws back and leaves mud (painted by Ground.tsx). Lily pads float on the bigger ponds and soft light dashes drift.
+ * (foam, shallows, body, deep); a half-round green kerb runs along the line. Lily pads float on the bigger ponds and
+ * soft light dashes drift.
  * Rebuilt only when the water changes.
  */
 export function Water() {
@@ -99,11 +99,11 @@ export function Water() {
   )
 }
 
-/** What the water looks like now, cheaply: which cells hold water, and how full each is. */
+/** Which cells hold water. */
 function waterSig(w: World) {
   const f = res(w, Field)
   let s = ''
-  for (const [k, t] of f.terrain) if (t === 'water' || t === 'bridge') s += k + ':' + (f.res.get(k)?.left ?? '') + ';'
+  for (const [k, t] of f.terrain) if (t === 'water' && unkey(k)[1] >= f.top && unkey(k)[0] < f.right) s += k + ';'
   return s
 }
 
@@ -122,42 +122,11 @@ export interface WaterField {
   dist: Float32Array
 }
 
-/**
- * Each body of water (cells joined side by side, bridges with them) weighs by how full it is as a whole, so a pumped
- * pond draws back evenly all round instead of pinching where one cell was emptied; a canal never gets thinner than
- * about half a cell.
- */
+/** Every water cell weighs the same: ponds are scenery, nothing drains them (docs/05-REWORK.md). */
 function bodyWeights(w: World) {
-  const f = res(w, Field)
-  const wet = (k: string) => {
-    const t = f.terrain.get(k)
-    return t === 'water' || t === 'bridge'
-  }
   const weight = new Map<string, number>()
-  for (const [k0] of f.terrain) {
-    if (!wet(k0) || weight.has(k0)) continue
-    const body: string[] = [],
-      todo = [k0]
-    weight.set(k0, 0)
-    while (todo.length) {
-      const k = todo.pop()!
-      body.push(k)
-      const [x, y] = k.split(',').map(Number) as [number, number]
-      for (const nb of [x + 1 + ',' + y, x - 1 + ',' + y, x + ',' + (y + 1), x + ',' + (y - 1)])
-        if (wet(nb) && !weight.has(nb)) {
-          weight.set(nb, 0)
-          todo.push(nb)
-        }
-    }
-    let have = 0,
-      max = 0
-    for (const k of body) {
-      have += Math.min(RES.water.max, f.res.get(k)?.left ?? RES.water.max)
-      max += RES.water.max
-    }
-    const wgt = WATER.drained + (1 - WATER.drained) * (max ? have / max : 1)
-    for (const k of body) weight.set(k, wgt)
-  }
+  const f = res(w, Field)
+  for (const [k, t] of f.terrain) if (t === 'water' && unkey(k)[1] >= f.top && unkey(k)[0] < f.right) weight.set(k, 1)
   return weight
 }
 

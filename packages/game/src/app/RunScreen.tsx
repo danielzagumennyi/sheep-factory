@@ -1,15 +1,40 @@
 import { useEffect, useMemo } from 'react'
-import type { MissionId } from '@/game/balance'
+import { SAVE } from '@/game/balance'
 import { GameContext } from '@/game/GameContext'
 import { startWorld } from '@/game/start'
 import { Scene } from '@/render/Scene'
 import { Hud } from '@/ui/Hud'
+import { loadSaved, writeSave } from './saves'
 import { useAppStore } from './store'
 
-/** One mission: its world, the 3D field and the HUD over it. A restart remounts this with a fresh world. */
-export function RunScreen({ mission }: { mission: MissionId }) {
-  const world = useMemo(() => startWorld(mission, { seed: (Date.now() & 0xffff) + 1, seenEver: useAppStore.getState().seenEver }), [mission])
-  useEffect(() => () => world.destroy(), [world])
+/**
+ * The game — the long one or the endless mode: its world, the 3D field and the HUD over it. «Again» remounts this with a
+ * fresh world, «Продолжить» with the kept one of its mode. The game is kept as it goes: at once (a new game takes the old
+ * one's place), every few seconds, when the page is hidden or closed, and when it is left for the main menu.
+ */
+export function RunScreen() {
+  const world = useMemo(() => {
+    const app = useAppStore.getState()
+    const opts = { seed: (Date.now() & 0xffff) + 1, seenEver: app.seenEver }
+    return (app.from === 'save' && loadSaved(app.mode, opts)) || startWorld({ ...opts, endless: app.mode === 'endless' })
+  }, [])
+  useEffect(() => {
+    const keep = () => writeSave(world)
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') keep()
+    }
+    keep()
+    const t = setInterval(keep, SAVE.everySec * 1000)
+    document.addEventListener('visibilitychange', hidden)
+    globalThis.addEventListener('pagehide', keep)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', hidden)
+      globalThis.removeEventListener('pagehide', keep)
+      keep()
+      world.destroy()
+    }
+  }, [world])
   const ctx = useMemo(() => ({ world }), [world])
   return (
     <GameContext.Provider value={ctx}>

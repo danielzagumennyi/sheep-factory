@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BuildingId, CardId, ClientId, ItemId, RecipeId } from '@/game/balance'
+import type { BuildingId, CardId, ClientId, ItemId, RecipeId, ResId } from '@/game/balance'
 import type { Selection, Tool } from '@/game/world'
 
 /**
@@ -7,17 +7,14 @@ import type { Selection, Tool } from '@/game/world'
  * components subscribe to the slices they draw. Clicks in the HUD act on the world directly and the next refresh
  * shows the result.
  */
-export interface OrderHud {
-  id: string
-  dock: ClientId
+export interface AskHud {
+  id: number
+  client: ClientId
   kind: ItemId
   have: number
   total: number
-  batch: number
-  pay: number
-  done: boolean
-  extra: number
-  extraPay: number
+  /** What one pays. */
+  price: number
 }
 export interface ToolHud {
   id: BuildingId
@@ -32,17 +29,14 @@ export interface HudState {
   noMoney: number
   /** Bumped when the hand tried to work the field on pause. */
   pauseNudge: number
-  /** The barn's stock: how many of each good. */
+  /** The stock: how many of each good. */
   stock: Partial<Record<ItemId, number>>
   clock: number
-  par: number
-  finished: boolean
-  stars: number
-  finishT: number
-  showResult: boolean
+  /** The village level open now, from 1. */
+  level: number
   speed: number
   goal: GoalHud
-  orders: OrderHud[]
+  asks: AskHud[]
   /** The quick bar's ten slots (an empty slot is null). */
   tools: (ToolHud | null)[]
   /** The recipes the workshop knows in this mission. */
@@ -50,6 +44,10 @@ export interface HudState {
   tool: Tool
   /** The recipe a new workshop starts with. */
   recipe: RecipeId
+  /** What the hand sows, and what a new seeder starts with. */
+  seed: ResId
+  /** Kinds the farm has met so far: the splitter's rules and the market offer only these. */
+  met: ItemId[]
   sel: Selection
   /** Screen position of the selection's popup anchor. */
   popAt: { x: number; y: number } | null
@@ -65,18 +63,16 @@ export const useHudStore = create<HudState>((set) => ({
   pauseNudge: 0,
   stock: {},
   clock: 0,
-  par: 1,
-  finished: false,
-  stars: 0,
-  finishT: 0,
-  showResult: false,
+  level: 1,
   speed: 1,
   goal: null,
-  orders: [],
+  asks: [],
   tools: [],
   recipes: [],
   tool: 'hand',
-  recipe: 'cyarn',
+  recipe: 'sweater',
+  seed: 'meadow',
+  met: [],
   sel: null,
   popAt: null,
   card: null,

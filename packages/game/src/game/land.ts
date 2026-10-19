@@ -1,4 +1,4 @@
-import { DIRS, GRID, type TerrainId } from './balance'
+import { DIRS, GRID, type ResId, type TerrainId } from './balance'
 
 /** A grid cell as written in mission tables. */
 export type Spot = readonly [number, number]
@@ -39,7 +39,7 @@ export function BLOB(cx: number, cy: number, n: number, seed: number, xa: number
 }
 
 /** One plot's deposits: `[resource, cells]`, one or two of them (two share the plot half and half). */
-export type PlotDeposits = readonly (readonly ['meadow' | 'water' | 'bush', number])[]
+export type PlotDeposits = readonly (readonly [ResId, number])[]
 
 /**
  * The land around the starting plots: every outer plot holds its own deposit, so each one is worth buying for

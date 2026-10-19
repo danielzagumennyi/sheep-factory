@@ -1,17 +1,19 @@
-import { Color, CylinderGeometry, Euler, ExtrudeGeometry, Float32BufferAttribute, Matrix4, Shape, SphereGeometry, type BufferGeometry } from 'three'
-import { LOOK, ROOF, type BuildingId } from '@/game/balance'
+import { Color, CylinderGeometry, Euler, Float32BufferAttribute, Matrix4, SphereGeometry, type BufferGeometry } from 'three'
+import { DIRS, LOOK, PEN, ROOF, type BuildingId, type Dir } from '@/game/balance'
+import { entryOf, exitOf } from '@/game/world'
 import { model } from './kit'
-import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, ring, shade, type V3 } from './models'
+import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, ring, shade, sheepModel, type V3 } from './models'
 
 /**
  * The machines, designed like Tower Factory's (the author, 15.10.2026: «визуально дают легко понять что делает каждое
  * из них, … главное дизайн»): not houses but contraptions, each with its own silhouette and one big working part that
- * says what it does — giant shears over a striped tent, spiky carding drums, a great spinning wheel, felting stamps,
- * a windpump over a barrel, a roller mower, a berry cart with a scooping arm, a craft table with yarn and needles and
- * what it makes on a stand. They stand on cream stone plinths (the belts are wood), and the model itself says where
+ * says what it does — giant shears over a striped tent, a hay manger over a trough, a pink shower over a dye vat, spiky
+ * carding drums, a great spinning wheel, felting stamps, a roller mower, a berry cart with a scooping arm, a seed
+ * spreader by its sacks, a craft table with yarn and needles and what it makes on a stand. They stand on cream stone plinths (the belts are wood), and the model itself says where
  * goods go in and out (the author, 16.10.2026, as the pasture's open gates do): a funnel tray between two capped posts
  * at the way in, a chute sloping down to the edge with what it makes on it at the way out (`inlet`, `outlet`, on the
- * cells of grid.ts `inCell` / `outCells`). Every part is chunky: nothing thinner than ~0.06 of a cell, no fuzz of small
+ * cells of grid.ts `machineIns` / `outCells`). A station on the sheep loop lets the sheep through by two gates, as the
+ * pen does, and takes its hay or dye by a tray on its right. Every part is chunky: nothing thinner than ~0.06 of a cell, no fuzz of small
  * bits (docs/04-ART.md).
  *
  * Local frame: x to the right of the screen, z towards the camera, y up, footprint centred. A model is built facing
@@ -22,8 +24,8 @@ import { INKY, METAL, WOOD, WOOD_DARK, ball, cached, cone, cyl, good, put, rb, r
 
 /** A moving part: where it sits, how it is turned at rest (`tilt`), how it moves while the machine works. */
 export type PartSpec = { geo: () => BufferGeometry; at: V3; motion: Motion; phase?: number; scale?: number; tilt?: V3 }
-/** How a part moves while the machine works; `fill` stands for what a store holds, scaled up from its floor by how full it is. */
-export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'stamp' | 'swing' | 'bob' | 'fill' | 'still'
+/** How a part moves while the machine works. */
+export type Motion = 'spinX' | 'spinX-' | 'spinZ' | 'spinZ-' | 'spinY' | 'snip' | 'snip-' | 'stamp' | 'swing' | 'bob' | 'still'
 export type MachineSpec = { body: BufferGeometry; top: number; parts: PartSpec[] }
 /** Where a workshop's product stands on show: on its stand over the way out. */
 export const WORKSHOP_SHOW: V3 = [-0.5, 0.62, 0.3]
@@ -167,6 +169,88 @@ const leaf = (len: number) => [
   put(rb(len - 0.06, 0.06, 0.06, 0.025), LOOK.fenceRail, [len / 2, 0.415, 0], [0, 0, 0.6]),
 ]
 
+// ---------------------------------------------------------------- the pen
+
+/** A pen's gates: how far each leaf stands open from the fence line (radians), how long it is. */
+const GATE = { open: 1.1, leaf: 0.9 } as const
+
+/**
+ * A pen, the same in the field and in hand when it is being placed (the author: the two were different), built facing
+ * south (dir 1) and centred like every model: its way out in the middle of the front, its way in in the middle of the
+ * east side (grid.ts exitOf / entryOf). A lawn with a trodden rim inside the fence, a post at every cell corner round
+ * it with two rails between, a gate hung in each gap and swung open the way the sheep go — out at the exit, in at the
+ * entry — and a few wisps of straw and pebbles on the floor.
+ */
+function penBody(): BufferGeometry[] {
+  const N = PEN.size,
+    o = N / 2
+  const pen = { x: 0, y: 0, w: N, h: N, dir: 1 as Dir }
+  const ex = exitOf(pen),
+    en = entryOf(pen)
+  // each gap: the two posts it lies between (cell corners) and the way the sheep go through it
+  const gap = (cx: number, cy: number, side: number, d: number) =>
+    side === 0
+      ? { ax: cx + 1, az: cy, bx: cx + 1, bz: cy + 1, d }
+      : side === 2
+        ? { ax: cx, az: cy, bx: cx, bz: cy + 1, d }
+        : side === 1
+          ? { ax: cx, az: cy + 1, bx: cx + 1, bz: cy + 1, d }
+          : { ax: cx, az: cy, bx: cx + 1, bz: cy, d }
+  const [dx, dy] = DIRS[pen.dir]!,
+    [ix, iy] = DIRS[en.d]!
+  const gates = [gap(ex.x - dx, ex.y - dy, pen.dir, pen.dir), gap(en.x + ix, en.y + iy, (en.d + 2) % 4, en.d)]
+  const p: BufferGeometry[] = [put(rb(N - 0.08, 0.04, N - 0.08, 0.02), LOOK.pasture, [0, 0.02, 0])]
+  for (const [x, z, sx, sz] of [
+    [0, -o + 0.12, N - 0.1, 0.18],
+    [0, o - 0.12, N - 0.1, 0.18],
+    [-o + 0.12, 0, 0.18, N - 0.1],
+    [o - 0.12, 0, 0.18, N - 0.1],
+  ] as const)
+    p.push(put(rb(sx, 0.02, sz, 0.01), LOOK.penRim, [x, 0.045, z]))
+  // a post at every cell corner round the edge, two rails between neighbours, none across a gate
+  const posts: [number, number][] = []
+  for (let i = 0; i <= N; i++) posts.push([i, 0], [i, N])
+  for (let j = 1; j < N; j++) posts.push([0, j], [N, j])
+  const has = new Set(posts.map(([x, y]) => x + ',' + y))
+  const gaps = new Set(gates.map((g) => (g.ax + g.bx) / 2 + ',' + (g.az + g.bz) / 2))
+  for (const [x, y] of posts) {
+    p.push(put(rb(0.12, 0.48, 0.12, 0.04), LOOK.fence, [x - o, 0.24, y - o]))
+    const rails = (cx: number, cz: number, along: boolean) => {
+      for (const h of [0.17, 0.34]) p.push(put(rb(1, 0.07, 0.06, 0.025), LOOK.fenceRail, [cx - o, h, cz - o], [0, along ? 0 : Math.PI / 2, 0]))
+    }
+    if ((y === 0 || y === N) && has.has(x + 1 + ',' + y) && !gaps.has(x + 0.5 + ',' + y)) rails(x + 0.5, y, true)
+    if ((x === 0 || x === N) && has.has(x + ',' + (y + 1)) && !gaps.has(x + ',' + (y + 0.5))) rails(x, y + 0.5, false)
+  }
+  // a gate in each gap, hinged on one post and swung open the way the sheep go
+  for (const g of gates) {
+    const ux = g.bx - g.ax,
+      uz = g.bz - g.az,
+      [vx, vz] = DIRS[g.d]!
+    const lx = ux * Math.cos(GATE.open) + vx * Math.sin(GATE.open),
+      lz = uz * Math.cos(GATE.open) + vz * Math.sin(GATE.open)
+    const L = GATE.leaf
+    const leafs = [
+      put(rb(0.14, 0.6, 0.14, 0.045), LOOK.fence, [0, 0.3, 0]),
+      put(ball(0.5), LOOK.fence, [0, 0.61, 0], [0, 0, 0], [0.17, 0.1, 0.17]),
+      ...[0.16, 0.36].map((h) => put(rb(L, 0.07, 0.06, 0.025), LOOK.fenceRail, [L / 2, h, 0])),
+      put(rb(0.08, 0.34, 0.07, 0.025), LOOK.fenceRail, [L - 0.04, 0.26, 0]),
+      put(rb(L - 0.1, 0.05, 0.05, 0.02), LOOK.fenceRail, [L / 2, 0.26, 0], [0, 0, 0.28]),
+    ]
+    p.push(...setAt(leafs, g.ax - o, g.az - o, -Math.atan2(lz, lx)))
+  }
+  // a bale, wisps of straw and pebbles on the floor, always the same
+  p.push(put(rb(0.34, 0.24, 0.26, 0.06), LOOK.hay, [-0.7, 0.15, -0.75], [0, 0.4, 0]))
+  for (const [x, z, k, a] of [
+    [0.55, -0.6, 1, 1.3],
+    [-0.2, 0.5, 1, 2.6],
+    [0.7, 0.35, 0, 3.9],
+    [-0.75, 0.2, 1, 5.2],
+    [0.15, -0.15, 0, 6.5],
+  ] as const)
+    p.push(k ? put(ball(0.5), LOOK.hay, [x, 0.09, z], [0, a, 0], [0.26, 0.16, 0.2]) : put(ball(0.5), LOOK.stone, [x, 0.05, z], [0, a, 0], [0.14, 0.07, 0.11]))
+  return p
+}
+
 // ---------------------------------------------------------------- the machines
 
 /** Move freshly built pieces by (dx, dz). */
@@ -183,90 +267,37 @@ function setAt(list: BufferGeometry[], x: number, z: number, yaw = 0) {
 /** Where a 2×1's machine (A) stands: on the back cell, behind what it fills (B) on the front cell, where its output is. */
 const A_Z = -0.48
 /**
- * A 2×1 producer: the machine itself (A) on the back cell and what it fills (B) on the front one, on one plinth — or,
- * for a pump, only B on a plinth, A standing in the water — and the chute its goods leave by, out of B at the front
- * edge. Returns the merged body; A's parts sit at `moved(…, 0, A_Z)`.
+ * A 2×1: the machine itself (A) on the back cell and what it fills (B) on the front one, on one plinth, and the chute
+ * its goods leave by, out of B at the front edge (none for a seeder). Returns the merged body; A's parts sit at
+ * `moved(…, 0, A_Z)`.
  */
-function pair(a: BufferGeometry[], b: BufferGeometry[], out: BufferGeometry[], plinthFront = false) {
-  const base = plinthFront ? shift(plinth(0.9, 0.9), 0, -A_Z) : plinth(0.9, 1.84)
-  return { body: model([...base, ...shift(a, 0, A_Z), ...shift(b, 0, -A_Z), ...setAt(out, 0, EDGE)]) }
+function pair(a: BufferGeometry[], b: BufferGeometry[], out: BufferGeometry[]) {
+  return { body: model([...plinth(0.9, 1.84), ...shift(a, 0, A_Z), ...shift(b, 0, -A_Z), ...setAt(out, 0, EDGE)]) }
 }
+
+/**
+ * A station's two gates, as the shearer's: the sheep come in at the back and leave in front along the left half (the
+ * line of its way in and out), each gate between a post `P` from the middle and a capped post of its own.
+ */
+function gates(c: string, P: number): BufferGeometry[] {
+  const p: BufferGeometry[] = []
+  for (const [z, swing] of [
+    [-P, 0.9],
+    [P, 0.62],
+  ] as const) {
+    p.push(put(rb(0.15, 0.6, 0.15, 0.05), LOOK.fence, [-0.08, 0.45, z]))
+    p.push(put(ball(0.12), c, [-0.08, 0.78, z], [0, 0, 0], [1, 0.8, 1]))
+    p.push(...setAt(leaf(0.28), -P + 0.085, z, -swing), ...setAt(leaf(0.28), -0.155, z, Math.PI + swing))
+  }
+  return p
+}
+/** A station's tray for its good: on its right (the west, facing south), into the back cell, goods moving east. */
+const sideInlet = (c: string) => setAt(inlet(c, 0.28), -EDGE, -0.5, Math.PI / 2)
 const moved = (p: V3, dx: number, dz: number): V3 => [p[0] + dx, p[1], p[2] + dz]
 
 function build(type: BuildingId): MachineSpec {
   const c = ROOF[type]
   switch (type) {
-    case 'barn': {
-      // the stock's barn and its silo. The barn — red plank walls with cream corner trims under a dark gable roof —
-      // stands over its one way in (the left half): its big doors stand open in the gable at the back, where goods come
-      // in through the tray, and a loft hatch with hay peeking out is in the gable facing the camera. Beside it a round
-      // cream silo with a red dome, a bale and a bucket of water in front, a weathervane on the ridge; nothing comes out
-      const p = plinth(1.84, 1.84)
-      const W = 0.88,
-        D = 1.22,
-        H = 0.74,
-        y0 = 0.15,
-        x0 = -0.48,
-        z0 = 0,
-        TRIM = '#fff4e2'
-      p.push(put(rb(W, H, D, 0.05), c, [x0, y0 + H / 2, z0]))
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(0.09, H + 0.02, 0.09, 0.03), TRIM, [x0 + (sx * W) / 2, y0 + H / 2, z0 + (sz * D) / 2]))
-      // the gable: a red triangle the depth of the barn, a roof slab on each side of the ridge, a cream ridge board
-      const rise = 0.42
-      const gable = new Shape()
-      gable.moveTo(-W / 2, 0)
-      gable.lineTo(W / 2, 0)
-      gable.lineTo(0, rise)
-      gable.closePath()
-      p.push(put(new ExtrudeGeometry(gable, { depth: D - 0.02, bevelEnabled: false }).translate(0, 0, -(D - 0.02) / 2), c, [x0, y0 + H, z0]))
-      const a = Math.atan2(rise, W / 2),
-        len = Math.hypot(rise, W / 2) + 0.14
-      for (const s of [-1, 1]) p.push(put(rb(len, 0.09, D + 0.16, 0.035), WOOD_DARK, [x0 + (s * W) / 4 + s * 0.02, y0 + H + rise / 2 + 0.06, z0], [0, 0, -s * a]))
-      p.push(put(rb(0.12, 0.1, D + 0.2, 0.04), TRIM, [x0, y0 + H + rise + 0.05, z0]))
-      // the doors at the back, flung open: a cream frame round the dark doorway the tray leads into
-      const zb = z0 - D / 2 - 0.02
-      p.push(put(rb(0.64, 0.6, 0.04, 0.02), TRIM, [x0, y0 + 0.3, zb]))
-      p.push(put(rb(0.5, 0.52, 0.04, 0.015), shade(c, 0.35), [x0, y0 + 0.27, zb - 0.012]))
-      p.push(...setAt(inlet(c, 0.3), -0.5, -EDGE))
-      // the gable facing the camera: a cream-crossed window, the loft hatch with hay peeking out of it
-      const zf = z0 + D / 2 + 0.02
-      p.push(put(rb(0.34, 0.3, 0.04, 0.02), TRIM, [x0, y0 + 0.36, zf]))
-      p.push(put(rb(0.26, 0.22, 0.04, 0.015), shade(c, 0.82), [x0, y0 + 0.36, zf + 0.012]))
-      for (const r of [-1, 1]) p.push(put(rb(0.32, 0.05, 0.03, 0.012), TRIM, [x0, y0 + 0.36, zf + 0.03], [0, 0, r * 0.7]))
-      p.push(put(rb(0.3, 0.22, 0.04, 0.02), TRIM, [x0, y0 + H + 0.14, zf]))
-      p.push(put(rb(0.22, 0.15, 0.05, 0.02), shade(c, 0.55), [x0, y0 + H + 0.14, zf + 0.01]))
-      p.push(put(rb(0.2, 0.07, 0.07, 0.03), LOOK.hay, [x0, y0 + H + 0.09, zf + 0.03]))
-      // the silo: a cream tower with two dark hoops under a red dome
-      p.push(put(cyl(0.32, 1.2, 22), STONE_A, [0.46, y0 + 0.6, -0.22]))
-      for (const y of [0.36, 0.84]) p.push(put(cyl(0.335, 0.07, 22), WOOD_DARK, [0.46, y0 + y, -0.22]))
-      p.push(put(new SphereGeometry(0.34, 18, 9, 0, Math.PI * 2, 0, Math.PI / 2), c, [0.46, y0 + 1.2, -0.22]))
-      p.push(put(ball(0.08), TRIM, [0.46, y0 + 1.55, -0.22]))
-      // a bale and a bucket of water in front
-      p.push(put(rb(0.32, 0.2, 0.24, 0.05), LOOK.hay, [0.56, y0 + 0.1, 0.62]))
-      p.push(put(rb(0.33, 0.21, 0.03, 0.012), WOOD, [0.56, y0 + 0.1, 0.56]))
-      p.push(put(rb(0.33, 0.21, 0.03, 0.012), WOOD, [0.56, y0 + 0.1, 0.68]))
-      p.push(good('water').clone().scale(1.3, 1.3, 1.3).translate(0.12, y0, 0.74))
-      return {
-        body: model(p),
-        top: y0 + 1.7,
-        parts: [
-          {
-            geo: () =>
-              cached('weathervane', () =>
-                model([
-                  put(cyl(0.025, 0.36, 8), INKY, [0, 0.18, 0]),
-                  put(ball(0.05), METAL, [0, 0.36, 0]),
-                  put(rb(0.34, 0.04, 0.03, 0.012), INKY, [0, 0.3, 0]),
-                  put(cone(0.06, 0.1, 4), INKY, [0.19, 0.3, 0], [0, 0, -Math.PI / 2]),
-                  put(rb(0.08, 0.1, 0.02, 0.01), INKY, [-0.16, 0.3, 0]),
-                ]),
-              ),
-            at: [x0, y0 + H + rise + 0.08, z0],
-            motion: 'spinY',
-          },
-        ],
-      }
-    }
     case 'carder': {
       // two big toothed drums between wooden cheeks, a hopper of fleece over the way in behind them, the roving sliding
       // out down the chute in front
@@ -401,11 +432,13 @@ function build(type: BuildingId): MachineSpec {
       p.push(put(rb(1.04, 0.085, 0.2, 0.03), c, [0.3, 0.605, -0.4]))
       // the booth: a back wall with the hatch on the way in, two posts, a round awning striped mustard and cream,
       // scalloped along the front
-      p.push(put(rb(1.04, 0.9, 0.14, 0.05), WOOD_DARK, [0.31, 0.62, -0.72]))
-      p.push(put(rb(0.12, 0.9, 0.14, 0.05), WOOD_DARK, [-0.77, 0.62, -0.72]))
-      p.push(put(rb(0.6, 0.36, 0.14, 0.05), WOOD_DARK, [-0.5, 0.89, -0.72]))
-      p.push(put(rb(0.64, 0.08, 0.18, 0.035), c, [-0.5, 0.7, -0.72]))
-      p.push(...setAt(inlet(c, 0.3), -0.5, -EDGE))
+      // two hatches, one for each good of the recipe (the second by the other back cell, grid.ts machineIns)
+      for (const x of [-0.77, 0, 0.77]) p.push(put(rb(x ? 0.12 : 0.4, 0.9, 0.14, 0.05), WOOD_DARK, [x, 0.62, -0.72]))
+      for (const x of [-0.5, 0.5]) {
+        p.push(put(rb(0.6, 0.36, 0.14, 0.05), WOOD_DARK, [x, 0.89, -0.72]))
+        p.push(put(rb(0.64, 0.08, 0.18, 0.035), c, [x, 0.7, -0.72]))
+        p.push(...setAt(inlet(c, 0.3), x, -EDGE))
+      }
       for (const x of [-0.8, 0.8]) p.push(put(rb(0.12, 1.1, 0.12, 0.04), WOOD_DARK, [x, 0.66, -0.12]))
       const STRIPES = 7
       for (let i = 0; i < STRIPES; i++)
@@ -420,7 +453,7 @@ function build(type: BuildingId): MachineSpec {
         p.push(put(cyl(0.065, 1.1, 12), METAL, [-0.1, 1.9, -0.54], [0.1, 0, tilt]))
         p.push(put(ball(0.13), '#f2c14e', [-0.1 - Math.sin(tilt) * 0.55, 1.9 + Math.cos(tilt) * 0.55, -0.54 + 0.06]))
       }
-      const spools = [LOOK.cyarn, '#9fd36a', LOOK.hay]
+      const spools = [LOOK.pyarn, LOOK.yarn, LOOK.pwool]
       spools.forEach((col, i) => p.push(put(cyl(0.1, 0.19, 14), col, [0.36 + i * 0.2, 0.74, -0.32])))
       // the stand (its product is a part of Machines.tsx, at WORKSHOP_SHOW) and the chute in front of it
       p.push(put(cyl(0.3, 0.14, 22), STONE_DARK, [WORKSHOP_SHOW[0], 0.2, WORKSHOP_SHOW[2]]))
@@ -530,54 +563,6 @@ function build(type: BuildingId): MachineSpec {
         ],
       }
     }
-    case 'pump': {
-      // a windpump standing in the pond (the author: its tower's cell is in the water): a sturdy four-legged tower on
-      // a little deck over the water, carrying a big wind wheel, its intake pipe down into the pond; on the land cell in
-      // front the barrel it fills, a thick pipe from the tower's head over to a spout bent down over it, water pouring in,
-      // and the chute a bucket of it leaves by
-      const t: BufferGeometry[] = []
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) t.push(put(rb(0.11, 1.16, 0.11, 0.045), WOOD, [sx * 0.17, 0.6, sz * 0.17], [sz * 0.1, 0, -sx * 0.1]))
-      t.push(put(rb(0.62, 0.08, 0.62, 0.03), WOOD_DARK, [0, 0.16, 0]))
-      for (const y of [0.5, 0.86]) t.push(put(rb(0.36, 0.08, 0.36, 0.03), WOOD_DARK, [0, y, 0]))
-      t.push(put(rb(0.22, 0.18, 0.26, 0.06), INKY, [0, 1.24, 0]))
-      t.push(put(rb(0.08, 0.28, 0.4, 0.035), c, [0, 1.28, -0.36]))
-      t.push(put(cyl(0.09, 1.1, 12), METAL, [0, 0.7, 0]))
-      t.push(put(cyl(0.13, 0.08, 12), INKY, [0, 0.2, 0]))
-      const BZ = -0.1
-      const r: BufferGeometry[] = [put(cyl(0.3, 0.46, 22, 0.26), WOOD, [0, 0.38, BZ])]
-      for (const y of [0.24, 0.52]) r.push(put(cyl(0.31, 0.06, 22), INKY, [0, y, BZ]))
-      r.push(put(cyl(0.26, 0.05, 22), LOOK.waterItem, [0, 0.6, BZ]))
-      const { body } = pair(t, r, outlet(c, good('water'), 0.32, 0.36), true)
-      // the pipe from the tower over to the barrel, a spout bent down over it and the water pouring in
-      const bz = -A_Z + BZ
-      const pipe = [
-        put(cyl(0.085, bz - A_Z, 12), METAL, [0, 0.98, A_Z / 2 + bz / 2], [Math.PI / 2, 0, 0]),
-        put(ball(0.11), METAL, [0, 0.98, bz]),
-        put(cyl(0.085, 0.2, 12), METAL, [0, 0.86, bz]),
-        put(cyl(0.11, 0.06, 12), INKY, [0, 0.76, bz]),
-        put(cyl(0.07, 0.16, 10, 0.06), LOOK.waterItem, [0, 0.66, bz]),
-      ]
-      return {
-        body: model([body, ...pipe]),
-        top: 1.7,
-        parts: [
-          {
-            geo: () =>
-              cached('windWheel', () => {
-                const f: BufferGeometry[] = [put(cyl(0.12, 0.14, 14), INKY, [0, 0, 0], [Math.PI / 2, 0, 0]), put(ring(0.42, 0.05), WOOD_DARK, [0, 0, 0])]
-                for (let i = 0; i < 12; i++) {
-                  const a = (i / 12) * Math.PI * 2
-                  f.push(put(rb(0.16, 0.34, 0.06, 0.04), i % 2 ? '#ffffff' : c, [Math.sin(a) * 0.27, Math.cos(a) * 0.27, (i % 2) * 0.02], [0, 0.25, -a]))
-                }
-                return model(f)
-              }),
-            at: moved([0, 1.24, 0.2], 0, A_Z),
-            tilt: [-0.5, 0, 0],
-            motion: 'spinZ',
-          },
-        ],
-      }
-    }
     case 'berry': {
       // a berry cart (big spoked wheels, a basket heaped with berries, a crane boom with a scoop that swings out to the
       // bushes) behind a big vat of purple dye, a pot of it sliding out down the chute in front
@@ -627,6 +612,146 @@ function build(type: BuildingId): MachineSpec {
         ],
       }
     }
+    case 'feeder': {
+      // a hay manger the sheep walk under: four stout posts, a slatted V rack heaped with hay on top, a long trough of
+      // hay beside their lane, a bale by it, a pitchfork bobbing in the rack while it feeds; the hay comes in on the right
+      const p = plinth(1.84, 1.84)
+      const P = 0.78
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(0.17, 1.0, 0.17, 0.06), WOOD_DARK, [sx * P, 0.63, sz * P]))
+      for (const s of [-1, 1]) p.push(put(rb(2 * P + 0.1, 0.12, 0.14, 0.05), c, [0, 1.14, s * P]))
+      for (const s of [-1, 1]) {
+        p.push(put(rb(1.7, 0.08, 0.62, 0.03), WOOD, [0, 1.36, s * 0.34], [s * 0.55, 0, 0]))
+        for (let i = 0; i < 5; i++) p.push(put(rb(0.08, 0.1, 0.64, 0.03), WOOD_DARK, [-0.68 + i * 0.34, 1.37, s * 0.34], [s * 0.55, 0, 0]))
+      }
+      for (const [x, y, r] of [
+        [-0.5, 1.42, 0.28],
+        [0, 1.48, 0.32],
+        [0.5, 1.42, 0.28],
+        [-0.24, 1.6, 0.22],
+        [0.26, 1.6, 0.22],
+      ] as const)
+        p.push(put(ball(r), LOOK.hay, [x, y, 0], [0, 0, 0], [1.3, 0.75, 1]))
+      // the trough along the sheep's lane, on its left, full of hay, and a bale in the corner
+      p.push(put(rb(0.36, 0.22, 1.1, 0.05), WOOD, [0.3, 0.26, -0.05]))
+      p.push(put(rb(0.26, 0.08, 1.0, 0.03), LOOK.hay, [0.3, 0.38, -0.05]))
+      p.push(put(rb(0.28, 0.24, 0.36, 0.06), LOOK.hay, [0.62, 0.27, 0.56]))
+      p.push(put(rb(0.03, 0.25, 0.37, 0.012), WOOD, [0.55, 0.27, 0.56]))
+      p.push(put(rb(0.03, 0.25, 0.37, 0.012), WOOD, [0.69, 0.27, 0.56]))
+      p.push(...gates(c, P), ...sideInlet(c))
+      return {
+        body: model(p),
+        top: 2.05,
+        parts: [
+          {
+            geo: () =>
+              cached('pitchfork', () =>
+                model([
+                  put(cyl(0.04, 0.9, 8), WOOD, [0, 0.2, 0]),
+                  put(rb(0.3, 0.06, 0.06, 0.025), METAL, [0, -0.26, 0]),
+                  ...[-0.12, 0, 0.12].map((x) => put(cone(0.035, 0.2, 6), METAL, [x, -0.38, 0], [Math.PI, 0, 0])),
+                ]),
+              ),
+            at: [0.42, 1.92, 0.08],
+            tilt: [0, 0, -0.35],
+            motion: 'bob',
+          },
+        ],
+      }
+    }
+    case 'dyer': {
+      // a dyeing arch the sheep walk under: two striped posts with a beam, a big tub of pink dye on top that rocks and
+      // drips onto them, a vat of dye beside their lane, pots of berry dye by it; the dye comes in on the right
+      const p = plinth(1.84, 1.84)
+      for (const sx of [-1, 1]) {
+        p.push(put(rb(0.22, 1.1, 0.22, 0.07), c, [sx * 0.76, 0.68, 0]))
+        for (const y of [0.4, 0.8]) p.push(put(rb(0.24, 0.1, 0.24, 0.04), '#ffffff', [sx * 0.76, y, 0]))
+      }
+      p.push(put(rb(1.74, 0.16, 0.3, 0.06), WOOD_DARK, [0, 1.28, 0]))
+      // the vat by the lane, brimful of pink, with dark hoops
+      p.push(put(cyl(0.34, 0.5, 22, 0.3), WOOD, [0.46, 0.4, -0.4]))
+      for (const y of [0.26, 0.56]) p.push(put(cyl(0.35, 0.06, 22), INKY, [0.46, y, -0.4]))
+      p.push(put(cyl(0.3, 0.05, 22), LOOK.pyarn, [0.46, 0.66, -0.4]))
+      // the pink puddle in the lane where the sheep stand, and pots of dye
+      p.push(put(cyl(0.4, 0.03, 22), LOOK.pwool, [-0.46, 0.16, 0]))
+      for (const [x, z] of [
+        [0.62, 0.52],
+        [0.36, 0.62],
+      ] as const)
+        p.push(good('dye').clone().scale(1.3, 1.3, 1.3).translate(x, 0.12, z))
+      p.push(...gates(c, 0.78), ...sideInlet(c))
+      return {
+        body: model(p),
+        top: 2.1,
+        parts: [
+          {
+            geo: () =>
+              cached('dyeTub', () => {
+                const t: BufferGeometry[] = [put(cyl(0.34, 0.34, 20, 0.28), shade(c, 1.1), [0, 0, 0])]
+                t.push(put(cyl(0.35, 0.06, 20), INKY, [0, 0.12, 0]))
+                t.push(put(cyl(0.3, 0.05, 20), LOOK.pyarn, [0, 0.16, 0]))
+                // drips falling from its spout
+                for (const [x, y] of [
+                  [0.36, -0.12],
+                  [0.38, -0.32],
+                  [0.34, -0.5],
+                ] as const)
+                  t.push(put(ball(0.06), LOOK.pyarn, [x, y, 0], [0, 0, 0], [0.8, 1.2, 0.8]))
+                return model(t)
+              }),
+            at: [-0.5, 1.56, 0],
+            motion: 'swing',
+          },
+        ],
+      }
+    }
+    case 'seeder': {
+      // a seed spreader: a green hopper on three legs with a spinning disc under it that flings the seeds about, its
+      // tray behind for the seeds a belt brings; in front the sacks of seed with a sprout pot. Nothing comes out
+      const t: BufferGeometry[] = []
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2
+        t.push(put(rb(0.09, 0.6, 0.09, 0.035), WOOD_DARK, [Math.cos(a) * 0.24, 0.42, Math.sin(a) * 0.24], [Math.sin(a) * 0.15, 0, -Math.cos(a) * 0.15]))
+      }
+      t.push(put(cone(0.36, 0.42, 18), c, [0, 0.9, 0], [Math.PI, 0, 0]))
+      t.push(put(cyl(0.36, 0.1, 18), shade(c, 1.15), [0, 1.14, 0]))
+      t.push(put(cyl(0.32, 0.04, 18), LOOK.hay, [0, 1.19, 0]))
+      const k: BufferGeometry[] = []
+      for (const [x, z, col] of [
+        [-0.16, -0.08, '#e9dcc0'],
+        [0.14, 0.1, '#dccba6'],
+      ] as const) {
+        k.push(put(rb(0.32, 0.42, 0.28, 0.12), col, [x, 0.36, z]))
+        k.push(put(ball(0.09), WOOD_DARK, [x, 0.6, z], [0, 0, 0], [1.2, 0.6, 1]))
+      }
+      k.push(put(cyl(0.12, 0.14, 14, 0.09), '#c9935a', [0.24, 0.22, -0.26]))
+      k.push(put(cone(0.08, 0.2, 8), LOOK.sprout, [0.24, 0.38, -0.26]))
+      const { body } = pair(t, k, [])
+      return {
+        body: model([body, ...setAt(inlet(c, 0.24), 0, -EDGE)]),
+        top: 1.5,
+        parts: [
+          {
+            geo: () =>
+              cached('seedDisc', () => {
+                const d: BufferGeometry[] = [put(cyl(0.24, 0.04, 18), METAL, [0, 0, 0])]
+                for (let i = 0; i < 4; i++) d.push(put(rb(0.4, 0.05, 0.05, 0.02), INKY, [0, 0.03, 0], [0, (i / 4) * Math.PI, 0]))
+                for (let i = 0; i < 5; i++) {
+                  const a = (i / 5) * Math.PI * 2
+                  d.push(put(ball(0.035), LOOK.hay, [Math.cos(a) * 0.32, 0.02, Math.sin(a) * 0.32]))
+                }
+                return model(d)
+              }),
+            at: moved([0, 0.62, 0], 0, A_Z),
+            motion: 'spinY',
+          },
+        ],
+      }
+    }
+    case 'pen':
+      return { body: model(penBody()), top: 0.9, parts: [] }
+    case 'sheep':
+      // a sheep in hand, bought into the pen it is put on
+      return { body: sheepModel().clone().translate(0, 0.02, 0), top: 0.9, parts: [] }
     case 'splitter':
     case 'merger': {
       // the hub on its piece of belt, as the field draws it (BeltPiece in Machines.tsx), facing +X, its way out: a
@@ -644,52 +769,6 @@ function build(type: BuildingId): MachineSpec {
       for (const sd of split ? [0, 1, 3] : [1, 2, 3]) arrow(sd, split)
       if (!split) arrow(0, true, 0.31)
       return { body: model(p), top: 0.3, parts: [] }
-    }
-    case 'feeder': {
-      // the pasture's hay rack, two cells long along the fence: a low wooden manger (a floor and four low walls, so the
-      // hay shows inside) on stout legs, a slanted rack of bars on the pen side (in front) that the sheep pull the hay
-      // through; the hay in it rises with what it holds
-      const p: BufferGeometry[] = []
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(0.11, 0.24, 0.11, 0.04), WOOD_DARK, [sx * 0.78, 0.12, sz * 0.24]))
-      p.push(put(rb(1.84, 0.08, 0.7, 0.03), WOOD, [0, 0.24, 0]))
-      for (const sz of [-1, 1]) p.push(put(rb(1.84, 0.22, 0.09, 0.035), WOOD, [0, 0.35, sz * 0.31]))
-      for (const sx of [-1, 1]) p.push(put(rb(0.09, 0.22, 0.7, 0.035), WOOD, [sx * 0.88, 0.35, 0]))
-      for (let i = 0; i < 7; i++) p.push(put(rb(0.07, 0.42, 0.07, 0.03), WOOD_DARK, [-0.72 + i * 0.24, 0.6, 0.24], [-0.38, 0, 0]))
-      p.push(put(rb(1.86, 0.08, 0.08, 0.03), WOOD_DARK, [0, 0.78, 0.15]))
-      return {
-        body: model(p),
-        top: 0.9,
-        parts: [
-          {
-            geo: () =>
-              cached('feederHay', () =>
-                model([
-                  put(rb(1.6, 1, 0.52, 0.12), LOOK.hay, [0, 0.5, 0]),
-                  put(ball(0.22), LOOK.hay, [-0.5, 1, 0.04], [0, 0, 0], [1.2, 0.5, 1]),
-                  put(ball(0.22), LOOK.hay, [0.1, 1, -0.06], [0, 0, 0], [1.3, 0.5, 1]),
-                  put(ball(0.2), LOOK.hay, [0.6, 1, 0.05], [0, 0, 0], [1.1, 0.5, 1]),
-                ]),
-              ),
-            at: [0, 0.28, 0],
-            motion: 'fill',
-            scale: 0.3,
-          },
-        ],
-      }
-    }
-    case 'trough': {
-      // the pasture's water trough, two cells long along the fence: a long stone basin (a floor and four walls, so the
-      // water shows inside) on a stone sill, its water rising with what it holds; a bucket by one end
-      const p: BufferGeometry[] = [put(rb(1.9, 0.08, 0.84, 0.04), STONE_DARK, [0, 0.04, 0])]
-      p.push(put(rb(1.8, 0.1, 0.72, 0.03), shade(c, 0.7), [0, 0.12, 0]))
-      for (const sz of [-1, 1]) p.push(put(rb(1.8, 0.36, 0.11, 0.045), c, [0, 0.26, sz * 0.305]))
-      for (const sx of [-1, 1]) p.push(put(rb(0.11, 0.36, 0.72, 0.045), c, [sx * 0.845, 0.26, 0]))
-      p.push(good('water').clone().scale(1.3, 1.3, 1.3).translate(-0.72, 0.08, 0.5))
-      return {
-        body: model(p),
-        top: 0.7,
-        parts: [{ geo: () => cached('troughWater', () => model([put(rb(1.56, 1, 0.5, 0.02), LOOK.waterItem, [0, 0.5, 0])])), at: [0, 0.16, 0], motion: 'fill', scale: 0.26 }],
-      }
     }
     default:
       return { body: model(plinth(0.9, 0.9)), top: 0.5, parts: [] }

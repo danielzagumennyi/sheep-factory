@@ -1,10 +1,11 @@
 import { create } from 'zustand'
-import { MISSIONS, TOOL_ORDER, type BuildingId, type CardId, type MissionId } from '@/game/balance'
+import { TOOL_ORDER, type BuildingId, type CardId } from '@/game/balance'
+import type { Mode } from './saves'
 
 /**
- * The app around the missions: which screen is up (the title over a big farm, or a mission), which mission runs, the
- * stars earned, the once-per-game cards already seen, the quick bar's slots. Saved in localStorage under `ovf.*`
- * (inside try/catch: private mode just forgets on reload).
+ * The app around the game: which screen is up (the title over a big farm, or the long game), the once-per-game cards
+ * already seen, the quick bar's slots, the switches. Saved in localStorage under `ovf.*` (inside try/catch: private
+ * mode just forgets on reload). The games themselves are kept by app/saves.ts, one per mode: «Продолжить» goes on with one.
  */
 type Screen = 'title' | 'run'
 /** The quick bar: ten slots, keys 1–9 and 0 (the clearing tool stands apart, on X). */
@@ -29,12 +30,13 @@ const save = (k: string, v: unknown) => {
 
 interface AppState {
   screen: Screen
-  mission: MissionId
-  /** Bumped on every start, so a restart of the same mission builds a fresh world. */
+  /** Bumped on every start, so «again» builds a fresh world. */
   runId: number
-  /** True while the menu is open over a running mission. */
+  /** How the run screen gets its world: a new game, or the kept one; of the long game or the endless mode. */
+  from: 'new' | 'save'
+  mode: Mode
+  /** True while the menu is open over the running game. */
   menuOver: boolean
-  stars: Partial<Record<MissionId, number>>
   seenEver: CardId[]
   sound: boolean
   /** The lawn can be switched on; it starts off (the author: «трава по-умолчанию выключена»). */
@@ -44,7 +46,10 @@ interface AppState {
   /** The book of buildings and goods is open (the game waits), and the building the pointer is over in it. */
   book: boolean
   bookHover: BuildingId | null
-  start: (id: MissionId) => void
+  /** A new game of a mode (the one played last, by default): it takes that mode's kept game's place. */
+  start: (mode?: Mode) => void
+  /** Go on with a mode's kept game. */
+  cont: (mode?: Mode) => void
   toTitle: () => void
   setBook: (open: boolean) => void
   setBookHover: (id: BuildingId | null) => void
@@ -52,7 +57,6 @@ interface AppState {
   assignSlot: (i: number, id: BuildingId, shown: Bar) => void
   openMenu: () => void
   closeMenu: () => void
-  saveStars: (id: MissionId, n: number) => void
   sawCards: (ids: readonly CardId[]) => void
   setSound: (on: boolean) => void
   setGrass: (on: boolean) => void
@@ -60,17 +64,18 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   screen: 'title',
-  mission: 'm1',
   runId: 0,
+  from: 'new',
+  mode: 'story',
   menuOver: false,
-  stars: load('ovf.stars', {}),
   seenEver: load('ovf.seen', []),
   sound: load('ovf.sound', true),
   grass: load('ovf.grass', false),
   bar: load<Bar>('ovf.bar', []),
   book: false,
   bookHover: null,
-  start: (id) => set({ screen: 'run', mission: id, runId: get().runId + 1, menuOver: false, book: false }),
+  start: (mode = get().mode) => set({ screen: 'run', from: 'new', mode, runId: get().runId + 1, menuOver: false, book: false }),
+  cont: (mode = get().mode) => set({ screen: 'run', from: 'save', mode, runId: get().runId + 1, menuOver: false, book: false }),
   toTitle: () => set({ screen: 'title', menuOver: false, book: false, runId: get().runId + 1 }),
   setBook: (open) => set({ book: open, bookHover: null }),
   setBookHover: (id) => set({ bookHover: id }),
@@ -82,11 +87,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   openMenu: () => set({ menuOver: true }),
   closeMenu: () => set({ menuOver: false }),
-  saveStars: (id, n) => {
-    const stars = { ...get().stars, [id]: Math.max(get().stars[id] ?? 0, n) }
-    save('ovf.stars', stars)
-    set({ stars })
-  },
   sawCards: (ids) => {
     const seen = [...new Set([...get().seenEver, ...ids])]
     save('ovf.seen', seen)
@@ -103,7 +103,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 }))
 
 /**
- * The quick bar as shown in a mission: the player's slots, a building not open here leaves its slot empty, and every
+ * The quick bar as shown in the game: the player's slots, a building not open yet leaves its slot empty, and every
  * open building that has no slot takes the first empty one (so a new player's bar fills by itself, in TOOL_ORDER).
  */
 export function barOf(saved: Bar, open: ReadonlySet<BuildingId>): Bar {
@@ -120,8 +120,5 @@ export function barOf(saved: Bar, open: ReadonlySet<BuildingId>): Bar {
   return bar
 }
 
-/** A mission opens once the one before it has a star. */
-export const missionOpen = (stars: AppState['stars'], i: number) => i === 0 || (stars[MISSIONS[i - 1]!.id] ?? 0) > 0 || (stars[MISSIONS[i]!.id] ?? 0) > 0
-
-/** Dev-only switches from the address (a release build reads none): `?m=m5` starts a mission straight away. */
+/** Dev-only switches from the address (a release build reads none): `?play` starts the game straight away. */
 export const DEV_PARAMS = new URLSearchParams(import.meta.env.DEV ? globalThis.location?.search ?? '' : '')

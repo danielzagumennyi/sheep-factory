@@ -1,5 +1,5 @@
 import { DIRS, type ItemId } from '@/game/balance'
-import { beltInDir, feeds, isBeltLike, targetOk } from '@/game/grid'
+import { beltInDir, feeds, get, isBeltLike, targetOk } from '@/game/grid'
 import { Flock, Plant, res, type SheepT, type World } from '@/game/world'
 import { beltPoint } from './kit'
 
@@ -23,12 +23,15 @@ export const frame = {
   /** How far that clock moved this frame. */
   dt: 0,
   goods: [] as GoodSpot[],
-  sheep: new Map<SheepT, { x: number; z: number; yaw: number; inMachine: boolean }>(),
+  /** Each sheep drawn: where, facing, inside a machine, and `lift` — a roaming one stepping over a belt walks on it. */
+  sheep: new Map<SheepT, { x: number; z: number; yaw: number; inMachine: boolean; lift?: number }>(),
   /** Belt cells with their input side, for the belt view. */
   belts: [] as { x: number; y: number; dir: number; inDir: number; phase: number; kind: string; blocked: number[]; dead: boolean }[],
 }
 
 const yawOfDir = (d: number) => -d * (Math.PI / 2)
+/** How high a sheep walks over a belt: on its slats. */
+const BELT_LIFT = 0.2
 
 export function collectFrame(world: World) {
   frame.goods.length = 0
@@ -63,6 +66,9 @@ export function collectFrame(world: World) {
   }
   for (const s of res(world, Flock).sheep) {
     if (frame.sheep.has(s)) continue
-    if (s.state === 'pasture' || s.state === 'waiting' || s.state === 'held') frame.sheep.set(s, { x: s.px, z: s.py, yaw: yawOfDir(s.face), inMachine: false })
+    if (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam' || s.state === 'held') {
+      const over = s.state === 'roam' && isBeltLike(get(world, Math.floor(s.px), Math.floor(s.py)))
+      frame.sheep.set(s, { x: s.px, z: s.py, yaw: yawOfDir(s.face), inMachine: false, lift: over ? BELT_LIFT : 0 })
+    }
   }
 }

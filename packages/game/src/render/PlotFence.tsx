@@ -7,11 +7,12 @@ import { Field, GameState, key, res, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
 import { fencePost, fenceSpan } from './models'
+import { island } from './island'
 
-const fieldCell = (x: number, y: number) => x >= 0 && y >= 0 && x < GRID.cols && y < GRID.roadY
+const fieldCell = (x: number, y: number) => x >= 0 && y >= island.top && x < island.right && y < GRID.roadY
 const wet = (w: World, x: number, y: number) => {
   const t = res(w, Field).terrain.get(key(x, y))
-  return t === 'water' || t === 'bridge'
+  return t === 'water'
 }
 
 /**
