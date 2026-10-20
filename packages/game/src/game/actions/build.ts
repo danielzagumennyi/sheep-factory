@@ -1,6 +1,6 @@
-import { BUILDINGS, LOOK, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
+import { BUILDINGS, DROP, LOOK, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
 import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, whyNot, cellsOf, pastureAt } from '../grid'
-import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, stockTake, toStock, type Building, type Item, type PastureT, type SplitRules, type World } from '../world'
+import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, stockTake, toStock, type Building, type Item, type PastureT, type SheepT, type SplitRules, type World } from '../world'
 import { sowAt } from '../systems/machines'
 import { sendHome } from '../systems/sheep'
 import { fireEvent } from '../systems/unlocks'
@@ -30,14 +30,14 @@ export function pileHere(w: World, x: number, y: number): Building | null {
 /**
  * Build `type` with its top-left cell at (x, y), facing `dir` (its footprint is `dimsOf(type, dir)`; `anchorAt` finds
  * that cell for a pointer). A splitter or merger replaces the belt it is placed on and keeps its item; a pen is a
- * building of its own kind (GDD 5); a sheep is bought into the pen it is put on (GDD 5); the sowing tool puts a seed
+ * building of its own kind (GDD 5); a sheep is bought where it is put, into a pen or onto the grass (GDD 5); the sowing tool puts a seed
  * from the stock on the cell (GDD 6.1).
  */
 export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir, free = false): boolean {
   if (!res(w, Unlocks).unlocked.has(type)) return false
   if (whyNot(w, type, x, y, dir)) return false
   if (type === 'sow') return sowByHand(w, x, y)
-  if (type === 'sheep') return buySheep(w, pastureAt(w, x, y)!, free)
+  if (type === 'sheep') return buySheepAt(w, x, y, free)
   const price = free ? 0 : buildPrice(w, type)
   if (type === 'pen') {
     if (res(w, GameState).coins < price) {
@@ -297,16 +297,40 @@ export function buyPlot(w: World, px: number, py: number) {
   return true
 }
 
-/** A fluffy sheep into a pen with room. */
+/**
+ * A fluffy sheep bought where the player clicked (the author, 20.10.2026: «при покупке овца просто должна появляться на
+ * поле, потом уже игрок переместит куда хочет»): into the pen there when it has room, or onto the free grass of cell
+ * (x, y), roaming. Either way it floats down on a parachute first (DROP).
+ */
+export function buySheepAt(w: World, x: number, y: number, free = false) {
+  const p = pastureAt(w, x, y)
+  if (p) return buySheep(w, p, free)
+  if (!pay(w, free)) return false
+  arrive(w, makeSheep(w, 0, true, { x: x + 0.5, y: y + 0.5 }))
+  return true
+}
+
+/** A fluffy sheep into a pen with room, floating down into it. */
 export function buySheep(w: World, p: PastureT, free = false) {
   if (residents(w, p) >= p.cap) return false
-  if (!free && res(w, GameState).coins < SHEEP.price) {
+  if (!pay(w, free)) return false
+  arrive(w, makeSheep(w, p.id, true))
+  return true
+}
+
+/** The sheep's price paid, unless it is free; false when the coins are short. */
+function pay(w: World, free: boolean) {
+  if (free) return true
+  if (res(w, GameState).coins < SHEEP.price) {
     noMoney(w)
     return false
   }
-  if (!free) spend(w, SHEEP.price)
-  const s = makeSheep(w, p.id, true)
-  res(w, Flock).sheep.push(s)
-  puff(w, s.px, s.py, LOOK.wool, 8)
+  spend(w, SHEEP.price)
   return true
+}
+
+/** A new sheep into the flock, still up in the sky. */
+function arrive(w: World, s: SheepT) {
+  s.drop = DROP.fall + DROP.land
+  res(w, Flock).sheep.push(s)
 }

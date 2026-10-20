@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Color } from 'three'
-import { GRID, ISLAND, LOOK, ROAD } from '@/game/balance'
+import { GRID, ISLAND, LOOK } from '@/game/balance'
+import { key } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { mat, vmat } from './kit'
-import { fenceSpan, pine, tile } from './models'
-import { island } from './island'
+import { fencePost, fenceSpan, pine, tile } from './models'
+import { island, rimTree } from './island'
 
 const _c = new Color()
 const hash = (n: number) => {
@@ -15,15 +16,16 @@ const hash = (n: number) => {
 
 /**
  * The still dressing of the island, like the reference dioramas: soft pastel paving on the dock row, a low wooden
- * fence round the rim (open where the road runs through) and trees on the far rim. Built
+ * fence along the field's edge (open where the road runs through) and trees on the ring of grass outside it. Built
  * once — none of it changes with play.
  */
 export function Props() {
   const tiles = useInstanced(tile(), mat('#ffffff'), (GRID.cols + 4) * 4, 'paving', 'receive')
   const fence = useInstanced(fenceSpan(), vmat(), 160, 'rim_fence')
+  const posts = useInstanced(fencePost(), vmat(), 8, 'rim_fence_posts')
   const pines = useInstanced(pine(0), vmat(), 40, 'rim_pines')
   const trees = useInstanced(pine(1), vmat(), 40, 'rim_firs')
-  const b = useMemo(() => ({ tiles: new Batch(tiles), fence: new Batch(fence), pines: new Batch(pines), trees: new Batch(trees) }), [tiles, fence, pines, trees])
+  const b = useMemo(() => ({ tiles: new Batch(tiles), fence: new Batch(fence), posts: new Batch(posts), pines: new Batch(pines), trees: new Batch(trees) }), [tiles, fence, posts, pines, trees])
   // filled on the first frame, then left alone
   const done = useMemo(() => ({ v: false }), [])
   useFrame(() => {
@@ -47,37 +49,38 @@ export function Props() {
         n++
       }
     }
-    // the rim fence, inset from the island's edge, open at the corners and where the road crosses
-    const m = ISLAND.margin - 0.42,
-      R = ISLAND.corner
-    const x0 = -m,
-      x1 = island.right + m,
-      z0 = island.top - m,
-      z1 = GRID.rows + m
-    for (let x = x0 + R; x + 1 <= x1 - R; x += 1) b.fence.put(x + 0.5, 0, z0, 0)
-    for (let x = x0 + R; x + 1 <= x1 - R; x += 1) b.fence.put(x + 0.5, 0, z1, 0)
-    const road0 = ROAD.row - 0.2,
-      road1 = ROAD.row + 2.2
-    for (const fx of [x0, x1])
-      for (let z = z0 + R; z + 1 <= z1 - R; z += 1) {
-        if (z + 1 > road0 && z < road1) continue
+    // the rim fence along the field's own edge, a cell in from the island's: the far row, the near one past the road, and
+    // both sides down to the dock row — the market and the road run on out to the island's ends like a street. A span
+    // carries its post at one end (the west one along x, the south one along z); a post closes every other end, so none
+    // stops in mid-air (the author, 20.10.2026)
+    const x1 = island.right,
+      z0 = island.top,
+      z1 = GRID.rows
+    const ends = new Set<string>(),
+      posted = new Set<string>()
+    for (const fz of [z0, z1])
+      for (let x = 0; x < x1; x++) {
+        b.fence.put(x + 0.5, 0, fz, 0)
+        ends.add(key(x, fz)).add(key(x + 1, fz))
+        posted.add(key(x, fz))
+      }
+    for (const fx of [0, x1])
+      for (let z = z0; z < GRID.roadY; z++) {
         b.fence.put(fx, 0, z + 0.5, Math.PI / 2)
+        ends.add(key(fx, z)).add(key(fx, z + 1))
+        posted.add(key(fx, z + 1))
       }
-    // trees on the far rim and the sides, never in front of the road
-    for (let i = 0; i < 40; i++) {
-      const side = i % 3
-      const t = hash(i * 3.7)
-      let x: number, z: number
-      if (side === 0) {
-        x = x0 + R + t * (x1 - x0 - 2 * R)
-        z = z0 - 0.45 + hash(i * 5.1) * 0.3
-      } else {
-        x = (side === 1 ? x0 - 0.45 : x1 + 0.45) + (hash(i * 5.1) - 0.5) * 0.3
-        z = z0 + R + t * (GRID.roadY - 1 - z0 - R)
+    for (const k of ends)
+      if (!posted.has(k)) {
+        const [x, z] = k.split(',').map(Number) as [number, number]
+        b.posts.put(x, 0, z)
       }
-      if (hash(i * 9.3) < 0.35) continue
-      ;(hash(i * 2.2) < 0.5 ? b.pines : b.trees).put(x, 0, z, hash(i) * 6, 0.75 + hash(i * 4.4) * 0.35)
-    }
+    // the rim's trees, each in the middle of its cell of the ring round the field
+    for (let y = z0 - 1; y < GRID.roadY; y++)
+      for (let x = -1; x <= x1; x++) {
+        const t = rimTree(x, y)
+        if (t) (t.fir ? b.trees : b.pines).put(x + 0.5, 0, y + 0.5, t.yaw, t.size)
+      }
     for (const q of Object.values(b)) q.end()
   })
   return (

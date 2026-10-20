@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { BUILDINGS, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
+import { BUILDINGS, DROP, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
 import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pastureAt, plotPrice, reachOf, terr, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setSeed } from './actions/build'
-import { dropSheep, gather, handClick, pickSheep, shearClick } from './actions/hand'
+import { dropSheep, gather, handClick, pickSheep, sheepAt, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
 import { shearYield } from './systems/machines'
 import { penIn, toRoam } from './systems/sheep'
@@ -188,9 +188,7 @@ describe('pens and sheep (GDD 5)', () => {
     expect(res(w, GameState).coins).toBe(c0 - PEN.cost)
     const p = res(w, Flock).pastures.at(-1)!
     expect(sheepOf(w).some((s) => s.home === p.id)).toBe(false)
-    // the sheep tool: only on a pen, only while it has room; it stays in hand for the next one
-    expect(whyNot(w, 'sheep', 18, 14)).toBe('needPen')
-    expect(place(w, 'sheep', 18, 14, 0)).toBe(false)
+    // the sheep tool on a pen: into it while it has room; it stays in hand for the next one
     for (let i = 0; i < PEN.cap; i++) expect(place(w, 'sheep', 16, 16, 0)).toBe(true)
     expect(res(w, GameState).coins).toBe(c0 - PEN.cost - PEN.cap * SHEEP.price)
     expect(whyNot(w, 'sheep', 16, 16)).toBe('penFull')
@@ -202,6 +200,38 @@ describe('pens and sheep (GDD 5)', () => {
     res(w, Flock).sheep = sheepOf(w).filter((s) => s.home !== p.id)
     expect(remove(w, 16, 16)).toBe(true)
     expect(res(w, Flock).pastures.includes(p)).toBe(false)
+  })
+  it('a bought sheep parachutes down where it is put, onto free own grass or into a pen; till it lands it neither walks nor can be picked up', () => {
+    const w = world()
+    // free own grass, roaming; not off the island, not on a building
+    expect(whyNot(w, 'sheep', 18, 14)).toBe('')
+    expect(whyNot(w, 'sheep', 18, 2)).toBe('edge')
+    expect(place(w, 'belt', 16, 16, 0)).toBe(true)
+    expect(whyNot(w, 'sheep', 16, 16)).toBe('taken')
+    const c0 = res(w, GameState).coins
+    expect(place(w, 'sheep', 18, 14, 0)).toBe(true)
+    expect(res(w, GameState).coins).toBe(c0 - SHEEP.price)
+    const s = sheepOf(w).at(-1)!
+    expect([s.state, s.home, s.px, s.py, s.wool]).toEqual(['roam', 0, 18.5, 14.5, 1])
+    expect(s.drop).toBe(DROP.fall + DROP.land)
+    // up in the air: out of reach, and it stays over the spot it lands on; no second one comes down on that cell meanwhile
+    run(w, DROP.fall / 2)
+    expect(sheepAt(w, 18.5, 14.5)).toBe(null)
+    expect(whyNot(w, 'sheep', 18, 14)).toBe('taken')
+    expect([s.px, s.py]).toEqual([18.5, 14.5])
+    // touching down: a puff of wool and a heart; then it is a sheep like any other
+    run(w, DROP.fall / 2 + DROP.land + 0.1)
+    expect(s.drop).toBeUndefined()
+    expect(res(w, Fx).q).toContainEqual({ kind: 'float', x: 18.5, y: 14.5, text: '♥', tone: 'accent' })
+    expect(sheepAt(w, s.px, s.py)).toBe(s)
+    // into a pen with room it comes down inside it, and does not walk out before it has landed
+    const p = pen0(w)
+    res(w, Flock).sheep = sheepOf(w).filter((q) => q.home !== p.id)
+    expect(place(w, 'sheep', p.x + 1, p.y + 1, 0)).toBe(true)
+    const q = sheepOf(w).at(-1)!
+    expect([q.state, q.home]).toEqual(['pasture', p.id])
+    run(w, DROP.fall)
+    expect(q.state).toBe('pasture')
   })
   it('a pen takes no fifth sheep from the hand; a belt never moves a sheep into another pen: it crosses it or waits', () => {
     const w = world()

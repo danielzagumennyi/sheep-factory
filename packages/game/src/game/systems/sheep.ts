@@ -1,6 +1,6 @@
-import { DIRS, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
+import { DIRS, DROP, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
 import { get, inGrid, isBeltLike, isStation, outCells, owned, pastureAt, step, terr } from '../grid'
-import { Flock, GameState, Plant, Rng, Time, Ui, key, newItem, pastureSpot, penOf, puff, res, type Building, type PastureT, type SheepT, type World } from '../world'
+import { Flock, GameState, Plant, Rng, Time, Ui, float, key, newItem, pastureSpot, penOf, puff, res, sound, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 
 /**
@@ -204,6 +204,18 @@ export function loopHasFeeder(w: World, p: PastureT) {
   return !!c.f && (c.f.inv.hay ?? 0) > 0 && res(w, Plant).b.get(key(c.f.x, c.f.y)) === c.f
 }
 
+/** A sheep coming down on its parachute (DROP): touching the grass it raises a puff of wool, with a thump and a heart. */
+function land(w: World, s: SheepT, dt: number) {
+  const was = s.drop!
+  s.drop = was - dt
+  if (was > DROP.land && s.drop <= DROP.land) {
+    puff(w, s.px, s.py, LOOK.wool, 10)
+    sound(w, 'place')
+    float(w, s.px, s.py, '♥', 'accent')
+  }
+  if (s.drop <= 0) delete s.drop
+}
+
 /** It stops where it is: the way it was going is dropped, it picks a new one once its rest is over. */
 function stand(s: SheepT) {
   s.tx = s.px
@@ -217,6 +229,11 @@ export function sheepSystem(w: World, dt: number) {
   const under = res(w, Ui).hover?.sheep ?? null
   for (const p of flock.pastures) if (p.exitT > 0) p.exitT -= dt
   for (const s of flock.sheep) {
+    // a bought sheep comes down first: nothing else happens to it till it has landed
+    if (s.drop !== undefined) {
+      land(w, s, dt)
+      continue
+    }
     if (s.state === 'transit') {
       crossing(w, s, dt)
       continue

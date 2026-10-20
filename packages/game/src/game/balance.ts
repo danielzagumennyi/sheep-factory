@@ -93,6 +93,14 @@ export const SHEEP = {
 } as const
 
 /**
+ * A bought sheep comes down from the sky on a parachute (the author, 20.10.2026: «красивую/интересную/забавную анимацию
+ * для её появления»): `fall` seconds swaying down from `height` cells, then `land` seconds bouncing on the grass while the
+ * parachute folds. Till it has landed it neither walks nor can be picked up. A soft dark `mark` on the grass shows where
+ * it will land from the moment it is bought, growing as it comes down (radius in cells, how dark).
+ */
+export const DROP = { fall: 1.9, land: 0.6, height: 6, mark: { from: 0.12, to: 0.35, opacity: 0.28 } } as const
+
+/**
  * A sheep with no pen roams the own land (the author, 19.10.2026: «овцы вообще просто бегают по всей территории»): to a
  * spot up to `reach` cells away that it can walk to in a straight line (`tries` spots looked at), with free ground
  * `room` cells round it so it stands clear of fences and buildings; there it grazes `rest` seconds and up to `restMore` more. It walks round buildings, pens and the `blocking` ground and steps over
@@ -327,8 +335,11 @@ export const CAMERA = {
 
 /** The board is an island (refs: the author's «Cute Magic» dioramas, 15.10.2026): a grass top over soil sides, in a calm sea. */
 export const ISLAND = {
-  /** Grass around the grid, cells. */
-  margin: 1.5,
+  /**
+   * Grass around the grid, cells: one cell, where the rim's trees stand (the author, 20.10.2026: «размер карты + 1
+   * клетка на которой декоративные деревья»); the rim's fence runs along the grid's own edge, a cell in.
+   */
+  margin: 1,
   corner: 1.8,
   /** Soil depth under the grass: the island floats on the sky like the reference dioramas, no sea round it. */
   soil: 1.5,
@@ -348,6 +359,9 @@ export const WATER = { R: 8, blur: 0.5, iso: 0.56, level: 0.035, kerbTop: 0.075,
  * author, after a critic). The fronts facing the camera stay half lit.
  */
 export const LIGHT = { sun: 1.9, hemi: 1.0, sunFrom: [-9, 26, -5] } as const
+
+/** The rim's trees (render/island.ts `rimTree`): the share of its cells that have one, and their sizes — no bigger than their cell, so none leans over the fence or the island's edge. */
+export const RIM = { trees: 0.6, size: [0.75, 0.85] } as const
 
 /**
  * The lawn (Grass.tsx): leaves per tuft, a leaf's size, tufts per cell side (a jittered grid, so no bald patches: the
@@ -504,6 +518,11 @@ export const LOOK = {
   sheepHorn: '#f0bd7e',
   sheepCollar: '#e0475b',
   sheepTag: '#f6bf3c',
+  /** A bought sheep's parachute (DROP): its red gores between white ones, and its cords. */
+  chute: '#e8596f',
+  chuteCord: '#f4ede4',
+  /** The spot on the grass where a bought sheep will land. */
+  dropMark: '#2f5214',
   hay: '#e2c15e',
   waterItem: '#4aa3df',
   /** Plain goods are white or near it, so they show on the wooden belts; the coloured ones are the bright ones. */

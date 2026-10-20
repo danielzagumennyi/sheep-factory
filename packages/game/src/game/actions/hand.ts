@@ -18,7 +18,8 @@ export function sheepAt(w: World, x: number, y: number): SheepT | null {
   let best: SheepT | null = null,
     bd: number = SHEEP.pickR
   for (const s of res(w, Flock).sheep) {
-    if (s.state !== 'pasture' && s.state !== 'transit' && s.state !== 'roam' && s.state !== 'belt') continue
+    // one still coming down on its parachute is out of reach
+    if ((s.state !== 'pasture' && s.state !== 'transit' && s.state !== 'roam' && s.state !== 'belt') || s.drop !== undefined) continue
     const r = s.wool >= 1 ? SHEEP.pickRFluffy : SHEEP.pickR,
       d = Math.hypot(s.px - x, s.py - y)
     if (d < r && d < bd + (r - SHEEP.pickR)) {

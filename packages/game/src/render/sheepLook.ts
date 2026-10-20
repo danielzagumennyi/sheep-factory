@@ -1,8 +1,8 @@
 import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { LOOK } from '@/game/balance'
+import { DROP, LOOK } from '@/game/balance'
 import type { SheepMarks } from '@/game/world'
 import { sheepVmat } from './kit'
-import { FLEECE_FIT, SHEEP_AT, fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, fleeceSweaterColored, sheepHead, sheepLegs, sheepLids, sheepTuft, shorn } from './models'
+import { CHUTE, FLEECE_FIT, SHEEP_AT, parachute, fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, fleeceSweaterColored, sheepHead, sheepLegs, sheepLids, sheepTuft, shorn } from './models'
 import type { SheepPose } from './pick'
 
 /**
@@ -22,6 +22,7 @@ const PARTS = {
   head: sheepHead,
   tuft: sheepTuft,
   lids: sheepLids,
+  chute: parachute,
 } satisfies Record<string, () => BufferGeometry>
 export type SheepPart = keyof typeof PARTS
 export type SheepMeshes = Record<SheepPart, InstancedMesh>
@@ -43,11 +44,15 @@ export interface SheepLook {
   marks: SheepMarks
 }
 
-/** How a sheep is moving this frame: its head bowed by `nod`, its fleece swelling by `breath` (−1…1), its eyes shut. */
+/**
+ * How a sheep is moving this frame: its head bowed by `nod`, its fleece swelling by `breath` (−1…1), its eyes shut, and
+ * the parachute over it while it comes down (`dropPose`).
+ */
 export interface SheepMotion {
   nod: number
   breath: number
   blink: boolean
+  chute?: Matrix4 | null
 }
 /** A sheep's own breathing and blinking at time `t`: slow and out of step with the others, a blink every few seconds. */
 export function liveliness(id: number, t: number) {
@@ -126,6 +131,7 @@ export function sheepDrawer(meshes: SheepMeshes) {
       put('head', pose.head)
       put('tuft', pose.head, tint)
       if (mo.blink) put('lids', pose.head)
+      if (mo.chute) put('chute', mo.chute)
     },
     end() {
       for (const k of Object.keys(n) as SheepPart[]) {
@@ -136,6 +142,47 @@ export function sheepDrawer(meshes: SheepMeshes) {
       }
     },
   }
+}
+
+const _d = new Matrix4(),
+  _y = new Matrix4()
+/**
+ * A bought sheep coming down (DROP), `e` seconds after it was bought, to stand at (x, z) facing `yaw`. Into `body` goes
+ * the sheep's pose: swaying under the canopy as it sinks, slowing near the grass, then squashing on it and bouncing
+ * back. Into `chute` goes the parachute's: over its back while it falls, then keeling over and folding away; false once
+ * it has gone.
+ */
+export function dropPose(e: number, t: number, id: number, x: number, z: number, yaw: number, body: Matrix4, chute: Matrix4) {
+  _y.makeRotationY(yaw)
+  if (e < DROP.fall) {
+    const k = e / DROP.fall,
+      h = DROP.height * (1 - k) * (1 - 0.35 * k),
+      calm = 1 - 0.7 * k
+    // a pendulum hung from the canopy: the sheep swings under it
+    const pivot = CHUTE.back + CHUTE.top
+    _d.makeTranslation(x, h + pivot, z)
+      .multiply(_m.makeRotationFromEuler(_e.set(Math.cos(t * 2.9 + id * 1.3) * 0.12 * calm, 0, Math.sin(t * 3.6 + id) * 0.22 * calm)))
+      .multiply(_m.makeTranslation(0, -pivot, 0))
+    body.multiplyMatrices(_d, _y)
+    chute.copy(_d).multiply(_m.makeTranslation(0, CHUTE.back, 0)).multiply(_m.makeRotationY(t * 0.8))
+    return true
+  }
+  const l = Math.min(1, (e - DROP.fall) / DROP.land),
+    // squashed flat as it touches down, then springing back
+    sy = 1 - 0.3 * Math.exp(-4 * l) * Math.cos(10 * l),
+    sxz = 1 + (1 - sy) * 0.6
+  body.makeTranslation(x, 0, z).multiply(_y).multiply(_m.makeScale(sxz, sy, sxz))
+  // the canopy keels over to one side of it, in the sheep's own frame so never into its fleece: the far side from the
+  // camera's usual place in the south, so it never hides the sheep's bounce
+  const c = 1 - l,
+    side = Math.cos(yaw) > 0 ? -1 : 1
+  chute
+    .makeTranslation(x, 0, z)
+    .multiply(_y)
+    .multiply(_m.makeTranslation(0, 0.15 + (CHUTE.back - 0.15) * c, side * 0.7 * Math.min(1, 1.8 * l)))
+    .multiply(_d.makeRotationX(side * 1.1 * l))
+    .multiply(_m.makeScale(c * (1 + 0.3 * l), c * c * 0.95 + 0.05, c * (1 + 0.3 * l)))
+  return c > 0.02
 }
 
 /** A pose to fill, for a sheep the pointer does not need to find. */

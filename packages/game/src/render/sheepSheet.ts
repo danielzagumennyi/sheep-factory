@@ -1,8 +1,8 @@
 import { CircleGeometry, DirectionalLight, HemisphereLight, Matrix4, Mesh, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer, WebGLRenderTarget } from 'three'
-import { CAMERA, LIGHT, LOOK } from '@/game/balance'
+import { CAMERA, DROP, LIGHT, LOOK } from '@/game/balance'
 import { noMarks, type SheepMarks } from '@/game/world'
 import { mat } from './kit'
-import { newPose, sheepDrawer, sheepMeshes, type SheepLook } from './sheepLook'
+import { dropPose, newPose, sheepDrawer, sheepMeshes, type SheepLook } from './sheepLook'
 
 /**
  * Dev only (`__game.sheep()`): every kind of sheep on one sheet, drawn by the flock's own code (sheepLook.ts) in the
@@ -12,7 +12,7 @@ import { newPose, sheepDrawer, sheepMeshes, type SheepLook } from './sheepLook'
  * `(await import('/src/render/sheepSheet.ts')).renderSheepSheet()`).
  */
 
-type Kind = readonly [label: string, look: Partial<Omit<SheepLook, 'marks'>> & { marks?: Partial<SheepMarks>; blink?: boolean }]
+type Kind = readonly [label: string, look: Partial<Omit<SheepLook, 'marks'>> & { marks?: Partial<SheepMarks>; blink?: boolean; drop?: number }]
 const PLAIN: Kind[] = [
   ['Пушистая', {}],
   ['Растёт', { wool: 0.45 }],
@@ -26,6 +26,8 @@ const PLAIN: Kind[] = [
   ['Баня + Завивка', { marks: { bath: true, curl: true } }],
   ['Баня + Вязка', { marks: { bath: true, knit: true } }],
   ['Моргает', { blink: true }],
+  // a bought sheep just above the grass under its parachute, seen from further off
+  ['Парашют', { drop: DROP.fall * 0.9 }],
 ]
 const COLOURED: Kind[] = [
   ...LOOK.fleeceColors.map((_, i): Kind => ['Покраска ' + (i + 1), { id: i, marks: { dye: true } }]),
@@ -65,7 +67,9 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
   const draw = sheepDrawer(meshes)
   const pose = newPose()
   const cam = new PerspectiveCamera(CAMERA.fov, 1, 0.1, 50)
-  const target = new Vector3(0.04, 0.34, 0)
+  const target = new Vector3(0.04, 0.34, 0),
+    high = new Vector3(0.04, 1.2, 0),
+    chuteAt = new Matrix4()
 
   const cols = Math.max(PLAIN.length, COLOURED.length)
   const rows: { kinds: Kind[]; view: keyof typeof VIEWS }[] = [
@@ -92,11 +96,16 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
     cell.width = cell.height = size
     const v = VIEWS[row.view]
     const p = (v.pitch * Math.PI) / 180
-    cam.position.copy(target).add(new Vector3(Math.cos(v.yaw) * Math.cos(p), Math.sin(p), Math.sin(v.yaw) * Math.cos(p)).multiplyScalar(row.view === 'far' ? 5.2 : 3.9))
-    cam.lookAt(target)
     row.kinds.forEach((kind, c) => {
+      // a sheep under its parachute is twice as tall: seen from twice as far, aimed higher
+      const drop = kind[1].drop,
+        aim = drop === undefined ? target : high
+      cam.position.copy(aim).add(new Vector3(Math.cos(v.yaw) * Math.cos(p), Math.sin(p), Math.sin(v.yaw) * Math.cos(p)).multiplyScalar((row.view === 'far' ? 5.2 : 3.9) * (drop === undefined ? 1 : 2)))
+      cam.lookAt(aim)
       draw.begin()
-      draw.add(lookOf(kind), new Matrix4(), { nod: 0.2, breath: 0, blink: !!kind[1].blink }, pose)
+      const body = new Matrix4()
+      const chute = drop !== undefined && dropPose(drop, 0, 0, 0, 0, 0, body, chuteAt)
+      draw.add(lookOf(kind), body, { nod: 0.2, breath: 0, blink: !!kind[1].blink, chute: chute ? chuteAt : null }, pose)
       draw.end()
       gl.setRenderTarget(rt)
       gl.setClearColor(LOOK.sky, 1)

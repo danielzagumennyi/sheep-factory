@@ -96,6 +96,8 @@ export interface SheepT {
   /** What its fleece went through in the salon since it was last shorn: what shearing it gives (SHEAR_YIELD). */
   marks: SheepMarks
   face: Dir
+  /** Seconds left of its arrival (DROP): a bought sheep floats down on a parachute, then lands. Absent once it is here. */
+  drop?: number
 }
 
 /** The salon's marks on a fleece: combed, curled, knitted into a sweater, felted in the bath, coloured. */

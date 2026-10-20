@@ -7,7 +7,7 @@ import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/wor
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
 import { flowers, mushroom } from './models'
-import { island } from './island'
+import { island, rimTree } from './island'
 
 const CAP = 900
 const KINDS: readonly string[] = ['mushroom', ...LOOK.flowers.map((_, i) => 'flowers' + i)]
@@ -102,7 +102,8 @@ function scatter(w: World, put: (k: Kind, x: number, z: number, yaw: number, s: 
   const m = Math.ceil(ISLAND.margin) - 1
   for (let y = island.top - m - 1; y < GRID.rows + m + 1; y++)
     for (let x = -m - 1; x < island.right + m + 1; x++) {
-      if (!free(w, x, y)) continue
+      // a rim tree's cell is its own
+      if (!free(w, x, y) || rimTree(x, y)) continue
       const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
       // the rim of the island is a little garden; the player's land stays mostly clear
       const rim = !inside || y > GRID.roadY + 2 + MARKET.rows

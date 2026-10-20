@@ -102,12 +102,21 @@ export const sowable = (w: World, b: Pick<Building, 'x' | 'y' | 'w' | 'h'>) => c
 export const waterNear = (w: World, x: number, y: number, bw: number, bh: number) => circle(x, y, bw, bh).some((c) => terr(w, c.x, c.y) === 'water')
 
 /** Why a building may not stand here — a key into WHY_TEXT, or '' when it may. */
-export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'needPen' | 'penFull'
+export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull'
 export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Dir = 0): WhyNot {
-  // a sheep goes only into a pen with room
+  // a sheep comes down into a pen with room, or onto free own grass, where a roaming sheep may stand
   if (type === 'sheep') {
     const p = pastureAt(w, x, y)
-    return !p ? 'needPen' : residents(w, p) >= p.cap ? 'penFull' : ''
+    if (p) return residents(w, p) >= p.cap ? 'penFull' : ''
+    if (!onIsland(w, x, y)) return 'edge'
+    if (!owned(w, x, y)) return 'buyPlot'
+    if (isRoad(x, y)) return 'road'
+    const t = terr(w, x, y)
+    if (t === 'water') return 'onWater'
+    if (t === 'rock' || t === 'tree' || t === 'bush') return t
+    // one sheep coming down on a cell at a time: three quick clicks are not three parachutes in one
+    const falling = res(w, Flock).sheep.some((s) => s.drop !== undefined && Math.hypot(s.px - x - 0.5, s.py - y - 0.5) < 0.6)
+    return get(w, x, y) || falling ? 'taken' : ''
   }
   const [bw, bh] = dimsOf(type, dir)
   // every cell of the footprint must be buildable

@@ -43,7 +43,7 @@ export const ITEM_DESC: Readonly<Record<ItemId, Text>> = {
 export const BUILDING_TEXT: Readonly<Record<BuildingId, { name: Text; desc: Text }>> = {
   belt: { name: { ru: 'Лента', en: 'Belt' }, desc: { ru: 'везёт груз и овец', en: 'carries goods and sheep' } },
   pen: { name: { ru: 'Загон', en: 'Pen' }, desc: { ru: 'дом для четырёх овец', en: 'a home for four sheep' } },
-  sheep: { name: { ru: 'Овца', en: 'Sheep' }, desc: { ru: 'клик по загону — овца в нём', en: 'click a pen to put it there' } },
+  sheep: { name: { ru: 'Овца', en: 'Sheep' }, desc: { ru: 'спустится на парашюте, куда кликнешь', en: 'parachutes down where you click' } },
   shearer: { name: { ru: 'Стрижка', en: 'Shearing' }, desc: { ru: 'снимает с овцы, что выросло', en: 'takes off what grew on a sheep' } },
   feeder: { name: { ru: 'Кормушка', en: 'Feeder' }, desc: { ru: 'кормит голодную овцу, сено справа', en: 'feeds a hungry sheep, hay from the right' } },
   dyer: { name: { ru: 'Покраска', en: 'Dyeing' }, desc: { ru: 'красит овцу, краска справа', en: 'colours a sheep, dye from the right' } },
@@ -81,7 +81,7 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
   belt: { title: { ru: 'Лента', en: 'Belt' }, text: { ru: 'Петля от стрижки обратно во вход', en: 'A loop from the shearing back in' } },
   pen: { title: { ru: 'Загон', en: 'Pen' }, text: { ru: 'Поставь и перетащи туда овец', en: 'Place it, drag the sheep in' } },
   shear: { title: { ru: 'Стрижка', en: 'Shearing' }, text: { ru: 'Три клика по пушистой овце', en: 'Three clicks on a fluffy sheep' } },
-  sheep: { title: { ru: 'Овцы', en: 'Sheep' }, text: { ru: 'Купи овцу и посели в загон', en: 'Buy a sheep, put it in a pen' } },
+  sheep: { title: { ru: 'Овцы', en: 'Sheep' }, text: { ru: 'Купи овцу — прилетит на парашюте', en: 'Buy a sheep: it parachutes in' } },
   mower: { title: { ru: 'Сенокос', en: 'Mower' }, text: { ru: 'Косит покос вокруг. Скошенное исчезает', en: 'Mows around itself. Mown cells go' } },
   feeder: { title: { ru: 'Овцы едят', en: 'Sheep eat' }, text: { ru: 'Кормушка на петлю, сено справа', en: 'A feeder on the loop, hay from the right' } },
   comb: { title: { ru: 'Расчёска', en: 'Combing' }, text: { ru: 'Расчёсанная овца даёт нитки', en: 'A combed sheep gives thread' } },
@@ -116,7 +116,6 @@ export const WHY_TEXT: Readonly<Record<Exclude<WhyNot, ''>, Text>> = {
   needBush: { ru: 'нужны кусты рядом', en: 'needs bushes near' },
   needWater: { ru: 'нужна вода рядом', en: 'needs water near' },
   foreignRes: { ru: 'ресурс на чужом участке', en: 'resource on unowned land' },
-  needPen: { ru: 'только в загон', en: 'into a pen only' },
   penFull: { ru: 'загон полон', en: 'the pen is full' },
 }
 

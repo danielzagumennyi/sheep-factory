@@ -425,6 +425,28 @@ export const sheepTuft = () =>
 export const sheepLids = () =>
   cached('sheepLids', () => model([-1, 1].map((s) => put(ball(0.058), LOOK.sheepFace, [0.104, 0.025, s * 0.066], [0, s * -0.35, 0], [0.85, 1.12, 1.05]))))
 
+/**
+ * A bought sheep's parachute (DROP): a canopy of eight gores, red and white, with a knob on top, and four cords down to
+ * where they meet on the sheep's back, the origin. `CHUTE.top` is the canopy's rim above that point.
+ */
+export const CHUTE = { top: 0.95, r: 0.55, back: 0.72 } as const
+export const parachute = () =>
+  cached('parachute', () => {
+    const p: BufferGeometry[] = []
+    // the canopy stops short of a half sphere: its rim flares a little
+    const cut = Math.PI / 2.2
+    for (let i = 0; i < 8; i++) p.push(tint(new SphereGeometry(CHUTE.r, 3, 5, (i * Math.PI) / 4, Math.PI / 4, 0, cut).scale(1, 0.62, 1).translate(0, CHUTE.top, 0), i % 2 ? '#ffffff' : LOOK.chute))
+    p.push(put(bead(0.06), LOOK.chute, [0, CHUTE.top + CHUTE.r * 0.62, 0]))
+    const rimR = Math.sin(cut) * CHUTE.r,
+      rimY = CHUTE.top + Math.cos(cut) * CHUTE.r * 0.62
+    for (let i = 0; i < 4; i++) {
+      const a = (i + 0.5) * (Math.PI / 2),
+        to = new Vector3(Math.cos(a) * rimR * 0.96, rimY, Math.sin(a) * rimR * 0.96)
+      p.push(tint(along(cyl(0.009, to.length(), 4).translate(0, to.length() / 2, 0), to, [0, 0, 0]), LOOK.chuteCord))
+    }
+    return model(p)
+  })
+
 /** Four stubby legs, tucked in under the round belly. */
 export const sheepLegs = () =>
   cached('sheepLegs', () => {

@@ -264,10 +264,12 @@ function paint(world: World, c: HTMLCanvasElement) {
   g.strokeStyle = 'rgba(255,255,255,0.75)'
   g.lineWidth = 2
   for (const x of MARKET.stalls) g.strokeRect(wx(x + MARKET.stallW / 2 - 0.8) + 4, roadY + 5, 1.6 * PX - 8, PX - 10)
-  // meadows: tilled soil with two furrows under the sheaves
+  // meadows: tilled soil with two furrows under the sheaves — on the island only: one still under the sky (it grows
+  // later) left a bare patch on the rim's grass
   for (const [k, t] of res(world, Field).terrain) {
     if (t !== 'meadow') continue
     const [x, y] = unkey(k)
+    if (y < island.top || x >= island.right) continue
     g.fillStyle = LOOK.meadowGround
     g.beginPath()
     g.roundRect(wx(x) + 1.5, wz(y) + 1.5, PX - 3, PX - 3, 8)
