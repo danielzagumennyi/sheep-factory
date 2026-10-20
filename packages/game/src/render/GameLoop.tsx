@@ -17,6 +17,7 @@ import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn,
 import { BINDINGS, type Action } from '@/input/bindings'
 import { SLOTS, barOf, useAppStore } from '@/app/store'
 import { renderIcons } from './iconRender'
+import { renderSheepSheet } from './sheepSheet'
 import { useHudStore, type GoalHud } from '@/ui/hudStore'
 import { setTool } from '@/ui/actions'
 import { cam, clampCam, fitOwned, turnCam } from './camera'
@@ -181,6 +182,8 @@ export function GameLoop() {
       app: useAppStore,
       /** Draw every rendered icon from its model into public/icons (render/iconRender.ts). */
       icons: () => renderIcons(gl),
+      /** Draw every kind of sheep on one sheet, docs/concept/shots/sheep-sheet.png (render/sheepSheet.ts). */
+      sheep: () => renderSheepSheet(gl),
       /** R3F's own state (its frame subscribers, for timing them). */
       r3f,
       /** The cost of whole frames — simulation, views, shadows, the draw — waited for on the GPU: ms per frame. */

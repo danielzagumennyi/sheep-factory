@@ -22,7 +22,7 @@ export function toPasture(w: World, s: SheepT, p: PastureT, x: number, y: number
   s.via = null
   s.px = Math.min(p.x + p.w - 0.28, Math.max(p.x + 0.28, x))
   s.py = Math.min(p.y + p.h - 0.4, Math.max(p.y + 0.3, y))
-  const t = pastureSpot(w, p)
+  const t = pastureSpot(w, p, s)
   s.tx = t.x
   s.ty = t.y
 }
@@ -155,7 +155,7 @@ export function crossPen(w: World, s: SheepT, p: PastureT, x: number, y: number)
 
 /** A sheep into a pen, at a spot of its own there. */
 export function penIn(w: World, s: SheepT, p: PastureT) {
-  const t = pastureSpot(w, p)
+  const t = pastureSpot(w, p, s)
   toPasture(w, s, p, t.x, t.y)
 }
 
@@ -253,7 +253,7 @@ export function sheepSystem(w: World, dt: number) {
     }
     s.wanderT -= dt
     if (s.wanderT <= 0) {
-      const t = pastureSpot(w, p)
+      const t = pastureSpot(w, p, s)
       s.tx = t.x
       s.ty = t.y
       s.wanderT = 2 + res(w, Rng).next() * 3

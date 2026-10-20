@@ -1,5 +1,5 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, ROAM, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
+import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, ROAM, SHEEP, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -446,10 +446,27 @@ export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, d
   return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
 }
 
-/** A random spot inside a pen where a sheep may stand (clear of the fence). */
-export function pastureSpot(world: World, p: PastureT) {
+/**
+ * A spot inside a pen where a sheep may stand (clear of the fence), away from the others there: the best of
+ * `SHEEP.spotTries` random spots, the furthest from where its pen-mates stand and are going, taken at once when it is
+ * `SHEEP.apart` from all of them (the round sheep are big: put anywhere, they stood inside one another).
+ */
+export function pastureSpot(world: World, p: PastureT, self?: SheepT) {
   const rnd = res(world, Rng).next
-  return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
+  const mates = res(world, Flock).sheep.filter((s) => s.home === p.id && s.state === 'pasture' && s !== self)
+  let best = { x: 0, y: 0 },
+    far = -1
+  for (let i = 0; i < SHEEP.spotTries; i++) {
+    const c = { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
+    let d = Infinity
+    for (const m of mates) d = Math.min(d, Math.hypot(m.px - c.x, m.py - c.y), Math.hypot(m.tx - c.x, m.ty - c.y))
+    if (d > far) {
+      best = c
+      far = d
+    }
+    if (d >= SHEEP.apart) break
+  }
+  return best
 }
 
 /**

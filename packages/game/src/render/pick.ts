@@ -6,7 +6,7 @@ import { get, isBeltLike } from '@/game/grid'
 import { Flock, Plant, key, res, type Building, type SheepT, type World } from '@/game/world'
 import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
-import { fleece, sheepHead, sheepLegs, shorn } from './models'
+import { fleece, sheepHead, sheepLegs, sheepTuft, shorn } from './models'
 
 /** The scene objects the pointer can be over, so the hover line can find them: docks by their cell, pastures by id. */
 export const views = { buildings: new Map<string, Object3D>(), pastures: new Map<number, Object3D>() }
@@ -32,7 +32,7 @@ export function sheepProxy() {
     group.add(m)
     return m
   }
-  const proxy = { group, legs: part(sheepLegs()), body: part(fleece()), skin: part(shorn()), head: part(sheepHead()) }
+  const proxy = { group, legs: part(sheepLegs()), body: part(fleece()), skin: part(shorn()), head: part(sheepHead()), tuft: part(sheepTuft()) }
   return proxy
 }
 export type SheepProxy = ReturnType<typeof sheepProxy>
@@ -44,6 +44,7 @@ export function poseProxy(p: SheepProxy, pose: SheepPose) {
   p.body.visible = pose.woolly
   p.skin.visible = !pose.woolly
   p.head.matrix.copy(pose.head)
+  p.tuft.matrix.copy(pose.head)
   p.group.updateMatrixWorld(true)
 }
 const picker = sheepProxy()

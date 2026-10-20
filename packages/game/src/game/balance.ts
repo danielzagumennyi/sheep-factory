@@ -87,6 +87,9 @@ export const SHEEP = {
   /** How fast a sheep crosses a pen that is not its own, cells per second, and how many may cross one at once. */
   transit: 1.4,
   transitMax: 2,
+  /** A sheep picks its spot in a pen out of this many, the one furthest from the others; one this far from all of them, cells, will do. */
+  spotTries: 6,
+  apart: 0.8,
 } as const
 
 /**
@@ -493,8 +496,14 @@ export const LOOK = {
   warn: '#d79a1c',
   bad: '#d24545',
   wool: '#ffffff',
+  /** The sheep (the author's reference, 20.10.2026: round and fluffy): the cream of the deeper puffs, the shorn skin, the face and legs, a blush, horns, a collar and its tag. */
+  woolShade: '#fcf9f4',
   skin: '#f6c4d3',
-  sheepFace: '#2b3240',
+  sheepFace: '#3d3658',
+  sheepBlush: '#ff9cb5',
+  sheepHorn: '#f0bd7e',
+  sheepCollar: '#e0475b',
+  sheepTag: '#f6bf3c',
   hay: '#e2c15e',
   waterItem: '#4aa3df',
   /** Plain goods are white or near it, so they show on the wooden belts; the coloured ones are the bright ones. */
@@ -509,10 +518,12 @@ export const LOOK = {
    */
   colors: ['#f2669f', '#f6c445', '#4cc3a6', '#6f8ff2'],
   fleeceColors: ['#ffb0d2', '#ffe08a', '#a8e6cf', '#a9c6ff', '#d4b5ff'],
-  /** A sheep's marks from the salon: the sheen of a combed fleece, curls, the bath's matted felt. */
+  /** A sheep's marks from the salon: the sheen of a combed fleece and its lines, curls, the bath's matted felt and its patches. */
   combed: '#f4f1ff',
-  curls: '#fff3df',
-  feltFleece: '#d9ccb6',
+  combedLine: '#bfb2ea',
+  curls: '#eccb93',
+  feltFleece: '#e6dcc8',
+  feltPatch: '#f2ece2',
   /** A sown cell while it grows: little shoots on dark soil. */
   sprout: '#8fd65a',
   sproutSoil: '#b48857',

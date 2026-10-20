@@ -219,108 +219,233 @@ export const grassClump = (v: number) =>
     return model(p)
   })
 
-// ---------------------------------------------------------------- the sheep (a cube animal, like the references)
+// ---------------------------------------------------------------- the sheep (a round fluffy animal, like the references)
 
-/** Fleece: a soft white block with curls on top. Facing +X; scaled by how much wool has grown. */
+/**
+ * A soft low-poly puff of wool, and a bead for the small bits (eyes' shine, blush, bell): fewer facets than `ball`, a
+ * sheep is many of them and the flock may be 256 (a woolly sheep is ~3.1k triangles, the cube one was ~2.3k).
+ */
+const puff = (r: number) => new SphereGeometry(r, 9, 7)
+const bead = (r: number) => new SphereGeometry(r, 6, 4)
+/** `n` directions spread evenly round a sphere (a Fibonacci spiral), from the top down. */
+function spread(n: number) {
+  const out: Vector3[] = []
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (2 * (i + 0.5)) / n,
+      r = Math.sqrt(1 - y * y),
+      a = i * 2.39996
+    out.push(new Vector3(Math.cos(a) * r, y, Math.sin(a) * r))
+  }
+  return out
+}
+/** A copy of `g` turned so its local +Y points along `n`, then moved to `at`. */
+function along(g: BufferGeometry, n: Vector3, at: V3) {
+  return g.applyQuaternion(_q.setFromUnitVectors(_p.set(0, 1, 0), n.clone().normalize())).translate(...at)
+}
+
+/**
+ * The full fleece's half-widths (to the puffs' tops), and how the sweater and the curls are fitted over each fleece:
+ * the woolly one, the combed one (smaller and smooth), the felted one (flatter) — `[x, y, z]` scale and the lift of its
+ * middle for both, and a further scale for the curls, which sit lower on the woolly one, between its puffs.
+ */
+export const FLEECE: V3 = [0.37, 0.34, 0.355]
+export const FLEECE_FIT = {
+  fleece: { scale: [1, 1, 1], lift: 0, curls: 0.98 },
+  sleek: { scale: [0.93, 0.88, 0.9], lift: 0, curls: 1 },
+  felt: { scale: [0.946, 0.794, 0.93], lift: -0.03, curls: 1 },
+} as const satisfies Record<string, { scale: V3; lift: number; curls: number }>
+
+/**
+ * Fleece: one big round ball of wool with soft puffs standing a little out of it (the author's reference: a big round
+ * woolly body, the face small in front), and a tail tuft. Facing +X, its middle at the origin; scaled by how much wool
+ * has grown.
+ */
 export const fleece = () =>
   cached('fleece', () => {
-    // a big woolly body, the head small beside it (the author: «сделай овцам меньше морду и больше само тело»)
-    const p: BufferGeometry[] = [put(rb(0.56, 0.42, 0.5, 0.17), LOOK.wool, [0, 0, 0])]
-    const curls: V3[] = [
-      [0.13, 0.19, 0.12],
-      [-0.13, 0.19, -0.11],
-      [-0.1, 0.2, 0.13],
-      [0.14, 0.19, -0.12],
-    ]
-    for (const c of curls) p.push(put(ball(0.09), LOOK.wool, c, [0, 0, 0], [1, 0.6, 1]))
+    const p: BufferGeometry[] = [put(new SphereGeometry(0.3, 12, 8), LOOK.wool, [0, 0, 0], [0, 0, 0], [1.1, 1, 1.05])]
+    const rnd = rng(3)
+    spread(15).forEach((d, i) => {
+      // none under the belly, where nobody sees them
+      if (d.y < -0.5) return
+      const r = 0.1 + rnd() * 0.02
+      p.push(put(puff(r), i % 3 ? LOOK.wool : LOOK.woolShade, [d.x * 0.25, d.y * 0.22, d.z * 0.235]))
+    })
+    p.push(put(puff(0.07), LOOK.wool, [-0.37, 0.06, 0]))
     return model(p)
   })
 
 /**
  * The salon's marks on a fleece (the author, 19.10.2026: the sheep's path must show on it), drawn white and tinted per
- * sheep: a combed fleece, sleek and smooth, in place of the woolly one; the bath's felted one, flat and matted; and on top
- * of either, curls, and a knitted sweater round its middle. Facing +X, posed like the fleece.
+ * sheep. A combed fleece is smooth and sleek, its combed lines running nose to tail, in place of the woolly one; the
+ * bath's felted one is flat and matted, with pressed patches. Facing +X, posed like the fleece.
  */
 export const fleeceSleek = () =>
-  cached('fleeceSleek', () => model([put(rb(0.56, 0.4, 0.48, 0.2), '#ffffff', [0, 0, 0]), ...[-0.12, 0.04, 0.2].map((x) => put(rb(0.06, 0.02, 0.44, 0.01), '#e9e4f4', [x, 0.2, 0], [0, 0, 0.3]))]))
-export const fleeceFelt = () =>
-  cached('fleeceFelt', () => {
-    const p: BufferGeometry[] = [put(rb(0.58, 0.36, 0.52, 0.08), '#ffffff', [0, -0.02, 0])]
-    for (const [x, z] of [
-      [-0.15, -0.12],
-      [0.12, 0.1],
-      [0.05, -0.16],
-    ] as const)
-      p.push(put(rb(0.18, 0.05, 0.16, 0.02), '#f1ece3', [x, 0.17, z], [0, x * 4, 0]))
+  cached('fleeceSleek', () => {
+    const [rx, ry, rz] = [FLEECE[0] * 0.93, FLEECE[1] * 0.88, FLEECE[2] * 0.9]
+    const p: BufferGeometry[] = [put(ball(0.3), LOOK.combed, [0, 0, 0], [0, 0, 0], [rx / 0.3, ry / 0.3, rz / 0.3])]
+    for (const z of [-0.2, -0.1, 0, 0.1, 0.2]) {
+      const k = Math.sqrt(1 - (z / rz) ** 2) * 0.995
+      // a thin raised line over the back, from the shoulder to the rump, half sunk into the coat
+      const line = new TorusGeometry(1, 0.05, 4, 18, 1.75)
+      line.rotateZ(0.7)
+      line.scale(rx * k, ry * k, 0.5)
+      p.push(tint(line.translate(0, 0, z), LOOK.combedLine))
+    }
+    // the sheen of a groomed coat, on the rump, where a sweater leaves it showing
+    p.push(put(puff(0.1), '#ffffff', [-0.12, ry * 0.86, rz * 0.3], [0.35, 0, 0.3], [1, 0.25, 0.5]))
+    // and a neat round tail
+    p.push(put(puff(0.06), LOOK.combed, [-rx - 0.01, 0.05, 0]))
     return model(p)
   })
+export const fleeceFelt = () =>
+  cached('fleeceFelt', () => {
+    const lift = FLEECE_FIT.felt.lift
+    const [rx, ry, rz] = [0.35, 0.27, 0.33]
+    const p: BufferGeometry[] = [put(ball(0.3), '#ffffff', [0, lift, 0], [0, 0, 0], [rx / 0.3, ry / 0.3, rz / 0.3])]
+    // pressed patches, lying flat on it
+    const rnd = rng(11)
+    for (const d of spread(11)) {
+      if (d.y < -0.15 || d.x > 0.8) continue
+      const n = new Vector3(d.x / rx, d.y / ry, d.z / rz).normalize()
+      // round and soft-edged: a squashed puff of few rings, many sides
+      const g = new SphereGeometry(0.1 + rnd() * 0.03, 14, 5).scale(1, 0.4, 0.85)
+      p.push(tint(along(g, n, [d.x * rx * 0.92, lift + d.y * ry * 0.92, d.z * rz * 0.92]), LOOK.feltPatch))
+    }
+    p.push(put(puff(0.06), '#ffffff', [-rx - 0.01, lift + 0.03, 0], [0, 0, 0], [1, 0.7, 1]))
+    return model(p)
+  })
+
+/** Curls after the curling: little spirals all over the back and sides, sitting on the woolly fleece. */
 export const fleeceCurls = () =>
   cached('fleeceCurls', () => {
     const p: BufferGeometry[] = []
-    for (let i = 0; i < 6; i++)
-      for (const z of [-0.15, 0.15]) {
-        const x = -0.22 + i * 0.09
-        p.push(put(ring(0.05, 0.02), '#ffffff', [x, 0.21, z + (i % 2) * 0.04], [Math.PI / 2, 0, 0]))
-      }
-    for (const z of [-0.26, 0.26]) for (let i = 0; i < 3; i++) p.push(put(ring(0.045, 0.018), '#ffffff', [-0.15 + i * 0.15, 0.05, z]))
+    for (const d of spread(24)) {
+      // not under the belly, not over the face
+      if (d.y < -0.2 || (d.x > 0.62 && d.y < 0.6)) continue
+      const at: V3 = [d.x * FLEECE[0] * 0.96, d.y * FLEECE[1] * 0.96, d.z * FLEECE[2] * 0.96]
+      const n = new Vector3(d.x / FLEECE[0], d.y / FLEECE[1], d.z / FLEECE[2])
+      p.push(tint(along(new TorusGeometry(0.05, 0.022, 4, 9).rotateX(Math.PI / 2), n, at), LOOK.curls))
+      p.push(tint(along(bead(0.028), n, at), LOOK.curls))
+    }
     return model(p)
   })
-export const fleeceSweater = () =>
-  cached('fleeceSweater', () =>
-    model([
-      put(rb(0.36, 0.46, 0.56, 0.1), '#ffffff', [-0.02, -0.01, 0]),
-      put(rb(0.06, 0.48, 0.58, 0.03), '#e6e6e6', [0.16, -0.01, 0]),
-      put(rb(0.06, 0.48, 0.58, 0.03), '#e6e6e6', [-0.2, -0.01, 0]),
-    ]),
-  )
 
-/** The shorn sheep's pink body. */
-export const shorn = () => cached('shorn', () => model([put(rb(0.44, 0.3, 0.36, 0.13), LOOK.skin, [0, 0, 0])]))
+/**
+ * A knitted jumper over the front half of the fleece, from a turtleneck round the neck (clear of the horns) to a cuff at
+ * the middle: plain red with a white band, or, on a coloured sheep, in the stripes of every colour (like the coloured
+ * goods). It is the fleece's own round shape a little bigger, cut short underneath so the legs show. Facing +X, posed
+ * like the fleece; not tinted.
+ */
+function sweaterOn(bands: readonly string[], cuff: string) {
+  // the back half stays out, so what else the sheep went through (curls, a combed coat) still shows
+  const x0 = -0.05,
+    x1 = 0.22,
+    // just over the fleece, the puffs' and curls' tops inside it
+    k = 1.08
+  // a belt of the fleece's own ellipsoid from x = a to x = b: a sphere's belt between two polar angles, its axis turned to X
+  const angle = (x: number) => Math.acos(x / FLEECE[0])
+  const belt = (a: number, b: number) => new SphereGeometry(1, 22, 3, 0, Math.PI * 2, angle(b), angle(a) - angle(b)).rotateZ(-Math.PI / 2).scale(FLEECE[0] * k, FLEECE[1] * k, FLEECE[2] * k)
+  const p: BufferGeometry[] = []
+  const w = (x1 - x0) / bands.length
+  bands.forEach((c, i) => p.push(tint(belt(x0 + i * w, x0 + (i + 1) * w), c)))
+  // the cuff at the back, thick enough to reach down into the wool, and the turtleneck at the front
+  for (const [x, t, sink] of [
+    [x0, 0.12, 0.91],
+    [x1, 0.09, 1],
+  ] as const) {
+    const r = Math.sin(angle(x)) * k * sink
+    // thick round the sheep, narrow along it
+    p.push(tint(new TorusGeometry(1, t, 5, 22).rotateY(Math.PI / 2).scale(0.13, r * FLEECE[1], r * FLEECE[2]).translate(x, 0, 0), cuff))
+  }
+  // the fleece has no puffs underneath: neither has the sweater
+  const g = model(p),
+    pos = g.getAttribute('position'),
+    nor = g.getAttribute('normal'),
+    n = new Vector3()
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) >= 0) continue
+    pos.setY(i, pos.getY(i) * 0.84)
+    // a squashed surface's normal leans the other way: scaled by the inverse, kept smooth
+    n.fromBufferAttribute(nor, i)
+    n.y /= 0.84
+    n.normalize()
+    nor.setXYZ(i, n.x, n.y, n.z)
+  }
+  return g
+}
+export const fleeceSweater = () => cached('fleeceSweater', () => sweaterOn([LOOK.sweater, LOOK.sweater, '#ffffff', LOOK.sweater, LOOK.sweater], '#ffffff'))
+export const fleeceSweaterColored = () => cached('fleeceSweaterColored', () => sweaterOn(LOOK.colors, '#ffffff'))
 
-/** Head with big eyes, ears and a woolly fringe, looking along +X. */
+/** The shorn sheep's pink body, round, with a stub of a tail: as long as the first wool that grows on it. */
+export const shorn = () =>
+  cached('shorn', () => model([put(ball(0.2), LOOK.skin, [0, 0, 0], [0, 0, 0], [1.22, 0.92, 1.02]), put(puff(0.05), LOOK.skin, [-0.25, 0.06, 0])]))
+
+/**
+ * Head, looking along +X (the author's reference): a dark rounded face narrowing to the muzzle, big eyes with a white
+ * and a shine, ears out to the sides, horns curled into spirals, a red collar with a golden tag under the chin. The wool
+ * tuft on top is its own mesh, tinted like the fleece (`sheepTuft`), and so are the lids that shut the eyes for a blink
+ * (`sheepLids`).
+ */
 export const sheepHead = () =>
   cached('sheepHead', () => {
     const face = LOOK.sheepFace
-    const p: BufferGeometry[] = [put(rb(0.3, 0.29, 0.32, 0.11), face, [0, 0, 0])]
-    p.push(put(rb(0.18, 0.09, 0.28, 0.045), LOOK.wool, [-0.03, 0.16, 0]))
+    const p: BufferGeometry[] = [put(ball(0.13), face, [0, 0, 0], [0, 0, 0], [0.95, 1, 1]), put(ball(0.1), face, [0.06, -0.07, 0], [0, 0, 0], [1, 0.82, 1.02])]
     for (const s of [-1, 1]) {
-      // a big eye on each front corner: white, pupil, highlight
-      p.push(put(ball(0.095), '#ffffff', [0.13, 0.06, s * 0.1], [0, 0, 0], [0.75, 1, 0.75]))
-      p.push(put(ball(0.06), '#141220', [0.18, 0.055, s * 0.11], [0, 0, 0], [0.6, 1, 0.6]))
-      p.push(put(ball(0.022), '#ffffff', [0.2, 0.085, s * 0.1]))
-      // ear
-      p.push(put(rb(0.11, 0.06, 0.14, 0.025), face, [-0.03, 0.08, s * 0.21], [s * 0.5, 0, 0]))
-      p.push(put(rb(0.07, 0.03, 0.09, 0.012), LOOK.skin, [-0.025, 0.095, s * 0.215], [s * 0.5, 0, 0]))
+      // a big eye on each side of the front, looking up at the player above: white, pupil, shine
+      p.push(put(ball(0.052), '#ffffff', [0.096, 0.025, s * 0.066], [0, s * -0.35, 0], [0.55, 1.1, 1]))
+      p.push(put(ball(0.034), '#17131f', [0.122, 0.032, s * 0.068], [0, s * -0.35, 0], [0.5, 1.1, 0.95]))
+      p.push(put(bead(0.012), '#ffffff', [0.138, 0.05, s * 0.06]))
+      // a blush under it
+      p.push(put(bead(0.03), LOOK.sheepBlush, [0.1, -0.05, s * 0.088], [0, s * -0.6, 0], [0.4, 0.65, 1]))
+      // an ear out to the side and a little down, pink inside
+      p.push(put(ball(0.07), face, [-0.01, -0.02, s * 0.165], [s * 0.5, 0, 0], [0.5, 0.3, 1.45]))
+      p.push(put(bead(0.05), LOOK.skin, [0.004, -0.024, s * 0.172], [s * 0.5, 0, 0], [0.4, 0.18, 1.25]))
+      // a horn curled into a spiral at the side of the head, its inner turn lighter
+      p.push(put(new TorusGeometry(0.06, 0.027, 5, 12, Math.PI * 1.65), LOOK.sheepHorn, [-0.04, 0.06, s * 0.125], [0, 0, 0.9]))
+      p.push(put(new TorusGeometry(0.026, 0.018, 4, 8, Math.PI * 1.5), shade(LOOK.sheepHorn, 1.25), [-0.04, 0.06, s * 0.13], [0, 0, 2.6]))
     }
-    // a little pink nose
-    p.push(put(ball(0.03), '#e98aa5', [0.155, -0.07, 0], [0, 0, 0], [0.6, 0.7, 1.2]))
+    // the collar round the neck and its golden tag
+    p.push(put(new TorusGeometry(0.125, 0.034, 4, 14), LOOK.sheepCollar, [-0.05, -0.08, 0], [0, Math.PI / 2, 0.5]))
+    p.push(put(rb(0.026, 0.08, 0.07, 0.012), LOOK.sheepTag, [0.03, -0.2, 0], [0, 0, 0.35]))
     return model(p)
   })
 
-/** Four short legs and a tail tuft. */
+/** The big top-knot of wool on the head (the reference's most loved bit), tinted per sheep like its fleece. Posed like the head. */
+export const sheepTuft = () =>
+  cached('sheepTuft', () =>
+    model([
+      put(puff(0.095), LOOK.wool, [0.01, 0.15, 0]),
+      put(puff(0.07), LOOK.woolShade, [-0.035, 0.115, 0.06]),
+      put(puff(0.07), LOOK.wool, [-0.035, 0.115, -0.06]),
+      put(puff(0.06), LOOK.wool, [0.035, 0.13, 0]),
+    ]),
+  )
+
+/** The lids over both eyes, in the face's colour: drawn only while a sheep blinks. Posed like the head. */
+export const sheepLids = () =>
+  cached('sheepLids', () => model([-1, 1].map((s) => put(ball(0.058), LOOK.sheepFace, [0.104, 0.025, s * 0.066], [0, s * -0.35, 0], [0.85, 1.12, 1.05]))))
+
+/** Four stubby legs, tucked in under the round belly. */
 export const sheepLegs = () =>
   cached('sheepLegs', () => {
     const p: BufferGeometry[] = []
     for (const [x, z] of [
-      [0.15, 0.12],
-      [0.15, -0.12],
-      [-0.15, 0.12],
-      [-0.15, -0.12],
+      [0.12, 0.095],
+      [0.12, -0.095],
+      [-0.12, 0.095],
+      [-0.12, -0.095],
     ] as const)
-      p.push(put(rb(0.08, 0.16, 0.08, 0.03), LOOK.sheepFace, [x, 0.08, z]))
+      p.push(put(cyl(0.054, 0.14, 8, 0.048), LOOK.sheepFace, [x, 0.07, z]))
     return model(p)
   })
+
+/** Where a full-grown sheep's parts sit on its legs (sheepLook.ts poses the flock the same way). */
+export const SHEEP_AT = { fleece: [-0.02, 0.33, 0], head: [0.34, 0.44, 0] } as const satisfies Record<string, V3>
 
 /** A whole sheep in full fleece, standing still and facing a little towards the camera: its icon, and a sheep in hand. */
 export const sheepModel = () =>
   cached('sheepWhole', () => {
-    const head = sheepHead().clone()
-    head.scale(0.78, 0.78, 0.78)
-    head.translate(0.34, 0.45, 0)
-    const body = fleece().clone()
-    body.scale(1.12, 1.12, 1.12)
-    body.translate(-0.02, 0.35, 0)
-    const g = model([sheepLegs().clone(), body, head])
+    const g = model([sheepLegs().clone(), fleece().clone().translate(...SHEEP_AT.fleece), sheepHead().clone().translate(...SHEEP_AT.head), sheepTuft().clone().translate(...SHEEP_AT.head)])
     g.rotateY(-0.5)
     return g
   })

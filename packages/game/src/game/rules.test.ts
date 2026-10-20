@@ -9,7 +9,7 @@ import { penIn, toRoam } from './systems/sheep'
 import { dockAccept, nearestStall, openAsks, openLevel, sell, sellPrice, buy, buyPrice, stallX } from './systems/village'
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
-import { blankBuilding, createGameWorld, DEMO, makePen, Field, Flock, float, Fx, GameState, Market, noMarks, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
+import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -165,6 +165,21 @@ describe('sowing (GDD 6.1)', () => {
 })
 
 describe('pens and sheep (GDD 5)', () => {
+  it('sheep in a pen stand apart, not inside one another', () => {
+    const w = world()
+    const p = pen0(w)
+    const flock = sheepOf(w).filter((s) => s.home === p.id)
+    expect(flock.length).toBe(4)
+    // round after round each sheep picks a new spot and walks there, as they do grazing
+    for (let round = 0; round < 20; round++) {
+      for (const s of flock) {
+        const t = pastureSpot(w, p, s)
+        s.px = s.tx = t.x
+        s.py = s.ty = t.y
+      }
+      for (const a of flock) for (const b of flock) if (a !== b) expect(Math.hypot(a.px - b.px, a.py - b.py)).toBeGreaterThan(SHEEP.apart * 0.75)
+    }
+  })
   it('a pen is a building for four sheep: placed for coins, removed only when empty; sheep are bought apart, into the pen clicked', () => {
     const w = world()
     expect(PEN.cap).toBe(4)

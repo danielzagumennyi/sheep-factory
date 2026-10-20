@@ -13,8 +13,9 @@ release/
 *.tmp
 *.bak
 
-# local only
-.claude/
+# local only, but the project's agents are kept with it
+.claude/*
+!.claude/agents/
 # frames the dev build saves for comparing the look (hundreds of MB), and other games' reference pictures
 docs/concept/shots/
 docs/concept/refs/
