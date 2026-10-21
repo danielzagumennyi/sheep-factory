@@ -2,10 +2,10 @@ import { useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { useGame } from '@/game/GameContext'
-import { residents } from '@/game/grid'
-import { hungry, loopHasFeeder } from '@/game/systems/sheep'
+import { loopHasFeeder } from '@/game/systems/sheep'
 import { Flock, isOn, res, type PastureT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
+import { frame } from './frame'
 import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
 import { useView, views } from './pick'
@@ -49,8 +49,9 @@ function PastureView({ p }: { p: PastureT }) {
   const root = useRef<Group>(null)
   useView(views.pastures, p.id, root)
   useFrame(() => {
-    if (label.current) label.current.textContent = residents(world, p) + '/' + p.cap
-    const k = res(world, Flock).sheep.some((s) => s.home === p.id && hungry(s)) && !loopHasFeeder(world, p) ? 'hay' : ''
+    const text = (frame.homes.get(p.id) ?? 0) + '/' + p.cap
+    if (label.current && label.current.textContent !== text) label.current.textContent = text
+    const k = frame.hungryAt.has(p.id) && !loopHasFeeder(world, p) ? 'hay' : ''
     if (k !== want) setWant(k)
   })
   return (

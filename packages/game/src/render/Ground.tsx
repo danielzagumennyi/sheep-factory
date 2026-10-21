@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { Mesh } from 'three'
 import { useFrame } from '@react-three/fiber'
-import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, SRGBColorSpace } from 'three'
+import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, ShapeGeometry, SRGBColorSpace } from 'three'
 import { CONTACT, GRID, ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
@@ -10,9 +10,8 @@ import { softMat, toonBands } from './kit'
 import { withReach } from './reach'
 import { inIsland, island } from './island'
 
-/** Pixels per cell of the ground texture; vertices per cell of the ground mesh. */
+/** Pixels per cell of the ground texture. */
 const PX = 32
-const SUB = 6
 const M = ISLAND.margin
 /** The island's edges (island.ts) with the margin. */
 const X0 = () => island.left - M
@@ -80,46 +79,33 @@ function useCanvasTexture(mips: boolean) {
 
 // ---------------------------------------------------------------- the island's shape
 
-/** A point of the top pulled onto the rounded corner when it lies outside it. */
-function inCorner(x: number, z: number): [number, number] {
-  const R = ISLAND.corner
-  const cx = Math.min(X1() - R, Math.max(X0() + R, x)),
-    cz = Math.min(Z1() - R, Math.max(Z0() + R, z))
-  const dx = x - cx,
-    dz = z - cz,
-    d = Math.hypot(dx, dz)
-  return d <= R ? [x, z] : [cx + (dx / d) * R, cz + (dz / d) * R]
-}
-
-/** The top: a grid of SUB vertices per cell over the island, corners rounded, UVs from world position. */
+/**
+ * The top: the island's rounded outline as one flat shape, its corners on the lip's own curve, UVs from world
+ * position. A grid of six vertices a cell it was, 240 000 triangles drawn every frame for a flat plane.
+ */
 function topGeometry() {
-  const nx = Math.round((X1() - X0()) * SUB),
-    nz = Math.round((Z1() - Z0()) * SUB)
-  const pos = new Float32Array((nx + 1) * (nz + 1) * 3),
-    uv = new Float32Array((nx + 1) * (nz + 1) * 2)
-  for (let j = 0; j <= nz; j++)
-    for (let i = 0; i <= nx; i++) {
-      const [x, z] = inCorner(X0() + i / SUB, Z0() + j / SUB)
-      const v = j * (nx + 1) + i
-      pos[v * 3] = x
-      pos[v * 3 + 2] = z
-      uv[v * 2] = (x - X0()) / (X1() - X0())
-      uv[v * 2 + 1] = 1 - (z - Z0()) / (Z1() - Z0())
-    }
-  const idx: number[] = []
-  for (let j = 0; j < nz; j++)
-    for (let i = 0; i < nx; i++) {
-      const a = j * (nx + 1) + i,
-        b = a + 1,
-        c = a + nx + 1,
-        d = c + 1
-      idx.push(a, c, b, b, c, d)
-    }
+  const shape = new ShapeGeometry(rounded(X0(), Z0(), X1(), Z1(), ISLAND.corner), 16)
+  const src = shape.getAttribute('position'),
+    n = src.count,
+    pos = new Float32Array(n * 3),
+    nor = new Float32Array(n * 3),
+    uv = new Float32Array(n * 2)
+  for (let v = 0; v < n; v++) {
+    const x = src.getX(v),
+      z = src.getY(v)
+    pos.set([x, 0, z], v * 3)
+    nor[v * 3 + 1] = 1
+    uv.set([(x - X0()) / (X1() - X0()), 1 - (z - Z0()) / (Z1() - Z0())], v * 2)
+  }
+  // shape y → world z mirrors it: each triangle turned back to face up
+  const idx = Array.from(shape.index!.array)
+  for (let t = 0; t < idx.length; t += 3) [idx[t + 1], idx[t + 2]] = [idx[t + 2]!, idx[t + 1]!]
+  shape.dispose()
   const g = new BufferGeometry()
   g.setAttribute('position', new BufferAttribute(pos, 3))
+  g.setAttribute('normal', new BufferAttribute(nor, 3))
   g.setAttribute('uv', new BufferAttribute(uv, 2))
   g.setIndex(idx)
-  g.computeVertexNormals()
   return g
 }
 

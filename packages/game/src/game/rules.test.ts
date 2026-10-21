@@ -10,7 +10,7 @@ import { dockAccept, openLevel, sell, sellPrice, buy, buyPrice } from './systems
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
 import { openField, putTerrain, TEST_PEN } from './testing'
-import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, unkey, type SheepT, type World } from './world'
+import { blankBuilding, createGameWorld, DEMO, makePen, makeSheep, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, unkey, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -245,6 +245,21 @@ describe('pens and sheep (GDD 5)', () => {
     res(w, Flock).sheep = sheepOf(w).filter((s) => s.home !== p.id)
     expect(remove(w, 16, 16)).toBe(true)
     expect(res(w, Flock).pastures.includes(p)).toBe(false)
+  })
+  it('the farm holds at most SHEEP.most sheep: past it none is bought, onto grass or into a pen', () => {
+    const w = world()
+    expect(place(w, 'pen', 15, 15, 0)).toBe(true)
+    const p = res(w, Flock).pastures.at(-1)!
+    const flock = res(w, Flock).sheep
+    while (flock.length < SHEEP.most) flock.push(makeSheep(w, 0, true, { x: 20.5, y: 20.5 }))
+    const c0 = res(w, GameState).coins
+    expect(whyNot(w, 'sheep', 16, 16)).toBe('flockFull')
+    expect(place(w, 'sheep', 16, 16, 0)).toBe(false)
+    expect(buySheep(w, p)).toBe(false)
+    expect([flock.length, res(w, GameState).coins]).toEqual([SHEEP.most, c0])
+    // one fewer, and one comes down again
+    flock.pop()
+    expect(buySheep(w, p)).toBe(true)
   })
   it('a bought sheep parachutes down where it is put, onto free own grass or into a pen; till it lands it neither walks nor can be picked up', () => {
     const w = world()

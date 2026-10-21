@@ -1,38 +1,48 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { CircleGeometry, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type Group } from 'three'
-import { DROP, HAND, LOOK } from '@/game/balance'
+import { CircleGeometry, Frustum, InstancedMesh, Matrix4, PlaneGeometry, Sphere, Vector3, type Group, type PerspectiveCamera } from 'three'
+import { BUBBLE, CAMERA, DROP, HAND, LOOK, SHEEP } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { Flock, isOn, res, type SheepT } from '@/game/world'
+import { Flock, Ui, isOn, noMarks, res, type SheepT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
+import { cam } from './camera'
+import { bubbleMaterial } from './iconSprite'
+import { upload } from './instancing'
 import { flat } from './kit'
 import { frame } from './frame'
 import { sheepPoses, type SheepPose } from './pick'
-import { dropPose, liveliness, newPose, sheepDrawer, sheepMeshes } from './sheepLook'
-
-/** Most sheep drawn at once. */
-const CAP = 256
+import { dropPose, liveliness, newPose, sheepDrawer, sheepMeshes, standAt, type SheepLook, type SheepMotion } from './sheepLook'
 
 const _p = new Vector3(),
-  _q = new Quaternion(),
-  _s = new Vector3(),
-  _e = new Euler(),
   _chute = new Matrix4(),
-  _mark = new Matrix4()
+  _mark = new Matrix4(),
+  _view = new Matrix4(),
+  _frustum = new Frustum(),
+  _ball = new Sphere(new Vector3(), 0)
 /** Most sheep coming down at once, each with its mark on the grass. */
 const MARKS = 16
+/** What each sheep looks like and how it moves this frame, filled anew for each (no garbage for a big flock). */
+const _look: SheepLook = { id: 0, wool: 0, marks: noMarks() },
+  _mo: SheepMotion = { nod: 0, breath: 0, blink: false, chute: null }
+/** This frame's bubbles before they are stacked: each one's place and size (x, y, z, size), its distance, their order. */
+const _cards = new Float32Array(SHEEP.most * 4),
+  _far = new Float32Array(SHEEP.most),
+  _order: number[] = []
 
 /**
  * The flock, drawn as a few instanced meshes (sheepLook.ts) posed in one pass (a sheep of four meshes cost eight draw
  * calls with its shadow: 48 sheep, 380): each sheep where it stands, a waddle while it walks, a slow nod while it
- * grazes, breathing and blinking all the while. Each sheep's pose is also kept in `sheepPoses`, which the pointer and the hover line read. A bubble shows what
- * a sheep needs.
+ * grazes, breathing and blinking all the while. Only the sheep in view are posed, plainer far off. Each one's pose is also kept in
+ * `sheepPoses`, which the pointer and the hover line read. A bubble over a fluffy sheep says it is ready to shear: a card
+ * of one more instanced mesh, facing the camera, the same size on the screen however far it is; while a sheep is being
+ * shorn its bubble counts the clicks, on the page.
  */
 export function Flock3D() {
   const { world } = useGame()
-  const [ids, setIds] = useState<SheepT[]>([])
-  const meshes = useMemo(() => sheepMeshes(CAP), [])
+  const camera = useThree((s) => s.camera) as PerspectiveCamera
+  const height = useThree((s) => s.size.height)
+  const meshes = useMemo(() => sheepMeshes(SHEEP.most), [])
   const draw = useMemo(() => sheepDrawer(meshes), [meshes])
   // the spots where bought sheep will land, darkening as they come down
   const marks = useMemo(() => {
@@ -42,26 +52,58 @@ export function Flock3D() {
     m.frustumCulled = false
     return m
   }, [])
+  const bubbles = useMemo(() => {
+    const m = new InstancedMesh(new PlaneGeometry(1, 1), bubbleMaterial('shear', LOOK.shearRing), SHEEP.most)
+    m.name = 'sheep_bubbles'
+    m.count = 0
+    m.frustumCulled = false
+    m.renderOrder = 10
+    return m
+  }, [])
+  // the flock drawn plain, far off (CAMERA.plainFlock)
+  const far = useRef(false)
+  // the frames drawn: a pose drawn this frame carries the number
+  const frames = useRef(0)
+  // the sheep being shorn, whose bubbles count the clicks
+  const [shorn, setShorn] = useState<SheepT[]>([])
+  const cut = useRef<SheepT[]>([])
   // when each sheep still coming down began its drop, on the animation clock: it is drawn smoothly between the steps
   const dropStart = useRef(new Map<number, number>())
   useEffect(() => () => Object.values(meshes).forEach((m) => m.dispose()), [meshes])
   useEffect(() => () => marks.geometry.dispose(), [marks])
+  useEffect(() => () => bubbles.geometry.dispose(), [bubbles])
   useFrame(() => {
     const list = res(world, Flock).sheep
-    if (list.length !== ids.length || list.some((s, i) => ids[i] !== s)) setIds([...list])
     const t = frame.t
-    const seen = new Set<number>()
-    let nm = 0
-    draw.begin()
+    // the view, a frame's sheep tested against it
+    camera.updateMatrixWorld()
+    _frustum.setFromProjectionMatrix(_view.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
+
+    // the bubbles: while the labels are on and nothing is being built (they step back then, like the machines' signs)
+    const tags = isOn(world, 'tags') && res(world, Ui).tool === 'hand'
+    const perPx = (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, height)
+    const stamp = ++frames.current
+    // the camera's turn, the bubbles' cards turned with it
+    const ce = camera.matrixWorld.elements,
+      cx = ce[12]!,
+      cy = ce[13]!,
+      cz = ce[14]!,
+      room = bubbles.instanceMatrix.count,
+      cards = bubbles.instanceMatrix.array
+    cut.current.length = 0
+    let nm = 0,
+      nb = 0
+    far.current = cam.dist > CAMERA.plainFlock[far.current ? 1 : 0]
+    draw.begin(far.current)
     for (const s of list) {
       const spot = frame.sheep.get(s)
-      if (!spot || spot.inMachine) {
-        sheepPoses.delete(s.id)
-        continue
-      }
-      seen.add(s.id)
+      if (!spot || spot.inMachine || !_frustum.intersectsSphere(_ball.set(_p.set(spot.x, 0.4, spot.z), CAMERA.flockReach))) continue
       const hop = (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam') && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
       const pose = poseOf(s.id)
+      pose.seen = stamp
+      _look.id = s.id
+      _look.marks = s.marks
+      liveliness(s.id, t, _mo)
       // a bought sheep coming down on its parachute
       if (s.drop !== undefined) {
         let t0 = dropStart.current.get(s.id)
@@ -72,21 +114,65 @@ export function Flock3D() {
           marks.setMatrixAt(nm++, _mark.makeTranslation(spot.x, 0.02, spot.z).multiply(_chute.makeScale(r, 1, r)))
         }
         const chute = dropPose(t - t0, t, s.id, spot.x, spot.z, spot.yaw, pose.base, _chute)
-        draw.add({ id: s.id, wool: s.wool, marks: s.marks }, pose.base, { nod: 0.3, ...liveliness(s.id, t), chute: chute ? _chute : null }, pose)
+        _look.wool = s.wool
+        _mo.nod = 0.3
+        _mo.chute = chute ? _chute : null
+        draw.add(_look, pose.base, _mo, pose)
         continue
       }
-      dropStart.current.delete(s.id)
+      if (dropStart.current.size) dropStart.current.delete(s.id)
       // the whole sheep: where it stands, which way it faces, a waddle while it walks
-      pose.base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0)) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
+      const y = s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0)
+      standAt(pose.base, spot.x, y + hop, spot.z, spot.yaw, hop ? Math.sin(t * 9 + s.id) * 0.08 : 0)
       // a slow nod while it grazes
-      const nod = 0.2 + ((s.state === 'pasture' || s.state === 'roam') && !hop ? Math.sin(t * 1.3 + s.id * 1.7) * 0.1 : 0)
-      draw.add({ id: s.id, wool: Math.max(0, s.wool * (1 - s.clicks / HAND.shearClicks)), marks: s.marks }, pose.base, { nod, ...liveliness(s.id, t) }, pose)
+      _mo.nod = 0.2 + ((s.state === 'pasture' || s.state === 'roam') && !hop ? Math.sin(t * 1.3 + s.id * 1.7) * 0.1 : 0)
+      _mo.chute = null
+      _look.wool = Math.max(0, s.wool * (1 - s.clicks / HAND.shearClicks))
+      draw.add(_look, pose.base, _mo, pose)
+      if (!tags) continue
+      if (s.clicks > 0) cut.current.push(s)
+      else if ((s.state === 'pasture' || s.state === 'roam') && s.wool >= 1 && nb < room) {
+        // as big on the screen wherever it is, up to BUBBLE.cells on the field
+        const by = y + BUBBLE.up,
+          d = Math.hypot(spot.x - cx, by - cy, spot.z - cz),
+          o = nb * 4
+        _cards[o] = spot.x
+        _cards[o + 1] = by
+        _cards[o + 2] = spot.z
+        _cards[o + 3] = Math.min(BUBBLE.px * perPx * d, BUBBLE.cells)
+        _far[nb++] = d
+      }
     }
     draw.end()
+    // the bubbles stacked far ones first, the near over them (the page's were stacked by distance so), each a card
+    // facing the camera: its turn scaled, written straight in
+    _order.length = nb
+    for (let i = 0; i < nb; i++) _order[i] = i
+    if (nb > 1) _order.sort((a, b) => _far[b]! - _far[a]!)
+    for (let k = 0; k < nb; k++) {
+      const i = _order[k]! * 4,
+        size = _cards[i + 3]!,
+        o = k * 16
+      for (let j = 0; j < 3; j++) {
+        cards[o + j] = ce[j]! * size
+        cards[o + 4 + j] = ce[4 + j]! * size
+        cards[o + 8 + j] = ce[8 + j]! * size
+      }
+      cards[o + 3] = cards[o + 7] = cards[o + 11] = 0
+      cards[o + 12] = _cards[i]!
+      cards[o + 13] = _cards[i + 1]!
+      cards[o + 14] = _cards[i + 2]!
+      cards[o + 15] = 1
+    }
     marks.count = nm
-    marks.instanceMatrix.needsUpdate = true
-    for (const id of sheepPoses.keys()) if (!seen.has(id)) sheepPoses.delete(id)
-    for (const id of dropStart.current.keys()) if (!seen.has(id)) dropStart.current.delete(id)
+    upload(marks, nm)
+    bubbles.count = nb
+    upload(bubbles, nb)
+    // the poses of sheep not drawn this frame go (in a machine, out of view, gone)
+    for (const [id, p] of sheepPoses) if (p.seen !== stamp) sheepPoses.delete(id)
+    for (const id of dropStart.current.keys()) if (sheepPoses.get(id)?.seen !== stamp) dropStart.current.delete(id)
+    const now = cut.current
+    if (now.length !== shorn.length || now.some((s, i) => shorn[i] !== s)) setShorn([...now])
   })
   return (
     <group>
@@ -94,10 +180,10 @@ export function Flock3D() {
         <primitive key={m.name} object={m} />
       ))}
       <primitive object={marks} />
-      {isOn(world, 'tags') &&
-        ids.map((s) => (
-          <SheepBubble key={s.id} s={s} />
-        ))}
+      <primitive object={bubbles} />
+      {shorn.map((s) => (
+        <ShearBubble key={s.id} s={s} />
+      ))}
     </group>
   )
 }
@@ -111,36 +197,32 @@ function poseOf(id: number): SheepPose {
   return p
 }
 
-/** A sheep's bubble — ready to shear, in a pen or roaming — following it; what the pasture lacks shows over the pasture. */
-function SheepBubble({ s }: { s: SheepT }) {
+/** The bubble of a sheep being shorn, following it: its clicks so far, and the shears while its fleece is still on. */
+function ShearBubble({ s }: { s: SheepT }) {
   const g = useRef<Group>(null)
-  const [need, setNeed] = useState('')
-  const [clicks, setClicks] = useState(0)
+  const [fluffy, setFluffy] = useState(false)
+  const [clicks, setClicks] = useState(s.clicks)
   useFrame(() => {
     const spot = frame.sheep.get(s)
     if (!g.current) return
     g.current.visible = !!spot && !spot.inMachine
     if (spot) g.current.position.set(spot.x, s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0), spot.z)
-    const n = (s.state === 'pasture' || s.state === 'roam') && s.wool >= 1 ? 'shear' : ''
-    if (n !== need) setNeed(n)
+    const f = (s.state === 'pasture' || s.state === 'roam') && s.wool >= 1
+    if (f !== fluffy) setFluffy(f)
     if (s.clicks !== clicks) setClicks(s.clicks)
   })
   return (
     <group ref={g}>
-      {(need || clicks > 0) && (
-        <Html position={[0, 0.9, 0]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
-          <div className={'bubble bubble--' + (need || 'shear')}>
-            {need ? <Icon kind={need} size={16} /> : null}
-            {clicks > 0 && (
-              <span className="bubble__clicks">
-                {Array.from({ length: HAND.shearClicks }, (_, i) => (
-                  <i key={i} className={i < clicks ? 'on' : ''} />
-                ))}
-              </span>
-            )}
-          </div>
-        </Html>
-      )}
+      <Html position={[0, BUBBLE.up, 0]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
+        <div className="bubble bubble--shear">
+          {fluffy ? <Icon kind="shear" size={16} /> : null}
+          <span className="bubble__clicks">
+            {Array.from({ length: HAND.shearClicks }, (_, i) => (
+              <i key={i} className={i < clicks ? 'on' : ''} />
+            ))}
+          </span>
+        </div>
+      </Html>
     </group>
   )
 }

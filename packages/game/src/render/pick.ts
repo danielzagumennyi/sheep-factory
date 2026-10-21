@@ -19,6 +19,8 @@ export interface SheepPose {
   head: Matrix4
   /** Fleece on (or the shorn body, posed by `fleece`). */
   woolly: boolean
+  /** The frame it was last drawn in (SheepView.tsx): a pose not drawn in the last one is let go. */
+  seen: number
 }
 /** Every drawn sheep's pose, by id. The flock is instanced, so this is what the pointer and the hover line read. */
 export const sheepPoses = new Map<number, SheepPose>()

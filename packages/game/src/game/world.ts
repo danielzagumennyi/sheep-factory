@@ -435,7 +435,22 @@ export function makePen(world: World, x: number, y: number, dir: Dir, paid = 0):
   return { id: ++res(world, Flock).penUid, ...q, cap: PEN.cap, exitT: 0, exit: exitOf(q), entry: entryOf(q), paid }
 }
 /** A pen by its id. */
-export const penOf = (world: World, id: number) => res(world, Flock).pastures.find((p) => p.id === id) ?? null
+const penAt = new WeakMap<PastureT[], Map<number, number>>()
+/**
+ * The pen of an id, or null. By an index of the pens kept beside their list (it looked through them all, for every sheep
+ * every step), built again whenever it no longer matches.
+ */
+export function penOf(world: World, id: number): PastureT | null {
+  const list = res(world, Flock).pastures
+  let at = penAt.get(list),
+    i = at?.get(id)
+  if (i === undefined || list[i]?.id !== id) {
+    at = new Map(list.map((p, k) => [p.id, k]))
+    penAt.set(list, at)
+    i = at.get(id)
+  }
+  return i === undefined ? null : list[i]!
+}
 
 /** The cell just outside the pen where its sheep leave (the middle of the side it faces). */
 export function exitOf(p: { x: number; y: number; w: number; h: number; dir: Dir }) {
@@ -485,17 +500,17 @@ export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, d
 /**
  * A spot inside a pen where a sheep may stand (clear of the fence), away from the others there: the best of
  * `SHEEP.spotTries` random spots, the furthest from where its pen-mates stand and are going, taken at once when it is
- * `SHEEP.apart` from all of them (the round sheep are big: put anywhere, they stood inside one another).
+ * `SHEEP.apart` from all of them (the round sheep are big: put anywhere, they stood inside one another). `flock`: where
+ * to look for its pen-mates, the whole flock unless the caller has them.
  */
-export function pastureSpot(world: World, p: PastureT, self?: SheepT) {
+export function pastureSpot(world: World, p: PastureT, self?: SheepT, flock: readonly SheepT[] = res(world, Flock).sheep) {
   const rnd = res(world, Rng).next
-  const mates = res(world, Flock).sheep.filter((s) => s.home === p.id && s.state === 'pasture' && s !== self)
   let best = { x: 0, y: 0 },
     far = -1
   for (let i = 0; i < SHEEP.spotTries; i++) {
     const c = { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
     let d = Infinity
-    for (const m of mates) d = Math.min(d, Math.hypot(m.px - c.x, m.py - c.y), Math.hypot(m.tx - c.x, m.ty - c.y))
+    for (const m of flock) if (m.home === p.id && m.state === 'pasture' && m !== self) d = Math.min(d, Math.hypot(m.px - c.x, m.py - c.y), Math.hypot(m.tx - c.x, m.ty - c.y))
     if (d > far) {
       best = c
       far = d

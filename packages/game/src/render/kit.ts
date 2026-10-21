@@ -1,5 +1,4 @@
-import type { BufferGeometry } from 'three'
-import { BoxGeometry, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, DataTexture, DodecahedronGeometry, Float32BufferAttribute, LinearFilter, MeshBasicMaterial, MeshToonMaterial, NearestFilter, RedFormat, SphereGeometry, TorusGeometry, type Material } from 'three'
+import { BufferAttribute, BufferGeometry, BoxGeometry, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, DataTexture, DodecahedronGeometry, Float32BufferAttribute, LinearFilter, MeshBasicMaterial, MeshToonMaterial, NearestFilter, RedFormat, SphereGeometry, TorusGeometry, type Material } from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { BUILDINGS, DIRS, type BuildingId } from '@/game/balance'
@@ -146,14 +145,75 @@ export function tint(g: BufferGeometry, color: string): BufferGeometry {
   g.setAttribute('color', new Float32BufferAttribute(a, 3))
   return g
 }
-/** Merge coloured parts into one model geometry (indexed or not, all made alike first). */
+/**
+ * Merge coloured parts into one model geometry, all made alike first: indexed — a corner its triangles share is shaded
+ * once, not once per triangle, five times fewer for a ball (a flock of instanced sheep, and its shadow, was mostly
+ * this). A part keeps its own index; one without (a rounded box) gets its equal corners welded.
+ */
 export function model(parts: BufferGeometry[]): BufferGeometry {
-  const flat = parts.map((p) => (p.index ? p.toNonIndexed() : p))
-  for (const p of flat) {
-    p.deleteAttribute('uv')
-    if (p.getAttribute('uv1')) p.deleteAttribute('uv1')
+  const alike = parts.map((p) => {
+    // the part's own data, without its UVs, uncopied (the merge copies it once)
+    const c = new BufferGeometry()
+    for (const [name, a] of Object.entries(p.attributes)) if (name !== 'uv' && name !== 'uv1') c.setAttribute(name, a)
+    if (p.index) c.setIndex(p.index)
+    return p.index ? c : weld(c)
+  })
+  return mergeGeometries(alike)!
+}
+
+/**
+ * A non-indexed geometry indexed over its distinct corners: those alike in every attribute to the bit (a corner copied
+ * per triangle) become one. By the bits' hash, not by strings — three's `mergeVertices` cost a model half a second.
+ */
+function weld(g: BufferGeometry): BufferGeometry {
+  const names = Object.keys(g.attributes),
+    src = names.map((k) => g.attributes[k]!.array as Float32Array),
+    size = names.map((k) => g.attributes[k]!.itemSize),
+    bits = src.map((a) => new Uint32Array(a.buffer, a.byteOffset, a.length))
+  const count = g.getAttribute('position').count
+  const index = new Uint32Array(count),
+    // each distinct corner's first copy, the first distinct corner of each hash and the next one of the same hash
+    first: number[] = [],
+    head = new Map<number, number>(),
+    next: number[] = []
+  for (let i = 0; i < count; i++) {
+    let h = 0
+    for (let a = 0; a < bits.length; a++) {
+      const n = size[a]!
+      for (let k = 0; k < n; k++) h = Math.imul(h ^ bits[a]![i * n + k]!, 0x9e3779b1)
+    }
+    let u = head.get(h) ?? -1
+    for (; u >= 0; u = next[u]!) {
+      const j = first[u]!
+      let same = true
+      for (let a = 0; a < bits.length && same; a++) {
+        const n = size[a]!,
+          b = bits[a]!
+        for (let k = 0; k < n; k++)
+          if (b[i * n + k] !== b[j * n + k]) {
+            same = false
+            break
+          }
+      }
+      if (same) break
+    }
+    if (u >= 0) index[i] = u
+    else {
+      index[i] = first.length
+      next.push(head.get(h) ?? -1)
+      head.set(h, first.length)
+      first.push(i)
+    }
   }
-  return mergeGeometries(flat)!
+  const out = new BufferGeometry()
+  names.forEach((name, a) => {
+    const n = size[a]!,
+      dst = new Float32Array(first.length * n)
+    first.forEach((i, u) => dst.set(src[a]!.subarray(i * n, i * n + n), u * n))
+    out.setAttribute(name, new Float32BufferAttribute(dst, n))
+  })
+  out.setIndex(new BufferAttribute(index, 1))
+  return out
 }
 
 /** Cell centre in world units: x → X, row → Z, ground at y = 0. */

@@ -24,13 +24,39 @@ export function put(g: BufferGeometry, color: string, p: V3 = [0, 0, 0], r: V3 =
   return tint(c, color)
 }
 
+/**
+ * How finely models are built: 1 as drawn up close. The flock seen from far off is built plain (`plain`): half the
+ * facets round each part, so about a quarter of the triangles, the smallest bits (an eye's shine, a blush) left off —
+ * a sheep there is a few dozen pixels tall, and the flock's triangles were half the frame's. Plain models are cached
+ * apart.
+ */
+let detail = 1
+/** How many of its facets round a part keeps when built plain. */
+const PLAIN = 0.5
+/** Build `make` plain (sheepLook.ts: the flock from far off). */
+export function plain<T>(make: () => T): T {
+  const was = detail
+  detail = PLAIN
+  try {
+    return make()
+  } finally {
+    detail = was
+  }
+}
+/** `n` facets round, fewer when built plain, never under `least`. */
+const seg = (n: number, least = 3) => (detail === 1 ? n : Math.max(least, Math.round(n * detail)))
+/** The smallest bits are drawn: not when built plain. */
+const fine = () => detail === 1
+
 /** A rounded box; the radius is kept below half the smallest side. */
 // small parts get fewer facets: nobody sees the difference, and a petal no longer costs as much as a tree
 export const rb = (w: number, h: number, d: number, r = 0.05) => new RoundedBoxGeometry(w, h, d, Math.min(w, h, d) < 0.15 ? 1 : 2, Math.min(r, w / 2 - 0.002, h / 2 - 0.002, d / 2 - 0.002))
-export const cyl = (r: number, h: number, n = 16, r2 = r) => new CylinderGeometry(r2, r, h, Math.max(r, r2) < 0.07 ? Math.min(n, 8) : Math.max(r, r2) < 0.15 ? Math.min(n, 12) : n)
-export const ball = (r: number) => {
-  const n = r < 0.05 ? 6 : r < 0.1 ? 8 : r < 0.2 ? 12 : 16
-  return new SphereGeometry(r, n, Math.max(4, Math.round(n * 0.7)))
+export const cyl = (r: number, h: number, n = 16, r2 = r) => new CylinderGeometry(r2, r, h, seg(Math.max(r, r2) < 0.07 ? Math.min(n, 8) : Math.max(r, r2) < 0.15 ? Math.min(n, 12) : n, 5))
+/** A ball, its facets by its size; `keep`: as many when built plain (an eye, which a few facets turn to a dark blot). */
+export const ball = (r: number, keep = false) => {
+  const n = r < 0.05 ? 6 : r < 0.1 ? 8 : r < 0.2 ? 12 : 16,
+    h = Math.max(4, Math.round(n * 0.7))
+  return new SphereGeometry(r, keep ? n : seg(n, 4), keep ? h : seg(h))
 }
 export const cone = (r: number, h: number, n = 14) => new ConeGeometry(r, h, n)
 export const ring = (r: number, t: number) => new TorusGeometry(r, t, 8, 20)
@@ -38,10 +64,11 @@ export const ring = (r: number, t: number) => new TorusGeometry(r, t, 8, 20)
 /** Model geometries are built once and shared. */
 const partsCache = new Map<string, BufferGeometry>()
 export const cached = (k: string, make: () => BufferGeometry) => {
-  let g = partsCache.get(k)
+  const key = fine() ? k : k + ':plain'
+  let g = partsCache.get(key)
   if (!g) {
     g = make()
-    partsCache.set(k, g)
+    partsCache.set(key, g)
   }
   return g
 }
@@ -222,10 +249,10 @@ export const grassClump = (v: number) =>
 
 /**
  * A soft low-poly puff of wool, and a bead for the small bits (eyes' shine, blush, bell): fewer facets than `ball`, a
- * sheep is many of them and the flock may be 256 (a woolly sheep is ~3.1k triangles, the cube one was ~2.3k).
+ * sheep is many of them and the flock may be SHEEP.most (a woolly sheep is ~3.6k triangles, ~1k built plain).
  */
-const puff = (r: number) => new SphereGeometry(r, 9, 7)
-const bead = (r: number) => new SphereGeometry(r, 6, 4)
+const puff = (r: number) => new SphereGeometry(r, seg(9, 4), seg(7))
+const bead = (r: number) => new SphereGeometry(r, seg(6, 4), seg(4))
 /** `n` directions spread evenly round a sphere (a Fibonacci spiral), from the top down. */
 function spread(n: number) {
   const out: Vector3[] = []
@@ -261,7 +288,7 @@ export const FLEECE_FIT = {
  */
 export const fleece = () =>
   cached('fleece', () => {
-    const p: BufferGeometry[] = [put(new SphereGeometry(0.3, 12, 8), LOOK.wool, [0, 0, 0], [0, 0, 0], [1.1, 1, 1.05])]
+    const p: BufferGeometry[] = [put(new SphereGeometry(0.3, seg(12, 4), seg(8)), LOOK.wool, [0, 0, 0], [0, 0, 0], [1.1, 1, 1.05])]
     const rnd = rng(3)
     spread(15).forEach((d, i) => {
       // none under the belly, where nobody sees them
@@ -285,7 +312,7 @@ export const fleeceSleek = () =>
     for (const z of [-0.2, -0.1, 0, 0.1, 0.2]) {
       const k = Math.sqrt(1 - (z / rz) ** 2) * 0.995
       // a thin raised line over the back, from the shoulder to the rump, half sunk into the coat
-      const line = new TorusGeometry(1, 0.05, 4, 18, 1.75)
+      const line = new TorusGeometry(1, 0.05, seg(4, 4), seg(18), 1.75)
       line.rotateZ(0.7)
       line.scale(rx * k, ry * k, 0.5)
       p.push(tint(line.translate(0, 0, z), LOOK.combedLine))
@@ -307,7 +334,7 @@ export const fleeceFelt = () =>
       if (d.y < -0.15 || d.x > 0.8) continue
       const n = new Vector3(d.x / rx, d.y / ry, d.z / rz).normalize()
       // round and soft-edged: a squashed puff of few rings, many sides
-      const g = new SphereGeometry(0.1 + rnd() * 0.03, 14, 5).scale(1, 0.4, 0.85)
+      const g = new SphereGeometry(0.1 + rnd() * 0.03, seg(14, 4), seg(5, 2)).scale(1, 0.4, 0.85)
       p.push(tint(along(g, n, [d.x * rx * 0.92, lift + d.y * ry * 0.92, d.z * rz * 0.92]), LOOK.feltPatch))
     }
     p.push(put(puff(0.06), '#ffffff', [-rx - 0.01, lift + 0.03, 0], [0, 0, 0], [1, 0.7, 1]))
@@ -323,7 +350,7 @@ export const fleeceCurls = () =>
       if (d.y < -0.2 || (d.x > 0.62 && d.y < 0.6)) continue
       const at: V3 = [d.x * FLEECE[0] * 0.96, d.y * FLEECE[1] * 0.96, d.z * FLEECE[2] * 0.96]
       const n = new Vector3(d.x / FLEECE[0], d.y / FLEECE[1], d.z / FLEECE[2])
-      p.push(tint(along(new TorusGeometry(0.05, 0.022, 4, 9).rotateX(Math.PI / 2), n, at), LOOK.curls))
+      p.push(tint(along(new TorusGeometry(0.05, 0.022, seg(4, 4), seg(9)).rotateX(Math.PI / 2), n, at), LOOK.curls))
       p.push(tint(along(bead(0.028), n, at), LOOK.curls))
     }
     return model(p)
@@ -343,7 +370,7 @@ function sweaterOn(bands: readonly string[], cuff: string) {
     k = 1.08
   // a belt of the fleece's own ellipsoid from x = a to x = b: a sphere's belt between two polar angles, its axis turned to X
   const angle = (x: number) => Math.acos(x / FLEECE[0])
-  const belt = (a: number, b: number) => new SphereGeometry(1, 22, 3, 0, Math.PI * 2, angle(b), angle(a) - angle(b)).rotateZ(-Math.PI / 2).scale(FLEECE[0] * k, FLEECE[1] * k, FLEECE[2] * k)
+  const belt = (a: number, b: number) => new SphereGeometry(1, seg(22), 3, 0, Math.PI * 2, angle(b), angle(a) - angle(b)).rotateZ(-Math.PI / 2).scale(FLEECE[0] * k, FLEECE[1] * k, FLEECE[2] * k)
   const p: BufferGeometry[] = []
   const w = (x1 - x0) / bands.length
   bands.forEach((c, i) => p.push(tint(belt(x0 + i * w, x0 + (i + 1) * w), c)))
@@ -354,7 +381,7 @@ function sweaterOn(bands: readonly string[], cuff: string) {
   ] as const) {
     const r = Math.sin(angle(x)) * k * sink
     // thick round the sheep, narrow along it
-    p.push(tint(new TorusGeometry(1, t, 5, 22).rotateY(Math.PI / 2).scale(0.13, r * FLEECE[1], r * FLEECE[2]).translate(x, 0, 0), cuff))
+    p.push(tint(new TorusGeometry(1, t, seg(5, 4), seg(22)).rotateY(Math.PI / 2).scale(0.13, r * FLEECE[1], r * FLEECE[2]).translate(x, 0, 0), cuff))
   }
   // the fleece has no puffs underneath: neither has the sweater
   const g = model(p),
@@ -391,21 +418,21 @@ export const sheepHead = () =>
     const p: BufferGeometry[] = [put(ball(0.13), face, [0, 0, 0], [0, 0, 0], [0.95, 1, 1]), put(ball(0.1), face, [0.06, -0.07, 0], [0, 0, 0], [1, 0.82, 1.02])]
     for (const s of [-1, 1]) {
       // a big eye on each side of the front, looking up at the player above: white, pupil, shine
-      p.push(put(ball(0.052), '#ffffff', [0.096, 0.025, s * 0.066], [0, s * -0.35, 0], [0.55, 1.1, 1]))
-      p.push(put(ball(0.034), '#17131f', [0.122, 0.032, s * 0.068], [0, s * -0.35, 0], [0.5, 1.1, 0.95]))
-      p.push(put(bead(0.012), '#ffffff', [0.138, 0.05, s * 0.06]))
+      p.push(put(ball(0.052, true), '#ffffff', [0.096, 0.025, s * 0.066], [0, s * -0.35, 0], [0.55, 1.1, 1]))
+      p.push(put(ball(0.034, true), '#17131f', [0.122, 0.032, s * 0.068], [0, s * -0.35, 0], [0.5, 1.1, 0.95]))
+      if (fine()) p.push(put(bead(0.012), '#ffffff', [0.138, 0.05, s * 0.06]))
       // a blush under it
-      p.push(put(bead(0.03), LOOK.sheepBlush, [0.1, -0.05, s * 0.088], [0, s * -0.6, 0], [0.4, 0.65, 1]))
+      if (fine()) p.push(put(bead(0.03), LOOK.sheepBlush, [0.1, -0.05, s * 0.088], [0, s * -0.6, 0], [0.4, 0.65, 1]))
       // an ear out to the side and a little down, pink inside
       p.push(put(ball(0.07), face, [-0.01, -0.02, s * 0.165], [s * 0.5, 0, 0], [0.5, 0.3, 1.45]))
-      p.push(put(bead(0.05), LOOK.skin, [0.004, -0.024, s * 0.172], [s * 0.5, 0, 0], [0.4, 0.18, 1.25]))
+      if (fine()) p.push(put(bead(0.05), LOOK.skin, [0.004, -0.024, s * 0.172], [s * 0.5, 0, 0], [0.4, 0.18, 1.25]))
       // a horn curled into a spiral at the side of the head, its inner turn lighter
-      p.push(put(new TorusGeometry(0.06, 0.027, 5, 12, Math.PI * 1.65), LOOK.sheepHorn, [-0.04, 0.06, s * 0.125], [0, 0, 0.9]))
-      p.push(put(new TorusGeometry(0.026, 0.018, 4, 8, Math.PI * 1.5), shade(LOOK.sheepHorn, 1.25), [-0.04, 0.06, s * 0.13], [0, 0, 2.6]))
+      p.push(put(new TorusGeometry(0.06, 0.027, seg(5, 4), seg(12), Math.PI * 1.65), LOOK.sheepHorn, [-0.04, 0.06, s * 0.125], [0, 0, 0.9]))
+      if (fine()) p.push(put(new TorusGeometry(0.026, 0.018, 4, 8, Math.PI * 1.5), shade(LOOK.sheepHorn, 1.25), [-0.04, 0.06, s * 0.13], [0, 0, 2.6]))
     }
     // the collar round the neck and its golden tag
-    p.push(put(new TorusGeometry(0.125, 0.034, 4, 14), LOOK.sheepCollar, [-0.05, -0.08, 0], [0, Math.PI / 2, 0.5]))
-    p.push(put(rb(0.026, 0.08, 0.07, 0.012), LOOK.sheepTag, [0.03, -0.2, 0], [0, 0, 0.35]))
+    p.push(put(new TorusGeometry(0.125, 0.034, seg(4, 4), seg(14)), LOOK.sheepCollar, [-0.05, -0.08, 0], [0, Math.PI / 2, 0.5]))
+    if (fine()) p.push(put(rb(0.026, 0.08, 0.07, 0.012), LOOK.sheepTag, [0.03, -0.2, 0], [0, 0, 0.35]))
     return model(p)
   })
 
@@ -457,6 +484,22 @@ export const sheepLegs = () =>
       [-0.12, -0.095],
     ] as const)
       p.push(put(cyl(0.054, 0.14, 8, 0.048), LOOK.sheepFace, [x, 0.07, z]))
+    return model(p)
+  })
+
+/**
+ * What a sheep's shadow is cast by, in place of its own many parts (the flock's shadow cost as much as the flock): a few
+ * plain low lumps the size of the drawn ones, never seen themselves. The fleece's body, posed like the fleece (fitted to
+ * the salon's kind); the shorn body; the head with its muzzle, ears, horns and top-knot, posed like the head. The shadow
+ * map keeps their far sides: no bigger than the bodies drawn, so a fleece's underside stays in its own shade.
+ */
+export const sheepShade = () => cached('sheepShade', () => model([put(new SphereGeometry(0.3, 10, 6), LOOK.wool, [0, 0, 0], [0, 0, 0], [1.1, 1, 1.05])]))
+export const sheepShadeSkin = () => cached('sheepShadeSkin', () => model([put(new SphereGeometry(0.2, 8, 5), LOOK.skin, [0, 0, 0], [0, 0, 0], [1.22, 0.92, 1.02])]))
+export const sheepShadeHead = () =>
+  cached('sheepShadeHead', () => {
+    const lump = (r: number, at: V3, rot: V3 = [0, 0, 0], s: V3 = [1, 1, 1]) => put(new SphereGeometry(r, 6, 4), LOOK.sheepFace, at, rot, s)
+    const p = [put(new SphereGeometry(0.13, 8, 5), LOOK.sheepFace, [0, 0, 0], [0, 0, 0], [0.95, 1, 1]), lump(0.1, [0.06, -0.07, 0], [0, 0, 0], [1, 0.82, 1.02]), lump(0.095, [0.01, 0.15, 0])]
+    for (const s of [-1, 1]) p.push(lump(0.07, [-0.01, -0.02, s * 0.165], [s * 0.5, 0, 0], [0.5, 0.3, 1.45]), lump(0.075, [-0.04, 0.06, s * 0.125], [0, 0, 0], [1, 1, 0.45]))
     return model(p)
   })
 

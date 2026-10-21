@@ -1,6 +1,7 @@
 import { DIRS, type ItemId } from '@/game/balance'
 import { beltInDir, feeds, get, inCell, isBeltLike, isStation, outCells, targetOk } from '@/game/grid'
-import { Field, Flock, Fx, Plant, Ui, res, unkey, type SheepT, type World } from '@/game/world'
+import { Field, Flock, Fx, GameState, Plant, Ui, res, unkey, type SheepT, type World } from '@/game/world'
+import { hungry } from '@/game/systems/sheep'
 import { beltPoint } from './kit'
 import { HEAP, startFall, stepFalls } from './falls'
 
@@ -31,6 +32,9 @@ export const frame = {
   carry: [] as GoodSpot[],
   /** Each sheep drawn: where, facing, inside a machine, and `lift` — a roaming one stepping over a belt walks on it. */
   sheep: new Map<SheepT, { x: number; z: number; yaw: number; inMachine: boolean; lift?: number }>(),
+  /** How many sheep each pen has (by its id, theirs wherever they are), and the pens with a hungry one at home: counted once a frame for the pens' labels and the goal line, not by every pen through the flock. */
+  homes: new Map<number, number>(),
+  hungryAt: new Set<number>(),
   /** Belt cells with their input side, for the belt view. */
   belts: [] as { x: number; y: number; dir: number; inDir: number; phase: number; kind: string; blocked: number[]; dead: boolean }[],
 }
@@ -45,6 +49,21 @@ export const CARRY_Y = 1.2
 /** The stack in the hand: a little one swaying side to side, each good a step over the one under it. */
 const CARRY_STEP = { side: 0.08, up: 0.13 } as const
 
+/**
+ * Whether a roaming sheep stands on a belt, kept per sheep by its cell and the plant's version: looked up again only when
+ * either changes (a big flock looked up every sheep's cell, by its text key, every frame).
+ */
+const onBelt = new WeakMap<SheepT, { cell: number; version: number; on: boolean }>()
+function overBelt(world: World, s: SheepT, version: number) {
+  const x = Math.floor(s.px),
+    y = Math.floor(s.py),
+    cell = y * 4096 + x
+  let k = onBelt.get(s)
+  if (!k) onBelt.set(s, (k = { cell: -1, version: -1, on: false }))
+  if (k.cell !== cell || k.version !== version) Object.assign(k, { cell, version, on: isBeltLike(get(world, x, y)) })
+  return k.on
+}
+
 export function collectFrame(world: World, carryAt: { x: number; y: number; h: number } | null = null) {
   // the falls just set off (by this frame's steps, or a click since the last frame) start here, not in FxView, which
   // runs after this: else their goods would show in their places for a frame before they fly. One let go from the hand
@@ -58,6 +77,8 @@ export function collectFrame(world: World, carryAt: { x: number; y: number; h: n
   frame.goods.length = 0
   frame.carry.length = 0
   frame.sheep.clear()
+  frame.homes.clear()
+  frame.hungryAt.clear()
   frame.belts.length = 0
   // the goods on the ground, a heap on each cell (PILE) — those still falling there in the air (falls.ts), their places
   // in the heap empty till they land
@@ -110,10 +131,13 @@ export function collectFrame(world: World, carryAt: { x: number; y: number; h: n
       }
     }
   }
+  const version = res(world, GameState).plantVersion
   for (const s of res(world, Flock).sheep) {
+    if (s.home) frame.homes.set(s.home, (frame.homes.get(s.home) ?? 0) + 1)
+    if (hungry(s)) frame.hungryAt.add(s.home)
     if (frame.sheep.has(s)) continue
     if (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam' || s.state === 'held') {
-      const over = s.state === 'roam' && isBeltLike(get(world, Math.floor(s.px), Math.floor(s.py)))
+      const over = s.state === 'roam' && overBelt(world, s, version)
       frame.sheep.set(s, { x: s.px, z: s.py, yaw: yawOfDir(s.face), inMachine: false, lift: over ? BELT_LIFT : 0 })
     }
   }

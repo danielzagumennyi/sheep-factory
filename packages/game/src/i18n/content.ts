@@ -117,6 +117,7 @@ export const WHY_TEXT: Readonly<Record<Exclude<WhyNot, ''>, Text>> = {
   needWater: { ru: 'нужна вода рядом', en: 'needs water near' },
   foreignRes: { ru: 'ресурс на чужом участке', en: 'resource on unowned land' },
   penFull: { ru: 'загон полон', en: 'the pen is full' },
+  flockFull: { ru: 'овец больше не надо', en: 'enough sheep' },
 }
 
 /** A machine's state line in its popup (machineState's text keys). */

@@ -120,6 +120,13 @@ export const SHEEP = {
   /** A sheep picks its spot in a pen out of this many, the one furthest from the others; one this far from all of them, cells, will do. */
   spotTries: 6,
   apart: 0.8,
+  /**
+   * Most sheep on the farm at once (no more can be bought): the flock is drawn for this many. Measured (`__game.stress`,
+   * a factory far bigger than the chapter's, the whole island risen and in view, a retina screen, Apple M5, 22.10.2026):
+   * 5000 sheep take 10–11 ms of the 16.7 a frame at 60 fps has, at ×1 or ×4 alike; 6000 take 12–13, 8000 some 15. The
+   * island's free ground (some 1600 cells) is full long before.
+   */
+  most: 5000,
 } as const
 
 /**
@@ -129,6 +136,13 @@ export const SHEEP = {
  * it will land from the moment it is bought, growing as it comes down (radius in cells, how dark).
  */
 export const DROP = { fall: 1.9, land: 0.6, height: 6, mark: { from: 0.12, to: 0.35, opacity: 0.28 } } as const
+
+/**
+ * The bubble over a sheep ready to shear (render/SheepView.tsx): `up` cells over its feet, `px` CSS pixels across on the
+ * screen (the page's `.bubble`) — but never more than `cells` across on the field, so far off it shrinks with its sheep
+ * and a big flock's bubbles don't cover the island.
+ */
+export const BUBBLE = { up: 0.9, px: 26, cells: 0.5 } as const
 
 /**
  * A good falling onto a pile (render/falls.ts; the author, 21.10.2026: шерсть должна «падать», а не просто мгновенно
@@ -143,9 +157,10 @@ export const FALL = { base: 0.32, perCell: 0.12, arc: 0.45, stagger: 0.09, bounc
  * A sheep with no pen roams the own land (the author, 19.10.2026: «овцы вообще просто бегают по всей территории»): to a
  * spot up to `reach` cells away that it can walk to in a straight line (`tries` spots looked at), with free ground
  * `room` cells round it so it stands clear of fences and buildings; there it grazes `rest` seconds and up to `restMore` more. It walks round buildings, pens and the `blocking` ground and steps over
- * belts without stopping on them; built over, it runs to the nearest free ground. Grazing, its fleece grows by itself.
+ * belts without stopping on them; built over, it runs to the nearest free ground (it looks every `look` steps, and as it
+ * steps onto the next cell). Grazing, its fleece grows by itself.
  */
-export const ROAM = { reach: 3, tries: 8, room: 0.3, rest: 2, restMore: 3, blocking: ['rock', 'tree', 'water', 'bush'] as readonly TerrainId[] } as const
+export const ROAM = { reach: 3, tries: 8, room: 0.3, rest: 2, restMore: 3, look: 8, blocking: ['rock', 'tree', 'water', 'bush'] as readonly TerrainId[] } as const
 
 /**
  * A pen is a building of its own (GDD 5): 3×3, any number of them, each for four sheep (the author, 17.10.2026: «в одном
@@ -336,6 +351,14 @@ export const CAMERA = {
   minDistance: 17,
   /** Out as far as the whole island fits on the screen. */
   maxDistance: 118,
+  /**
+   * Further out than this, cells, the flock is drawn plain (render/models.ts `plain`): a sheep is some forty pixels tall
+   * there, and a full island's flock in view drawn fine cost more than the whole frame. Back in it turns fine again a
+   * little nearer (the default distance is nearer still), so it never flickers on the line.
+   */
+  plainFlock: [56, 50],
+  /** A sheep and its short shadow fit in a ball this big round its middle, cells: one wholly out of the view is not drawn. */
+  flockReach: 1.2,
   /** The haze, cells from the camera: it starts past the island's far edge seen from furthest out, and hides all by the far plane. */
   fog: [150, 300],
   panSpeed: 14,
@@ -516,6 +539,8 @@ export const LOOK = {
   machine: '#f7f9fc',
   machineEdge: '#2b3547',
   accent: '#dd4379',
+  /** The ring of the bubble over a sheep ready to shear (the page's `.bubble--shear`). */
+  shearRing: '#e2557f',
   good: '#2e8c59',
   warn: '#d79a1c',
   bad: '#d24545',

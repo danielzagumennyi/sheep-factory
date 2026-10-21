@@ -4,7 +4,7 @@ import { Raycaster, Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
 import { CAMERA, COLORED, GRID, ITEMS, LEVELS, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { buildPrice, get, outCells, pilesBy, residents } from '@/game/grid'
+import { buildPrice, get, outCells, pilesBy } from '@/game/grid'
 import { remove, rotate } from '@/game/actions/build'
 import { createBot, runBot } from '@/game/bot'
 import { buildShowcase } from '@/game/showcase'
@@ -331,7 +331,7 @@ function goalOf(world: World): GoalHud {
   if (un.unlocked.has('pen') && !flock.pastures.length) return { tone: 'plain', icon: 'pen', text: 'penGoal' }
   if (gs.level <= SHEARER_LEVEL && un.unlocked.has('shearer') && !plant.some((b) => b.type === 'shearer')) return { tone: 'plain', icon: 'shearer', text: 'shearerGoal' }
   if (un.unlocked.has('belt') && !plant.some((b) => b.type === 'belt')) return { tone: 'plain', icon: 'belt', text: 'loopGoal' }
-  if (roaming.length && flock.pastures.some((p) => residents(world, p) < p.cap)) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
+  if (roaming.length && flock.pastures.some((p) => (frame.homes.get(p.id) ?? 0) < p.cap)) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
   // the shearer's wool piling up beside it with nothing on its wool side: a belt takes it to the post
   const woolPiles = plant.some((b) => {
     if (b.type !== 'shearer' || !pilesBy(world, b).length) return false

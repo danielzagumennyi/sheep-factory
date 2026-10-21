@@ -1,9 +1,9 @@
 import { BUILDINGS, DROP, LOOK, PEN, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
-import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, whyNot, cellsOf, pastureAt } from '../grid'
+import { beltInDir, buildPrice, flockFull, footprint, get, plotAdjacent, plotPrice, residents, whyNot, cellsOf, pastureAt } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, type Building, type Item, type PastureT, type SheepT, type SplitRules, type World } from '../world'
 import { dropNear, shiftPile } from '../systems/ground'
 import { sowAt } from '../systems/machines'
-import { toRoam } from '../systems/sheep'
+import { shooRoamers, toRoam } from '../systems/sheep'
 import { fireEvent } from '../systems/unlocks'
 
 /**
@@ -41,8 +41,9 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
     }
     spend(w, price)
     res(w, Flock).pastures.push(makePen(w, x, y, dir, price))
-    // goods lying where it stands move aside
+    // goods lying where it stands move aside, and roaming sheep
     for (const [cx, cy] of footprint(x, y, PEN.size, PEN.size)) shiftPile(w, cx, cy)
+    shooRoamers(w)
     res(w, GameState).fieldVersion++
     sound(w, 'place')
     puff(w, x + 1.5, y + 1.5, LOOK.dust, 12)
@@ -100,6 +101,7 @@ function stand(w: World, b: Building, cells: [number, number][]) {
   plant.b.set(key(b.x, b.y), b)
   for (const [cx, cy] of cells.slice(1)) plant.occ.set(key(cx, cy), key(b.x, b.y))
   for (const [cx, cy] of cells) shiftPile(w, cx, cy)
+  shooRoamers(w)
   sound(w, 'place')
   // a little dust as it comes down onto its place
   if (b.type !== 'belt') puff(w, b.x + b.w / 2, b.y + b.h / 2, LOOK.dust, 10)
@@ -305,14 +307,14 @@ export function buyPlot(w: World, px: number, py: number) {
 export function buySheepAt(w: World, x: number, y: number, free = false) {
   const p = pastureAt(w, x, y)
   if (p) return buySheep(w, p, free)
-  if (!pay(w, free)) return false
+  if (flockFull(w) || !pay(w, free)) return false
   arrive(w, makeSheep(w, 0, true, { x: x + 0.5, y: y + 0.5 }))
   return true
 }
 
-/** A fluffy sheep into a pen with room, floating down into it. */
+/** A fluffy sheep into a pen with room, floating down into it; none past the most the farm may hold. */
 export function buySheep(w: World, p: PastureT, free = false) {
-  if (residents(w, p) >= p.cap) return false
+  if (residents(w, p) >= p.cap || flockFull(w)) return false
   if (!pay(w, free)) return false
   arrive(w, makeSheep(w, p.id, true))
   return true

@@ -28,6 +28,21 @@ const _m = new Matrix4(),
   _e = new Euler(),
   _c = new Color()
 
+/**
+ * The first `n` instances' matrices (and colours) sent to the GPU this frame: only those, not the mesh's whole room —
+ * a flock's meshes have room for the most sheep there can be, and sent whole they cost more than drawing them.
+ */
+export function upload(m: InstancedMesh, n: number) {
+  if (n === 0) return
+  m.instanceMatrix.clearUpdateRanges()
+  m.instanceMatrix.addUpdateRange(0, n * 16)
+  m.instanceMatrix.needsUpdate = true
+  if (!m.instanceColor) return
+  m.instanceColor.clearUpdateRanges()
+  m.instanceColor.addUpdateRange(0, n * 3)
+  m.instanceColor.needsUpdate = true
+}
+
 export class Batch {
   n = 0
   constructor(readonly mesh: InstancedMesh) {}
@@ -47,7 +62,6 @@ export class Batch {
   }
   end() {
     this.mesh.count = this.n
-    this.mesh.instanceMatrix.needsUpdate = true
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true
+    upload(this.mesh, this.n)
   }
 }

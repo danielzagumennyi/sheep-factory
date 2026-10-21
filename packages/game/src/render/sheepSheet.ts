@@ -7,7 +7,8 @@ import { dropPose, newPose, sheepDrawer, sheepMeshes, type SheepLook } from './s
 /**
  * Dev only (`__game.sheep()`): every kind of sheep on one sheet, drawn by the flock's own code (sheepLook.ts) in the
  * field's light, and kept as docs/concept/shots/sheep-sheet.png — for judging the look against the references. Rows: the
- * plain kinds from the front and from behind, the coloured ones, and the plain kinds as small as the game shows them.
+ * plain kinds from the front and from behind, the coloured ones, and the plain kinds as small as the game shows them;
+ * then the same built plain, as the flock is drawn far off (models.ts `plain`).
  * It draws with the game's renderer, or with one of its own when the field is not running (a hidden tab:
  * `(await import('/src/render/sheepSheet.ts')).renderSheepSheet()`).
  */
@@ -72,11 +73,15 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
     chuteAt = new Matrix4()
 
   const cols = Math.max(PLAIN.length, COLOURED.length)
-  const rows: { kinds: Kind[]; view: keyof typeof VIEWS }[] = [
+  // `plain`: the builds the flock is drawn with far off (models.ts `plain`), close up to judge them and as small as seen
+  const rows: { kinds: Kind[]; view: keyof typeof VIEWS; plain?: boolean }[] = [
     { kinds: PLAIN, view: 'front' },
     { kinds: PLAIN, view: 'back' },
     { kinds: COLOURED, view: 'front' },
     { kinds: PLAIN, view: 'far' },
+    { kinds: PLAIN, view: 'front', plain: true },
+    { kinds: COLOURED, view: 'front', plain: true },
+    { kinds: PLAIN, view: 'far', plain: true },
   ]
   const sheet = document.createElement('canvas')
   sheet.width = cols * CELL
@@ -102,7 +107,7 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
         aim = drop === undefined ? target : high
       cam.position.copy(aim).add(new Vector3(Math.cos(v.yaw) * Math.cos(p), Math.sin(p), Math.sin(v.yaw) * Math.cos(p)).multiplyScalar((row.view === 'far' ? 5.2 : 3.9) * (drop === undefined ? 1 : 2)))
       cam.lookAt(aim)
-      draw.begin()
+      draw.begin(row.plain)
       const body = new Matrix4()
       const chute = drop !== undefined && dropPose(drop, 0, 0, 0, 0, 0, body, chuteAt)
       draw.add(lookOf(kind), body, { nod: 0.2, breath: 0, blink: !!kind[1].blink, chute: chute ? chuteAt : null }, pose)
@@ -124,7 +129,7 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
       g.fillStyle = '#3a3550'
       g.font = '600 17px system-ui, sans-serif'
       g.textAlign = 'center'
-      g.fillText(kind[0] + (row.view === 'back' ? ' · сзади' : row.view === 'far' ? ' · издали' : ''), x + CELL / 2, y + CELL + 23)
+      g.fillText(kind[0] + (row.view === 'back' ? ' · сзади' : row.view === 'far' ? ' · издали' : '') + (row.plain ? ' · проще' : ''), x + CELL / 2, y + CELL + 23)
     })
     rt.dispose()
   })

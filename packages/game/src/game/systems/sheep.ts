@@ -85,22 +85,31 @@ export function toRoam(w: World, s: SheepT, x: number, y: number) {
   s.wanderT = ROAM.rest
 }
 
+/** A roaming sheep standing where it may not (built over, a pen put down on it) runs to the nearest free ground. True when it had to. */
+function runOff(w: World, s: SheepT) {
+  if (walkable(w, Math.floor(s.px), Math.floor(s.py))) return false
+  const at = nearestGround(w, s.px, s.py)
+  if (!at) return true
+  puff(w, s.px, s.py, LOOK.wool, 3)
+  s.px = s.tx = at.x
+  s.py = s.ty = at.y
+  return true
+}
+/** Something was built or put down: the roaming sheep it stands on run off at once. */
+export function shooRoamers(w: World) {
+  for (const s of res(w, Flock).sheep) if (s.state === 'roam' && s.drop === undefined) runOff(w, s)
+}
+
 /** A roaming sheep: grazes and grows its fleece, now and then walks a little way to a spot it can reach straight; under the hand (`still`) it stands. */
-function roam(w: World, s: SheepT, dt: number, still: boolean) {
+function roam(w: World, s: SheepT, dt: number, still: boolean, tick: number) {
   if (s.wool < 1) {
     s.wool = Math.min(1, s.wool + dt / SHEEP.grow)
     // it has grazed: put into a pen, its next fleece still grows once without a meal
     if (s.wool >= 1) s.fed = true
   }
-  // built over, or a pen put down on it: off it runs to the nearest free ground
-  if (!walkable(w, Math.floor(s.px), Math.floor(s.py))) {
-    const at = nearestGround(w, s.px, s.py)
-    if (!at) return
-    puff(w, s.px, s.py, LOOK.wool, 3)
-    s.px = s.tx = at.x
-    s.py = s.ty = at.y
-    return
-  }
+  // its ground gone from under it some other way (shooRoamers sees to building): it looks a few times a second, a big
+  // roaming flock's step was mostly this
+  if ((tick + s.id) % ROAM.look === 0 && runOff(w, s)) return
   if (still) return stand(s)
   s.wanderT -= dt
   if (s.wanderT <= 0) {
@@ -122,8 +131,8 @@ function roam(w: World, s: SheepT, dt: number, still: boolean) {
   const v = Math.min(dist, SHEEP.walk * dt),
     nx = s.px + (dx / dist) * v,
     ny = s.py + (dy / dist) * v
-  // something was built on its way: it stops and looks for another spot
-  if (!walkable(w, Math.floor(nx), Math.floor(ny))) {
+  // something was built on its way: it stops and looks for another spot (looked at as it steps onto the next cell)
+  if ((Math.floor(nx) !== Math.floor(s.px) || Math.floor(ny) !== Math.floor(s.py)) && !walkable(w, Math.floor(nx), Math.floor(ny))) {
     s.tx = s.px
     s.ty = s.py
     s.wanderT = Math.min(s.wanderT, 0.5)
@@ -209,6 +218,10 @@ function land(w: World, s: SheepT, dt: number) {
   if (s.drop <= 0) delete s.drop
 }
 
+/** The pens' sheep by pen, and the pens whose way out is shut, for the step under way (`sheepSystem`). */
+const homes = new Map<number, SheepT[]>()
+const shut = new Set<PastureT>()
+
 /** It stops where it is: the way it was going is dropped, it picks a new one once its rest is over. */
 function stand(s: SheepT) {
   s.tx = s.px
@@ -218,9 +231,21 @@ function stand(s: SheepT) {
 export function sheepSystem(w: World, dt: number) {
   const flock = res(w, Flock),
     food = res(w, GameState).food
-  // the sheep the hand is over (Hover.tsx keeps it; none headless)
-  const under = res(w, Ui).hover?.sheep ?? null
+  // the sheep the hand is over (Hover.tsx keeps it; none headless), and the step's number
+  const under = res(w, Ui).hover?.sheep ?? null,
+    frameNo = res(w, Time).frame
   for (const p of flock.pastures) if (p.exitT > 0) p.exitT -= dt
+  // each pen's sheep, gathered once a step: one looking for a new spot weighs only its pen-mates (it looked through the
+  // whole flock, every sheep — a big flock's step grew as its square)
+  homes.clear()
+  for (const s of flock.sheep)
+    if (s.state === 'pasture') {
+      const mates = homes.get(s.home)
+      if (mates) mates.push(s)
+      else homes.set(s.home, [s])
+    }
+  // a pen whose way out refused a sheep this step refuses the rest the same (a belt or a station takes any sheep or none)
+  shut.clear()
   for (const s of flock.sheep) {
     // a bought sheep comes down first: nothing else happens to it till it has landed
     if (s.drop !== undefined) {
@@ -232,7 +257,7 @@ export function sheepSystem(w: World, dt: number) {
       continue
     }
     if (s.state === 'roam') {
-      roam(w, s, dt, s.id === under)
+      roam(w, s, dt, s.id === under, frameNo)
       continue
     }
     if (s.state !== 'pasture') continue
@@ -251,7 +276,7 @@ export function sheepSystem(w: World, dt: number) {
     const feeder = hungry(s) && loopHasFeeder(w, p)
     // a fluffy sheep walks out by itself when the exit has a belt or a station; a hungry one too when its loop has a feeder
     const out = (s.wool >= 1 && s.clicks === 0) || feeder
-    if (out && p.exitT <= 0) {
+    if (out && p.exitT <= 0 && !shut.has(p)) {
       const ex = p.exit,
         sx = ex.x - DIRS[p.dir]![0],
         sy = ex.y - DIRS[p.dir]![1]
@@ -260,10 +285,11 @@ export function sheepSystem(w: World, dt: number) {
         p.exitT = SHEEP.exitGap
         continue
       }
+      shut.add(p)
     }
     s.wanderT -= dt
     if (s.wanderT <= 0) {
-      const t = pastureSpot(w, p, s)
+      const t = pastureSpot(w, p, s, homes.get(p.id))
       s.tx = t.x
       s.ty = t.y
       s.wanderT = 2 + res(w, Rng).next() * 3

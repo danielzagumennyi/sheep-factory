@@ -1,8 +1,9 @@
 import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
 import { DROP, LOOK } from '@/game/balance'
 import type { SheepMarks } from '@/game/world'
+import { upload } from './instancing'
 import { sheepVmat } from './kit'
-import { CHUTE, FLEECE_FIT, SHEEP_AT, parachute, fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, fleeceSweaterColored, sheepHead, sheepLegs, sheepLids, sheepTuft, shorn } from './models'
+import { CHUTE, FLEECE_FIT, SHEEP_AT, plain, parachute, fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, fleeceSweaterColored, sheepHead, sheepLegs, sheepLids, sheepShade, sheepShadeHead, sheepShadeSkin, sheepTuft, shorn } from './models'
 import type { SheepPose } from './pick'
 
 /**
@@ -23,11 +24,22 @@ const PARTS = {
   tuft: sheepTuft,
   lids: sheepLids,
   chute: parachute,
+  shade: sheepShade,
+  shadeSkin: sheepShadeSkin,
+  shadeHead: sheepShadeHead,
 } satisfies Record<string, () => BufferGeometry>
 export type SheepPart = keyof typeof PARTS
 export type SheepMeshes = Record<SheepPart, InstancedMesh>
 /** The parts tinted per sheep, by the colour of its fleece. */
 const TINTED: readonly SheepPart[] = ['fleece', 'sleek', 'felt', 'curls', 'tuft']
+/**
+ * The parts drawn only into the sun's shadow map (models.ts, `sheepShade`): the sheep's shadow from a few plain lumps.
+ * Of the parts seen, only the legs and the parachute cast their own.
+ */
+const SHADES: readonly SheepPart[] = ['shade', 'shadeSkin', 'shadeHead']
+const CASTS: readonly SheepPart[] = ['legs', 'chute', ...SHADES]
+/** The parts seen that have a plain build for the flock far off (models.ts `plain`); the rest are cheap already. */
+const PLAINED: readonly SheepPart[] = ['legs', 'fleece', 'sleek', 'felt', 'curls', 'sweater', 'sweaterColored', 'skin', 'head', 'tuft', 'lids']
 
 /** Tints over the white fleece meshes: plain white, the bath's felt, a coloured sheep's colour. */
 const WHITE = new Color('#ffffff'),
@@ -54,10 +66,12 @@ export interface SheepMotion {
   blink: boolean
   chute?: Matrix4 | null
 }
-/** A sheep's own breathing and blinking at time `t`: slow and out of step with the others, a blink every few seconds. */
-export function liveliness(id: number, t: number) {
+/** A sheep's own breathing and blinking at time `t`, into `mo`: slow and out of step with the others, a blink every few seconds. */
+export function liveliness(id: number, t: number, mo: SheepMotion) {
   const every = 3.2 + (id % 5) * 0.45
-  return { breath: Math.sin(t * 2.1 + id * 1.3), blink: (t + id * 1.37) % every < 0.14 }
+  mo.breath = Math.sin(t * 2.1 + id * 1.3)
+  mo.blink = (t + id * 1.37) % every < 0.14
+  return mo
 }
 
 /** The flock's meshes, room for `cap` sheep. */
@@ -67,9 +81,15 @@ export function sheepMeshes(cap: number): SheepMeshes {
     const m = new InstancedMesh(PARTS[k](), sheepVmat(), cap)
     m.name = 'sheep_' + k
     m.count = 0
-    m.castShadow = true
-    m.receiveShadow = true
+    m.castShadow = CASTS.includes(k)
+    m.receiveShadow = !SHADES.includes(k)
     m.frustumCulled = false
+    // a shadow-only part draws none in the frame itself: its sheep are counted in for the shadow map alone
+    if (SHADES.includes(k)) {
+      m.userData.casts = 0
+      m.onBeforeShadow = () => void (m.count = m.userData.casts as number)
+      m.onAfterShadow = () => void (m.count = 0)
+    }
     out[k] = m
   }
   // the tints from the start, so their shaders are built with them
@@ -78,32 +98,98 @@ export function sheepMeshes(cap: number): SheepMeshes {
 }
 
 const _m = new Matrix4(),
-  _p = new Vector3(),
-  _q = new Quaternion(),
-  _s = new Vector3(),
   _e = new Euler(),
   _over = new Matrix4(),
   _curls = new Matrix4()
 
 /**
- * Poses sheep into the meshes, a frame at a time: `begin`, `add` each sheep where it stands, `end`. The fleece grows
+ * A sheep's whole pose, written straight into `m`: standing at (x, y, z), turned `yaw` about the vertical, rocked `roll`
+ * about its length (a waddle) — the Euler YXZ turn, without the quaternion `compose` makes (a big flock is posed
+ * every frame, and this is most of it).
+ */
+export function standAt(m: Matrix4, x: number, y: number, z: number, yaw: number, roll: number) {
+  const e = m.elements,
+    cy = Math.cos(yaw),
+    sy = Math.sin(yaw),
+    cr = Math.cos(roll),
+    sr = Math.sin(roll)
+  e[0] = cy
+  e[1] = 0
+  e[2] = -sy
+  e[3] = 0
+  e[4] = sy * sr
+  e[5] = cr
+  e[6] = cy * sr
+  e[7] = 0
+  e[8] = sy * cr
+  e[9] = -sr
+  e[10] = cy * cr
+  e[11] = 0
+  e[12] = x
+  e[13] = y
+  e[14] = z
+  e[15] = 1
+  return m
+}
+/** `out` = `a` · moved by (tx, ty, 0) · scaled by (sx, sy, sz) — a part sitting on the sheep, grown or not. */
+function onPart(out: Matrix4, a: Matrix4, tx: number, ty: number, sx: number, sy: number, sz: number) {
+  const o = out.elements,
+    e = a.elements
+  for (let i = 0; i < 4; i++) {
+    o[12 + i] = e[i]! * tx + e[4 + i]! * ty + e[12 + i]!
+    o[i] = e[i]! * sx
+    o[4 + i] = e[4 + i]! * sy
+    o[8 + i] = e[8 + i]! * sz
+  }
+  return out
+}
+/** `out` = `a` · moved by (tx, ty, 0) · tilted `nod` about the sheep's side (the head bowing). */
+function onNod(out: Matrix4, a: Matrix4, tx: number, ty: number, nod: number) {
+  const o = out.elements,
+    e = a.elements,
+    c = Math.cos(nod),
+    s = Math.sin(nod)
+  for (let i = 0; i < 4; i++) {
+    const x = e[i]!,
+      y = e[4 + i]!
+    o[12 + i] = x * tx + y * ty + e[12 + i]!
+    o[i] = x * c + y * s
+    o[4 + i] = y * c - x * s
+    o[8 + i] = e[8 + i]!
+  }
+  return out
+}
+
+/**
+ * Poses sheep into the meshes, a frame at a time: `begin` (`far`: the plain builds, for the flock seen from far off),
+ * `add` each sheep where it stands, `end`. The fleece grows
  * from a pink shorn body to a big round cloud, and shows where the sheep has been in the salon (the author, 19.10.2026:
  * the sheep's path must be plain): sleek after the comb, matted after the bath, curls after the curling, a sweater after
  * the knitting, and the colour it took at the dye station (its tuft too; a coloured sweater is striped).
  */
 export function sheepDrawer(meshes: SheepMeshes) {
-  const n = Object.fromEntries(Object.keys(meshes).map((k) => [k, 0])) as Record<SheepPart, number>
+  const parts = Object.keys(meshes) as SheepPart[]
+  const n = Object.fromEntries(parts.map((k) => [k, 0])) as Record<SheepPart, number>
+  // each part's geometry up close and far off
+  const near = Object.fromEntries(parts.map((k) => [k, meshes[k].geometry])) as Record<SheepPart, BufferGeometry>
+  const far = Object.fromEntries(parts.map((k) => [k, PLAINED.includes(k) ? plain(PARTS[k]) : meshes[k].geometry])) as Record<SheepPart, BufferGeometry>
+  let farOff = false
   const put = (k: SheepPart, mx: Matrix4, c?: Color) => {
+    // past the meshes' room a sheep is left out: a count over it would lose the whole flock's draw
+    if (n[k] >= meshes[k].instanceMatrix.count) return
     if (c) meshes[k].setColorAt(n[k], c)
     meshes[k].setMatrixAt(n[k]++, mx)
   }
   return {
-    begin() {
-      for (const k of Object.keys(n) as SheepPart[]) n[k] = 0
+    begin(isFar = false) {
+      for (const k of parts) n[k] = 0
+      if (isFar === farOff) return
+      farOff = isFar
+      for (const k of parts) meshes[k].geometry = isFar ? far[k] : near[k]
     },
     /** One sheep standing at `base` (facing +X), moving by `mo`; the matrices the pointer reads go into `pose`. */
     add(s: SheepLook, base: Matrix4, mo: SheepMotion, pose: SheepPose) {
-      pose.base.copy(base)
+      if (base !== pose.base) pose.base.copy(base)
       pose.legs.copy(base)
       put('legs', pose.legs)
       // the fleece sits on the legs however big it is; the head comes a little down and back with it
@@ -115,21 +201,24 @@ export function sheepDrawer(meshes: SheepMeshes) {
       if (pose.woolly) {
         // breathing: the fleece swells a little, more up than out
         const b = mo.breath * 0.012
-        pose.fleece.multiplyMatrices(base, _m.compose(_p.set(fx, 0.07 + (fy - 0.07) * k, 0), _q.identity(), _s.set(k * (1 + b * 0.5), k * (1 + b), k * (1 + b * 0.5))))
+        onPart(pose.fleece, base, fx, 0.07 + (fy - 0.07) * k, k * (1 + b * 0.5), k * (1 + b), k * (1 + b * 0.5))
         // the salon's marks: the fleece itself (woolly, sleek or felted), then curls and a sweater over it
         const fleece = m.bath ? 'felt' : m.comb ? 'sleek' : 'fleece'
         put(fleece, pose.fleece, tint)
         _over.multiplyMatrices(pose.fleece, FIT[fleece])
         if (m.curl) put('curls', _curls.multiplyMatrices(_over, CURLS[fleece]), tint)
         if (m.knit) put(m.dye ? 'sweaterColored' : 'sweater', _over)
+        put('shade', _over)
       } else {
-        pose.fleece.multiplyMatrices(base, _m.makeTranslation(fx, 0.22, 0))
+        onPart(pose.fleece, base, fx, 0.22, 1, 1, 1)
         put('skin', pose.fleece)
+        put('shadeSkin', pose.fleece)
       }
       const [hx, hy] = SHEEP_AT.head
-      pose.head.multiplyMatrices(base, _m.compose(_p.set(hx - (1 - k) * 0.15, hy - (1 - k) * 0.2, 0), _q.setFromEuler(_e.set(0, 0, mo.nod)), _s.set(1, 1, 1)))
+      onNod(pose.head, base, hx - (1 - k) * 0.15, hy - (1 - k) * 0.2, mo.nod)
       put('head', pose.head)
       put('tuft', pose.head, tint)
+      put('shadeHead', pose.head)
       if (mo.blink) put('lids', pose.head)
       if (mo.chute) put('chute', mo.chute)
     },
@@ -137,8 +226,11 @@ export function sheepDrawer(meshes: SheepMeshes) {
       for (const k of Object.keys(n) as SheepPart[]) {
         const m = meshes[k]
         m.count = n[k]
-        m.instanceMatrix.needsUpdate = true
-        if (m.instanceColor) m.instanceColor.needsUpdate = true
+        if (SHADES.includes(k)) {
+          m.userData.casts = n[k]
+          m.count = 0
+        }
+        upload(m, n[k])
       }
     },
   }
@@ -186,4 +278,4 @@ export function dropPose(e: number, t: number, id: number, x: number, z: number,
 }
 
 /** A pose to fill, for a sheep the pointer does not need to find. */
-export const newPose = (): SheepPose => ({ base: new Matrix4(), legs: new Matrix4(), fleece: new Matrix4(), head: new Matrix4(), woolly: true })
+export const newPose = (): SheepPose => ({ base: new Matrix4(), legs: new Matrix4(), fleece: new Matrix4(), head: new Matrix4(), woolly: true, seen: 0 })

@@ -1,4 +1,4 @@
-import { BLOCKING, BUILDINGS, DIRS, dimsOf, GRID, MARKET, PLOTS, REACH, RES, SEED, type BuildingId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
+import { BLOCKING, BUILDINGS, DIRS, dimsOf, GRID, MARKET, PLOTS, REACH, RES, SEED, SHEEP, type BuildingId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
 import { Field, Flock, GameState, Plant, key, res, unkey, type Building, type PastureT, type ResCell, type World } from './world'
 
 /**
@@ -54,8 +54,26 @@ export const isStation = (b: Building | null | undefined) => !!b && b.type !== '
 /** Does a push from (x, y) going d come into the pen through its way in? */
 export const entersPasture = (p: PastureT, x: number, y: number, d: number) => p.entry.x === x && p.entry.y === y && p.entry.d === d
 
+/**
+ * The pens by cell, kept beside their list (a roaming flock asked for every step, through every pen). Pens never move: a
+ * new one is pushed onto the list, a removed one leaves a new list, a loaded game brings its own — so the index is built
+ * again when the list is another or longer.
+ */
+const penCells = new WeakMap<PastureT[], { n: number; at: Map<number, PastureT> }>()
+/** The farm has the most sheep it may hold (SHEEP.most): none more is bought. */
+export const flockFull = (w: World) => res(w, Flock).sheep.length >= SHEEP.most
+
+/** The pen over a cell (or a point), if any. */
 export function pastureAt(w: World, x: number, y: number): PastureT | null {
-  return res(w, Flock).pastures.find((p) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h) ?? null
+  const list = res(w, Flock).pastures
+  let c = penCells.get(list)
+  if (!c || c.n !== list.length) {
+    const at = new Map<number, PastureT>()
+    for (const p of list) for (let j = p.y; j < p.y + p.h; j++) for (let i = p.x; i < p.x + p.w; i++) at.set(j * 4096 + i, p)
+    c = { n: list.length, at }
+    penCells.set(list, c)
+  }
+  return c.at.get(Math.floor(y) * 4096 + Math.floor(x)) ?? null
 }
 
 /** The pile of goods lying on a cell, if any (PILE). */
@@ -116,10 +134,12 @@ export const sowable = (w: World, b: Pick<Building, 'x' | 'y' | 'w' | 'h'>) => c
 export const waterNear = (w: World, x: number, y: number, bw: number, bh: number) => circle(x, y, bw, bh).some((c) => terr(w, c.x, c.y) === 'water')
 
 /** Why a building may not stand here — a key into WHY_TEXT, or '' when it may. */
-export type WhyNot = '' | 'edge' | 'buyPlot' | 'hill' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull'
+export type WhyNot = '' | 'edge' | 'buyPlot' | 'hill' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull' | 'flockFull'
 export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Dir = 0): WhyNot {
-  // a sheep comes down into a pen with room, or onto free own grass, where a roaming sheep may stand
+  // a sheep comes down into a pen with room, or onto free own grass, where a roaming sheep may stand — while the farm
+  // has fewer than the most sheep it may hold (SHEEP.most: as many as are drawn at a steady 60 frames a second)
   if (type === 'sheep') {
+    if (flockFull(w)) return 'flockFull'
     const p = pastureAt(w, x, y)
     if (p) return residents(w, p) >= p.cap ? 'penFull' : ''
     if (!onIsland(w, x, y)) return 'edge'

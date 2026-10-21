@@ -1,8 +1,9 @@
-import { BUILDINGS, GRID, type BuildingId, type Dir, type ItemId } from './balance'
+import { BUILDINGS, GRID, SHEEP, type BuildingId, type Dir, type ItemId } from './balance'
 import { get, levelAt, pastureAt } from './grid'
 import { place } from './actions/build'
 import { buildShowcase, keepFull } from './showcase'
 import { enterBelt } from './systems/belts'
+import { grazeable } from './systems/sheep'
 import { stepSimulation } from './systems'
 import { Field, Flock, GameState, Plant, key, makeSheep, newItem, res, type World } from './world'
 
@@ -22,13 +23,17 @@ export const STRESS = { sheep: 60, warmup: 20, stock: 60 } as const
 /**
  * A factory bigger than the chapter's, for measuring the frame and the step (dev console `__game.stress()`, and
  * stress.test.ts): the showcase farm, and on each plot the farm leaves free a belt loop round its edge,
- * every other cell carrying a good, round three stations kept stocked; the pens filled past their places with sheep.
+ * every other cell carrying a good, round three stations kept stocked; the whole island risen and owned, and the flock as a big
+ * farm keeps it — the pens full, the rest of the sheep (up to the most there may be) roaming over the free land, spread
+ * evenly.
  */
 export function buildStress(w: World, opts: { sheep?: number } = {}) {
   buildShowcase(w, 0)
   const f = res(w, Field),
     gs = res(w, GameState)
   gs.coins += 100_000
+  // the whole island risen (no card: it is not the game's own growing)
+  Object.assign(f, { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
   let n = 0
   for (let py = 0; (py + 1) * GRID.plotH <= GRID.rows; py++)
     for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
@@ -63,10 +68,16 @@ export function buildStress(w: World, opts: { sheep?: number } = {}) {
       ROWS[n % ROWS.length]!.forEach((type, j) => place(w, type, x0 + 1 + j * 2, y0 + 1, 1, true))
       n++
     }
+  for (let py = 0; py * GRID.plotH < GRID.rows; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
   gs.fieldVersion++
-  // the pens filled past their places
+  // the pens are full (the showcase fills them); the rest roam, each on a free cell of its own spread by the golden ratio
   const flock = res(w, Flock)
-  for (let i = flock.sheep.length; i < (opts.sheep ?? STRESS.sheep); i++) flock.sheep.push(makeSheep(w, flock.pastures[i % flock.pastures.length]!.id, true))
+  const free: [number, number][] = []
+  for (let y = 0; y < GRID.rows; y++) for (let x = 0; x < GRID.cols; x++) if (grazeable(w, x, y)) free.push([x, y])
+  for (let i = flock.sheep.length; i < Math.min(opts.sheep ?? STRESS.sheep, SHEEP.most); i++) {
+    const [x, y] = free[Math.floor(((i * 0.618034) % 1) * free.length)]!
+    flock.sheep.push(makeSheep(w, 0, true, { x: x + 0.25 + ((i * 0.754878) % 1) * 0.5, y: y + 0.25 + ((i * 0.56984) % 1) * 0.5 }))
+  }
   feedStress(w)
   for (let t = 0; t < STRESS.warmup; t += 1 / 60) stepSimulation(w)
 }
