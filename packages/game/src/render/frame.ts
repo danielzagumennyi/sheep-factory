@@ -1,17 +1,21 @@
 import { DIRS, type ItemId } from '@/game/balance'
-import { beltInDir, feeds, get, isBeltLike, targetOk } from '@/game/grid'
-import { Flock, Plant, res, type SheepT, type World } from '@/game/world'
+import { beltInDir, feeds, get, inCell, isBeltLike, isStation, outCells, targetOk } from '@/game/grid'
+import { Field, Flock, Fx, Plant, Ui, res, unkey, type SheepT, type World } from '@/game/world'
 import { beltPoint } from './kit'
+import { HEAP, startFall, stepFalls } from './falls'
 
 /**
  * What the views draw this frame, gathered once by GameLoop right after the simulation steps: where every good on a
- * belt, pile or the ground sits, and where each sheep is (in the pasture, on a belt, in a shearer). Views only read it.
+ * belt, pile or the ground sits, and where each sheep is (in the pasture, on a belt, walking through a station). Views
+ * only read it.
  */
 export interface GoodSpot {
   kind: ItemId
   x: number
   z: number
   y: number
+  /** How much it still looks as it did in the hand (1 — as held, 0 — as lying), on its way down from it (falls.ts). */
+  held?: number
 }
 export const frame = {
   /**
@@ -23,6 +27,8 @@ export const frame = {
   /** How far that clock moved this frame. */
   dt: 0,
   goods: [] as GoodSpot[],
+  /** The goods in the hand: a little stack under the pointer, drawn over everything (Items.tsx). */
+  carry: [] as GoodSpot[],
   /** Each sheep drawn: where, facing, inside a machine, and `lift` — a roaming one stepping over a belt walks on it. */
   sheep: new Map<SheepT, { x: number; z: number; yaw: number; inMachine: boolean; lift?: number }>(),
   /** Belt cells with their input side, for the belt view. */
@@ -30,13 +36,49 @@ export const frame = {
 }
 
 const yawOfDir = (d: number) => -d * (Math.PI / 2)
-/** How high a sheep walks over a belt: on its slats. */
-const BELT_LIFT = 0.2
+/** How high a sheep walks over a belt: on its slats; through a station: on its plinth. */
+const BELT_LIFT = 0.2,
+  PLINTH_LIFT = 0.14
 
-export function collectFrame(world: World) {
+/** How high over the ground under the pointer the stack in the hand is held (GameLoop.tsx). */
+export const CARRY_Y = 1.2
+/** The stack in the hand: a little one swaying side to side, each good a step over the one under it. */
+const CARRY_STEP = { side: 0.08, up: 0.13 } as const
+
+export function collectFrame(world: World, carryAt: { x: number; y: number; h: number } | null = null) {
+  // the falls just set off (by this frame's steps, or a click since the last frame) start here, not in FxView, which
+  // runs after this: else their goods would show in their places for a frame before they fly. One let go from the hand
+  // sets off from where its good was drawn in it the last frame, before the stack is gathered anew
+  const q = res(world, Fx).q
+  let j = 0
+  for (const e of q)
+    if (e.kind === 'fall') startFall(e, e.hand ? frame.carry[e.n] : undefined)
+    else q[j++] = e
+  q.length = j
   frame.goods.length = 0
+  frame.carry.length = 0
   frame.sheep.clear()
   frame.belts.length = 0
+  // the goods on the ground, a heap on each cell (PILE) — those still falling there in the air (falls.ts), their places
+  // in the heap empty till they land
+  const piles = res(world, Field).piles
+  const falling = stepFalls(
+    frame.dt,
+    (cell) => piles.get(cell)?.length ?? 0,
+    (kind, x, y, z, held) => frame.goods.push({ kind, x, z, y, held }),
+  )
+  for (const [k, items] of piles) {
+    const [x, y] = unkey(k)
+    items.forEach((it, i) => {
+      if (falling.has(k + ':' + i)) return
+      const [dx, dz, dy] = HEAP[i % HEAP.length]!
+      frame.goods.push({ kind: it.kind as ItemId, x: x + 0.5 + dx, z: y + 0.5 + dz, y: dy })
+    })
+  }
+  // what the hand carries, a little stack held CARRY_Y over the ground under the pointer
+  const ui = res(world, Ui)
+  if (ui.carry.length && carryAt)
+    ui.carry.forEach((it, i) => frame.carry.push({ kind: it.kind as ItemId, x: carryAt.x + (i % 2 ? CARRY_STEP.side : -CARRY_STEP.side), z: carryAt.y, y: carryAt.h + CARRY_Y + i * CARRY_STEP.up }))
   const plant = res(world, Plant)
   for (const b of plant.b.values()) {
     if (isBeltLike(b)) {
@@ -53,16 +95,20 @@ export function collectFrame(world: World) {
           // the hand picks sheep by position: keep a riding sheep's position current
           it.sheep.px = px
           it.sheep.py = py
-        }
-        else frame.goods.push({ kind: it.kind as ItemId, x: px, z: py, y: 0.255 })
+        } else frame.goods.push({ kind: it.kind as ItemId, x: px, z: py, y: 0.255 })
       }
     }
-    if (b.pile.length) {
-      const px = b.pileX + 0.5,
-        pz = b.pileY + 0.5
-      b.pile.forEach((it, i) => frame.goods.push({ kind: it.kind as ItemId, x: px - 0.18 + i * 0.18, z: pz + 0.1 - i * 0.08, y: 0.1 + i * 0.05 }))
+    // a station's sheep walks its lane under the arch while it is worked on, from the way in to the way out, and waits at
+    // the way out for room: so what the salon did to it shows as it goes (the author, 19.10.2026)
+    if (isStation(b) && (b.slot?.sheep || b.outs.some((o) => o.item.sheep))) {
+      const a = inCell(b),
+        o = outCells(b).find((c) => c.d === b.dir)
+      if (a && o) {
+        const lane = (k: number) => ({ x: a.sx + 0.5 + (o.sx - a.sx) * k, z: a.sy + 0.5 + (o.sy - a.sy) * k, yaw: yawOfDir(b.dir), inMachine: false, lift: PLINTH_LIFT })
+        if (b.slot?.sheep) frame.sheep.set(b.slot.sheep, lane(b.total > 0 ? 1 - Math.max(0, b.timer) / b.total : 0.5))
+        for (const q of b.outs) if (q.item.sheep && !frame.sheep.has(q.item.sheep)) frame.sheep.set(q.item.sheep, lane(1))
+      }
     }
-    if (b.type === 'shearer' && b.slot?.sheep) frame.sheep.set(b.slot.sheep, { x: b.x + 0.5, z: b.y + 0.5, yaw: yawOfDir(b.dir), inMachine: true })
   }
   for (const s of res(world, Flock).sheep) {
     if (frame.sheep.has(s)) continue

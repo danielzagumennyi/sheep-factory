@@ -14,7 +14,7 @@ interface Tag {
   adj: boolean
 }
 
-/** A price tag on every plot for sale, on its near (south) edge; a lock on the ones that need a neighbour first. */
+/** A price tag on every plot for sale, in its middle (the author: «тултип о покупке должен быть в центре участка»); a lock on the ones that need a neighbour first. */
 export function PlotTags() {
   const { world } = useGame()
   const [tags, setTags] = useState<Tag[]>([])
@@ -23,7 +23,7 @@ export function PlotTags() {
     const f = res(world, Field),
       gs = res(world, GameState)
     const out: Tag[] = []
-    for (let py = 0; py * GRID.plotH < GRID.roadY; py++)
+    for (let py = 0; py * GRID.plotH < GRID.rows; py++)
       for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
         if (f.plots.has(key(px, py))) continue
         const price = plotPrice(world, px, py)
@@ -39,7 +39,7 @@ export function PlotTags() {
   return (
     <group>
       {tags.map((t) => (
-        <Html key={t.px + ',' + t.py} position={[(t.px + 0.5) * GRID.plotW, 0.3, (t.py + 1) * GRID.plotH - 0.5]} center zIndexRange={[3, 0]} style={{ pointerEvents: 'none' }}>
+        <Html key={t.px + ',' + t.py} position={[(t.px + 0.5) * GRID.plotW, 0.3, (t.py + 0.5) * GRID.plotH]} center zIndexRange={[3, 0]} style={{ pointerEvents: 'none' }}>
           <span className={'tag tag--plot' + (t.adj ? '' : ' tag--locked') + (t.adj && coins < t.price ? ' tag--short' : '')}>
             <Icon kind={t.adj ? 'coin' : 'lock'} size={14} />
             {t.price}

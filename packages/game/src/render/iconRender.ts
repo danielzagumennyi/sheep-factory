@@ -1,7 +1,7 @@
-import { Box3, DirectionalLight, HemisphereLight, Mesh, OrthographicCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderTarget, type BufferGeometry, type WebGLRenderer } from 'three'
+import { Box3, DirectionalLight, HemisphereLight, Mesh, OrthographicCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer, WebGLRenderTarget, type BufferGeometry } from 'three'
 import { BUILDINGS, LIGHT, LOOK, ROOF, type BuildingId, type ItemId } from '@/game/balance'
 import { RENDERED_ICONS, type RenderedIcon } from '@/ui/iconKinds'
-import { model, vmat } from './kit'
+import { model, sheepVmat, vmat } from './kit'
 import { machineBody } from './machineModels'
 import { METAL, WOOD, ball, bushBody, cyl, good, grassClump, put, rb, ring, sheepModel, shade } from './models'
 
@@ -53,7 +53,7 @@ const stock = () =>
 /** A berry bush, its berries on. */
 const bush = () => model([bushBody().clone(), ...[[0.12, 0.38, 0.2], [-0.16, 0.33, 0.18], [0.02, 0.48, 0.12], [0.24, 0.26, 0.05], [-0.04, 0.28, 0.27]].map((c) => put(ball(0.05), LOOK.berry, c as [number, number, number]))])
 
-const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'mower', 'berry', 'seeder', 'carder', 'spinner', 'splitter', 'merger', 'felter', 'workshop']
+const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'comb', 'curl', 'knit', 'bath', 'mower', 'berry', 'seeder', 'splitter', 'merger']
 function geometryOf(kind: RenderedIcon): BufferGeometry {
   if ((MACHINES as string[]).includes(kind)) {
     // a 2×1 lies along z; for its icon it is turned to lie across the frame, machine on the left
@@ -91,9 +91,12 @@ const LINE = 9
 /**
  * Draw every rendered icon from its model and post it to the dev server, which keeps it in public/icons (dev console:
  * `__game.icons()`). Each model is lit like the field — the same sun, sky fill and toon bands — and seen from the
- * front, a little from the right and above, through an orthographic camera fitted to it.
+ * front, a little from the right and above, through an orthographic camera fitted to it. It draws with the game's
+ * renderer, or with one of its own when the field is not running (a hidden tab:
+ * `(await import('/src/render/iconRender.ts')).renderIcons()`).
  */
-export async function renderIcons(gl: WebGLRenderer) {
+export async function renderIcons(given?: WebGLRenderer) {
+  const gl = given ?? new WebGLRenderer({ antialias: true })
   const rt = new WebGLRenderTarget(DRAW, DRAW, { samples: 4 })
   rt.texture.colorSpace = SRGBColorSpace
   const scene = new Scene()
@@ -116,6 +119,8 @@ export async function renderIcons(gl: WebGLRenderer) {
   for (const kind of RENDERED_ICONS) {
     const geo = geometryOf(kind)
     mesh.geometry = geo
+    // a sheep in its own soft light, as in the field
+    mesh.material = kind === 'sheep' ? sheepVmat() : vmat()
     box.setFromObject(mesh)
     box.getCenter(c)
     const r = box.getSize(v).length()
@@ -182,5 +187,6 @@ export async function renderIcons(gl: WebGLRenderer) {
   gl.setRenderTarget(before)
   gl.setClearColor(LOOK.sky)
   rt.dispose()
+  if (!given) gl.dispose()
   return RENDERED_ICONS.length
 }

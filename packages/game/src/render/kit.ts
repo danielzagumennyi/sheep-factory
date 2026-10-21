@@ -45,6 +45,18 @@ export function mat(color: string, opacity = 1): MeshToonMaterial {
 /** A toon material that takes its colours from the geometry (merged multi-colour models: trees, flowers, stones). */
 const vertexMat = withReach(new MeshToonMaterial({ color: new Color('#ffffff'), gradientMap: bands, vertexColors: true }))
 export const vmat = () => vertexMat
+/**
+ * The sheep's own light (the author's reference, 20.10.2026: soft, bright fleece): four bands blended into one another
+ * and the shade lifted, so a fleece of puffs reads as one soft ball, not rings of hard light with a grey belly.
+ */
+const sheepBands = (() => {
+  const t = new DataTexture(new Uint8Array([172, 220, 248, 255]), 4, 1, RedFormat)
+  t.minFilter = t.magFilter = LinearFilter
+  t.needsUpdate = true
+  return t
+})()
+const sheepMat = withReach(new MeshToonMaterial({ color: new Color('#ffffff'), gradientMap: sheepBands, vertexColors: true }), 'sheep')
+export const sheepVmat = () => sheepMat
 export const toonBands = bands
 const flats = new Map<string, MeshBasicMaterial>()
 /** An unlit material for markers that must read the same in any light (ghost outlines, status dots). */

@@ -6,7 +6,7 @@ import { LOOK } from '@/game/balance'
 const INK = 'currentColor'
 const S = { stroke: INK, strokeWidth: 1.4, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const }
 
-/** The few icons still drawn — the clearing cross, the book, the move arrows, the lock, the lawn switch — in a 24×24 box. */
+/** The few icons still drawn — the clearing cross, the book, the move arrows, the lock, the lawn switch, the hand — in a 24×24 box. */
 const ICONS: Readonly<Record<string, ReactNode>> = {
   erase: <path d="M6 6l12 12M18 6L6 18" fill="none" stroke={LOOK.bad} strokeWidth={2.6} strokeLinecap="round" />,
   book: (
@@ -26,6 +26,13 @@ const ICONS: Readonly<Record<string, ReactNode>> = {
       <path d="M8.5 11V8.5a3.5 3.5 0 0 1 7 0V11" />
       <rect x="6.5" y="11" width="11" height="8" rx="2" fill="#5a6a81" />
     </g>
+  ),
+  hand: (
+    <path
+      {...S}
+      fill="#f6d2b0"
+      d="M7.2 12.6V6.4a1.3 1.3 0 0 1 2.6 0v4.8V4.9a1.3 1.3 0 0 1 2.6 0v6.3V5.6a1.3 1.3 0 0 1 2.6 0v5.9V8a1.3 1.3 0 0 1 2.6 0v5.6c0 3.5-2.4 6.2-5.7 6.2h-.9c-2 0-3.3-.9-4.4-2.5l-2.4-3.6a1.3 1.3 0 0 1 2.1-1.5z"
+    />
   ),
   grass: (
     <g {...S}>

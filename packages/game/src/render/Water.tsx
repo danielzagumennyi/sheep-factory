@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CapsuleGeometry, Color, CylinderGeometry, Mesh, MeshBasicMaterial } from 'three'
 import { GRID, LOOK, WATER } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
+import { onIsland } from '@/game/grid'
 import { Field, GameState, res, unkey, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { flat, model, vmat } from './kit'
@@ -103,7 +104,7 @@ export function Water() {
 function waterSig(w: World) {
   const f = res(w, Field)
   let s = ''
-  for (const [k, t] of f.terrain) if (t === 'water' && unkey(k)[1] >= f.top && unkey(k)[0] < f.right) s += k + ';'
+  for (const [k, t] of f.terrain) if (t === 'water' && onIsland(w, ...unkey(k))) s += k + ';'
   return s
 }
 
@@ -126,7 +127,7 @@ export interface WaterField {
 function bodyWeights(w: World) {
   const weight = new Map<string, number>()
   const f = res(w, Field)
-  for (const [k, t] of f.terrain) if (t === 'water' && unkey(k)[1] >= f.top && unkey(k)[0] < f.right) weight.set(k, 1)
+  for (const [k, t] of f.terrain) if (t === 'water' && onIsland(w, ...unkey(k))) weight.set(k, 1)
   return weight
 }
 

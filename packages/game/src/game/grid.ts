@@ -1,4 +1,4 @@
-import { BLOCKING, BUILDINGS, DIRS, dimsOf, GRID, PLOTS, REACH, RECIPES, RES, SEED, type BuildingId, type Dir, type ItemId, type Job, type ResId, type TerrainId } from './balance'
+import { BLOCKING, BUILDINGS, DIRS, dimsOf, GRID, MARKET, PLOTS, REACH, RES, SEED, type BuildingId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
 import { Field, Flock, GameState, Plant, key, res, unkey, type Building, type PastureT, type ResCell, type World } from './world'
 
 /**
@@ -7,10 +7,15 @@ import { Field, Flock, GameState, Plant, key, res, unkey, type Building, type Pa
  */
 
 export const inGrid = (x: number, y: number) => x >= 0 && y >= 0 && x < GRID.cols && y < GRID.rows
-/** Is the cell on the island (the far row and the east are under the sky until the island grows)? */
-export const onIsland = (w: World, x: number, y: number) => inGrid(x, y) && y >= res(w, Field).top && x < res(w, Field).right
+/** Is the cell on the island (the ring round the start is under the sky until the island grows)? */
+export function onIsland(w: World, x: number, y: number) {
+  const f = res(w, Field)
+  return x >= f.left && y >= f.top && x < f.right && y < f.bottom
+}
 /** Is the plot on the island? */
-export const plotOnIsland = (w: World, px: number, py: number) => py * GRID.plotH >= res(w, Field).top && px * GRID.plotW < res(w, Field).right
+export const plotOnIsland = (w: World, px: number, py: number) => onIsland(w, px * GRID.plotW, py * GRID.plotH)
+/** The level of a hill on the cell, 2 or 3; 1 is the ground (HILL). */
+export const levelAt = (w: World, x: number, y: number) => res(w, Field).hills.get(key(x, y)) ?? 1
 /** The building standing on a cell — its top-left cell or any other cell of its footprint. */
 export function get(w: World, x: number, y: number): Building | null {
   const plant = res(w, Plant),
@@ -39,12 +44,11 @@ export function anchorAt(type: BuildingId, dir: Dir, wx: number, wy: number): [n
 export const terr = (w: World, x: number, y: number): TerrainId | '' => res(w, Field).terrain.get(key(x, y)) ?? ''
 export const plotOf = (x: number, y: number): [number, number] => [Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)]
 export const owned = (w: World, x: number, y: number) => res(w, Field).plots.has(key(...plotOf(x, y)))
-export const isRoad = (_x: number, y: number) => y === GRID.roadY
 export const isBeltLike = (b: Building | null | undefined): boolean => !!b && (b.type === 'belt' || b.type === 'splitter' || b.type === 'merger')
 export const isMachine = (b: Building | null | undefined): boolean => !!b && !isBeltLike(b)
 export const step = (x: number, y: number, d: number): [number, number] => [x + DIRS[d]![0], y + DIRS[d]![1]]
 export const back = (d: number) => ((d + 2) % 4) as Dir
-/** Is this a station on the sheep's loop (the shearer, the feeder, the dyer)? */
+/** Is this a station on the sheep's loop (the shearer, the feeder, the salon's stations)? */
 export const isStation = (b: Building | null | undefined) => !!b && b.type !== 'dock' && !!BUILDINGS[b.type].station
 
 /** Does a push from (x, y) going d come into the pen through its way in? */
@@ -54,9 +58,19 @@ export function pastureAt(w: World, x: number, y: number): PastureT | null {
   return res(w, Flock).pastures.find((p) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h) ?? null
 }
 
-/** An owned, empty, buildable cell. */
+/** The pile of goods lying on a cell, if any (PILE). */
+export const pileAt = (w: World, x: number, y: number) => res(w, Field).piles.get(key(x, y))
+/** The goods lying by a machine's ways out: what it gave out with no belt to take it. */
+export const pilesBy = (w: World, b: Building) => [...new Set(outCells(b).map((c) => key(c.x, c.y)))].flatMap((k) => res(w, Field).piles.get(k) ?? [])
+/** May goods lie on the cell: on own land's ground, not up a hill, not in water, a pen or a building, nor on a rock or a tree. */
+export function pileOk(w: World, x: number, y: number) {
+  if (!onIsland(w, x, y) || !owned(w, x, y) || levelAt(w, x, y) > 1 || pastureAt(w, x, y) || get(w, x, y)) return false
+  const t = terr(w, x, y)
+  return t !== 'water' && t !== 'rock' && t !== 'tree'
+}
+/** An owned, empty, buildable cell: on the ground, not up a hill. */
 export function freeCell(w: World, x: number, y: number) {
-  return onIsland(w, x, y) && owned(w, x, y) && !pastureAt(w, x, y) && !isRoad(x, y) && !BLOCKING.includes(terr(w, x, y) as TerrainId) && !get(w, x, y)
+  return onIsland(w, x, y) && owned(w, x, y) && levelAt(w, x, y) === 1 && !pastureAt(w, x, y) && !BLOCKING.includes(terr(w, x, y) as TerrainId) && !get(w, x, y)
 }
 
 export interface ReachCell {
@@ -98,21 +112,32 @@ export const reachStock = (w: World, x: number, y: number, t: ResId, bw = 1, bh 
 export const reachOf = (w: World, b: Building, t: ResId, own = false) => reachCells(w, b.x, b.y, t, own, b.w, b.h)
 /** The empty own cells a seeder can sow, nearest first. */
 export const sowable = (w: World, b: Pick<Building, 'x' | 'y' | 'w' | 'h'>) => circle(b.x, b.y, b.w, b.h).filter((c) => freeCell(w, c.x, c.y))
+/** Is there water within REACH of a bw×bh footprint (the bath stands only by water)? */
+export const waterNear = (w: World, x: number, y: number, bw: number, bh: number) => circle(x, y, bw, bh).some((c) => terr(w, c.x, c.y) === 'water')
 
 /** Why a building may not stand here — a key into WHY_TEXT, or '' when it may. */
-export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'foreignRes' | 'needPen' | 'penFull'
+export type WhyNot = '' | 'edge' | 'buyPlot' | 'hill' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull'
 export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Dir = 0): WhyNot {
-  // a sheep goes only into a pen with room
+  // a sheep comes down into a pen with room, or onto free own grass, where a roaming sheep may stand
   if (type === 'sheep') {
     const p = pastureAt(w, x, y)
-    return !p ? 'needPen' : residents(w, p) >= p.cap ? 'penFull' : ''
+    if (p) return residents(w, p) >= p.cap ? 'penFull' : ''
+    if (!onIsland(w, x, y)) return 'edge'
+    if (!owned(w, x, y)) return 'buyPlot'
+    if (levelAt(w, x, y) > 1) return 'hill'
+    const t = terr(w, x, y)
+    if (t === 'water') return 'onWater'
+    if (t === 'rock' || t === 'tree' || t === 'bush') return t
+    // one sheep coming down on a cell at a time: three quick clicks are not three parachutes in one
+    const falling = res(w, Flock).sheep.some((s) => s.drop !== undefined && Math.hypot(s.px - x - 0.5, s.py - y - 0.5) < 0.6)
+    return get(w, x, y) || falling ? 'taken' : ''
   }
   const [bw, bh] = dimsOf(type, dir)
   // every cell of the footprint must be buildable
   for (const [cx, cy] of footprint(x, y, bw, bh)) {
     if (!onIsland(w, cx, cy)) return 'edge'
     if (!owned(w, cx, cy)) return 'buyPlot'
-    if (isRoad(cx, cy)) return 'road'
+    if (levelAt(w, cx, cy) > 1) return 'hill'
     if (pastureAt(w, cx, cy)) return 'pasture'
     const t = terr(w, cx, cy)
     if (t === 'water') return 'onWater'
@@ -125,6 +150,7 @@ export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Di
     if (!reachCells(w, x, y, near, false, bw, bh).length) return 'needBush'
     if (!reachCells(w, x, y, near, true, bw, bh).length) return 'foreignRes'
   }
+  if (BUILDINGS[type].needsWater && !waterNear(w, x, y, bw, bh)) return 'needWater'
   return ''
 }
 
@@ -171,7 +197,7 @@ function sideCell(b: Pick<Building, 'x' | 'y' | 'w' | 'h'>, d: Dir): [number, nu
 }
 
 /** Does a building of this type take anything in? Producers only give. */
-export const takesIn = (t: BuildingId | 'dock') => t !== 'dock' && t !== 'pen' && t !== 'sow' && t !== 'sheep' && (!!BUILDINGS[t].station || !!BUILDINGS[t].jobs || !!BUILDINGS[t].recipes || !!BUILDINGS[t].sows)
+export const takesIn = (t: BuildingId | 'dock') => t !== 'dock' && t !== 'pen' && t !== 'sow' && t !== 'sheep' && (!!BUILDINGS[t].station || !!BUILDINGS[t].sows)
 
 /** Where a building takes something in, and what that way in takes. */
 export interface InCell {
@@ -183,7 +209,7 @@ export interface InCell {
   sy: number
   /** The way it moves as it comes in: the building's own direction. */
   d: Dir
-  /** What this way in takes: a sheep, one good, or (undefined) any good of the machine's jobs. */
+  /** What this way in takes: a sheep, or one good. */
   takes?: ItemId | 'sheep'
 }
 /**
@@ -198,15 +224,6 @@ export function inCell(b: Pick<Building, 'type' | 'x' | 'y' | 'w' | 'h' | 'dir'>
   const [dx, dy] = DIRS[b.dir]!
   return { x: sx - dx, y: sy - dy, sx, sy, d: b.dir }
 }
-/** The other back cell of a 2×2: the second way in, for a station's good or a recipe's second input (GDD 4.1). */
-function inCell2(b: Pick<Building, 'type' | 'x' | 'y' | 'w' | 'h' | 'dir'>): InCell | null {
-  const c = inCell(b)
-  if (!c || b.w < 2 || b.h < 2) return null
-  const sx = b.dir % 2 === 0 ? c.sx : c.sx === b.x ? b.x + 1 : b.x,
-    sy = b.dir % 2 === 0 ? (c.sy === b.y ? b.y + 1 : b.y) : c.sy
-  const [dx, dy] = DIRS[b.dir]!
-  return { x: sx - dx, y: sy - dy, sx, sy, d: b.dir }
-}
 /**
  * A station's good comes in from its right-hand side, into the same back cell as the sheep — the side the shearer gives
  * its wool out of. A sheep loop round its pen turns left, so its right is the outside: the hay and the dye come from
@@ -218,68 +235,61 @@ function stationGoodIn(c: InCell): InCell {
 }
 /**
  * A machine's ways in and what each takes: a station takes the sheep from behind, in line with its output, and its
- * good from its right; a workshop takes its recipe's first input in line and the second by the other back cell — so
- * no two goods ever share a belt into it, and nothing waits behind the wrong one (docs/05-REWORK.md); a carder, a
- * spinner or a felter takes any of its jobs' goods by one way in; a seeder its seeds.
+ * good (the feeder's hay, the dye) from its right; a seeder its seeds.
  */
-export function machineIns(b: Pick<Building, 'type' | 'x' | 'y' | 'w' | 'h' | 'dir' | 'recipe' | 'seed'>): InCell[] {
+export function machineIns(b: Pick<Building, 'type' | 'x' | 'y' | 'w' | 'h' | 'dir' | 'seed'>): InCell[] {
   const c = inCell(b)
   if (!c || b.type === 'dock') return []
   const def = BUILDINGS[b.type]
   if (def.station) return def.uses ? [{ ...c, takes: 'sheep' }, { ...stationGoodIn(c), takes: def.uses }] : [{ ...c, takes: 'sheep' }]
   if (def.sows) return [{ ...c, takes: SEED[b.seed ?? 'meadow'] }]
-  if (def.recipes) {
-    const kinds = Object.keys(RECIPES[b.recipe ?? 'sweater'].inp) as ItemId[]
-    const c2 = inCell2(b)
-    return kinds.length > 1 && c2 ? [{ ...c, takes: kinds[0] }, { ...c2, takes: kinds[1] }] : [{ ...c, takes: kinds[0] }]
-  }
   return [c]
+}
+/**
+ * The market's ways in (MARKET.ports): on each side two cells, each taking what moves into it from the cell outside —
+ * west, north, east, south.
+ */
+export function dockIns(b: Pick<Building, 'x' | 'y' | 'w' | 'h'>): InCell[] {
+  const out: InCell[] = []
+  for (const o of MARKET.ports) {
+    out.push({ x: b.x - 1, y: b.y + o, sx: b.x, sy: b.y + o, d: 0 })
+    out.push({ x: b.x + o, y: b.y - 1, sx: b.x + o, sy: b.y, d: 1 })
+    out.push({ x: b.x + b.w, y: b.y + o, sx: b.x + b.w - 1, sy: b.y + o, d: 2 })
+    out.push({ x: b.x + o, y: b.y + b.h, sx: b.x + o, sy: b.y + b.h - 1, d: 3 })
+  }
+  return out
 }
 /**
  * Every way a building takes something in — what the in arrows show, the same for every building (the author: «чтобы
  * у всего был один принцип»): a machine's ways in; a splitter from behind; a merger from behind and both sides; a belt
- * from the side it takes from; a dock from every side that a belt can reach (not the dock row itself).
+ * from the side it takes from; the market by its ways in.
  */
 export function inCells(w: World, b: Building): InCell[] {
   const from = (sx: number, sy: number, d: Dir): InCell => ({ x: sx - DIRS[d]![0], y: sy - DIRS[d]![1], sx, sy, d })
   if (b.type === 'merger') return [b.dir, ((b.dir + 1) % 4) as Dir, ((b.dir + 3) % 4) as Dir].map((d) => from(b.x, b.y, d))
   if (b.type === 'splitter') return [from(b.x, b.y, b.dir)]
   if (b.type === 'belt') return [from(b.x, b.y, beltInDir(w, b))]
-  if (b.type === 'dock') {
-    const out: InCell[] = []
-    for (const [cx, cy] of cellsOf(b))
-      for (const d of [0, 1, 2, 3] as Dir[]) {
-        const c = from(cx, cy, d)
-        const own = c.x >= b.x && c.x < b.x + b.w && c.y >= b.y && c.y < b.y + b.h
-        if (!own && inGrid(c.x, c.y) && !isRoad(c.x, c.y) && c.y < GRID.roadY) out.push(c)
-      }
-    return out
-  }
+  if (b.type === 'dock') return dockIns(b)
   return machineIns(b)
 }
-/** The way in of building t that a good moving into its cell (tx, ty) going d comes by, or null. A dock takes from any side. */
-export function entersAt(t: Building, tx: number, ty: number, d: Dir): InCell | true | null {
-  if (t.type === 'dock') return true
-  return machineIns(t).find((c) => c.sx === tx && c.sy === ty && c.d === d) ?? null
+/** The way in of building t that a good moving into its cell (tx, ty) going d comes by, or null. */
+export function entersAt(t: Building, tx: number, ty: number, d: Dir): InCell | null {
+  return (t.type === 'dock' ? dockIns(t) : machineIns(t)).find((c) => c.sx === tx && c.sy === ty && c.d === d) ?? null
 }
 /**
  * What goes in by a way in, for its icon (the author: «нет нормальной индикации куда подсоединять овцу, а куда другой
- * ресурс»): a sheep or the station's good, a workshop's input for that hatch, the first good of a machine's jobs (a
- * carder shows wool though it takes pink too). Nothing for a belt, a splitter, a merger or a dock: they take anything.
+ * ресурс»): a sheep or the station's good, a seeder's seeds. Nothing for a belt, a splitter, a merger or a dock: they
+ * take anything.
  */
-export function inGood(b: Pick<Building, 'type' | 'recipe'>, c: InCell): ItemId | 'sheep' | null {
-  if (c.takes) return c.takes
-  if (b.type === 'dock' || b.type === 'belt' || BUILDINGS[b.type].onBelt) return null
-  const j = jobsOf(b)[0]
-  return j ? (Object.keys(j.inp)[0] as ItemId) : null
+export function inGood(_b: Pick<Building, 'type'>, c: InCell): ItemId | 'sheep' | null {
+  return c.takes ?? null
 }
-/** What comes out by a way out, for its icon: the sheep from a station (the shearer's wool to its right), a producer's good, a machine's product. */
-export function outGood(b: Pick<Building, 'type' | 'recipe' | 'dir'>, c: OutCell): ItemId | 'sheep' | null {
+/** What comes out by a way out, for its icon: the sheep from a station (the shearer's goods to its right), a producer's good. */
+export function outGood(b: Pick<Building, 'type' | 'dir'>, c: OutCell): ItemId | 'sheep' | null {
   if (b.type === 'dock' || b.type === 'belt' || BUILDINGS[b.type].onBelt) return null
   const def = BUILDINGS[b.type]
   if (def.station) return c.d === b.dir ? 'sheep' : 'wool'
-  if (def.gives) return def.gives
-  return jobsOf(b)[0]?.out ?? null
+  return def.gives ?? null
 }
 /** Where to put a building so that its way in is the footprint cell (x, y). */
 export function anchorForInput(type: BuildingId, dir: Dir, x: number, y: number): [number, number] {
@@ -313,7 +323,7 @@ export function beltInDir(w: World, b: Building): Dir {
 }
 
 /**
- * How well a belt on (x, y) going d would hand its goods on: into a machine's way in, a pen's way in or a dock
+ * How well a belt on (x, y) going d would hand its goods on: into a machine's way in, a pen's way in or the market's
  * best, straight on into a belt's back next, into a belt's free side a little, nowhere nothing — and worse than nothing
  * head-on into a belt, into a wall or a fence.
  */
@@ -324,7 +334,7 @@ function handOnScore(w: World, x: number, y: number, d: Dir): number {
   if (!inGrid(tx, ty)) return -1
   const t = get(w, tx, ty)
   if (!t) return 0
-  if (t.type === 'dock') return 3
+  if (t.type === 'dock') return entersAt(t, tx, ty, d) ? 3 : -1
   if (t.type === 'splitter') return d === t.dir ? 2 : -1
   if (t.type === 'merger') return t.dir === back(d) ? -1 : 2
   if (t.type === 'belt') {
@@ -363,24 +373,10 @@ export function targetOk(w: World, x: number, y: number, d: number) {
   if (!inGrid(tx, ty)) return false
   const t = get(w, tx, ty)
   if (!t) return false
-  if (t.type === 'dock') return true
   if (t.type === 'splitter') return d === t.dir
   if (isBeltLike(t)) return t.dir !== back(d)
   return !!entersAt(t, tx, ty, d as Dir)
 }
-
-// ---------------------------------------------------------------- jobs
-
-/** Everything a machine can make: a workshop its recipe, a carder or spinner white and pink, a felter felt. */
-export function jobsOf(b: Pick<Building, 'type' | 'recipe'>): readonly Job[] {
-  if (b.type === 'dock') return []
-  if (b.recipe) return [RECIPES[b.recipe]]
-  return BUILDINGS[b.type].jobs ?? []
-}
-/** The machine's first job: what its popup and the book show first. */
-export const jobOf = (b: Pick<Building, 'type' | 'recipe'>): Job | null => jobsOf(b)[0] ?? null
-/** Does any of a machine's jobs take this good? */
-export const usesGood = (b: Pick<Building, 'type' | 'recipe'>, k: ItemId) => jobsOf(b).some((j) => !!j.inp[k])
 
 // ---------------------------------------------------------------- prices
 

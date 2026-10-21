@@ -1,7 +1,7 @@
 import { GameState, Time, Unlocks, isOn, res, type SystemId, type World } from '../world'
 import { beltSystem } from './belts'
 import { machineSystem, sproutSystem } from './machines'
-import { truckSystem } from './village'
+import { clientSystem } from './village'
 import { sheepSystem } from './sheep'
 import { landHintSystem } from './unlocks'
 
@@ -15,11 +15,11 @@ export function isFrozen(world: World) {
 
 /**
  * The steps of one fixed step, each under its system's name (world.ts, `SYSTEMS`). The order matters and mirrors the
- * prototype: trucks, sheep (they may step onto the exit belt), sprouts, the land hint, items on belts, then machines
- * (they push onto belts that just moved on).
+ * prototype: the market's clients, sheep (they may step onto the exit belt), sprouts, the land hint, items on belts,
+ * then machines (they push onto belts that just moved on).
  */
 const STEPS: readonly (readonly [SystemId, (w: World, dt: number) => void])[] = [
-  ['trucks', truckSystem],
+  ['clients', clientSystem],
   ['sheep', sheepSystem],
   ['sprouts', sproutSystem],
   ['hints', landHintSystem],

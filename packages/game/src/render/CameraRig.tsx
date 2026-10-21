@@ -16,7 +16,7 @@ export function CameraRig() {
  */
 export function TitleCamera() {
   useEffect(() => {
-    Object.assign(cam, { x: GRID.cols / 2, z: 10.5, dist: 25, yaw: -0.6 })
+    Object.assign(cam, { x: GRID.cols / 2, z: GRID.rows / 2, dist: 25, yaw: -0.6 })
   }, [])
   useFrame((_, dt) => {
     cam.yaw += Math.min(dt, 0.1) * 0.04

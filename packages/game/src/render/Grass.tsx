@@ -2,17 +2,18 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, Color, MeshToonMaterial } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { GRASS, GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
+import { GRASS, ISLAND, LOOK } from '@/game/balance'
 import { useAppStore } from '@/app/store'
 import { useGame } from '@/game/GameContext'
-import { get, owned, pastureAt } from '@/game/grid'
+import { get, levelAt, owned, pastureAt } from '@/game/grid'
 import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { cam } from './camera'
 import { toonBands } from './kit'
 import { withReach } from './reach'
 import { frame } from './frame'
-import { island } from './island'
+import { inIsland, island } from './island'
+import { hillHeight, onHillTop } from './hillShape'
 
 /** A stable pseudo-random number in [0, 1) for a seed. */
 const hash = (n: number) => {
@@ -86,7 +87,7 @@ const KINDS = 1
 
 /**
  * A lawn of broad soft grass over all the free land: dense tufts on every cell where nothing stands — not on
- * buildings, belts, water, meadows, the pen, the road or where goods lie. It sways in the wind. It writes no depth,
+ * buildings (the market is one), belts, water, meadows, the pen or where goods lie. It sways in the wind. It writes no depth,
  * so the contact shadows see the ground beneath, not a thousand blade edges; drawn after everything else and from the
  * far side to the near, it still lies in front of what it should. It stays up while building (the author: «убери
  * сжатие травы при строительстве»).
@@ -148,7 +149,7 @@ function Lawn() {
     if (s === sig.current) return
     sig.current = s
     for (const b of batches) b.begin()
-    lay(world, (k, x, z, yaw, s, h, shade) => batches[k]!.put(x, 0, z, yaw, s, h, s, shade))
+    lay(world, (k, x, y, z, yaw, s, h, shade) => batches[k]!.put(x, y, z, yaw, s, h, s, shade))
     for (const b of batches) b.end()
   })
   return (
@@ -163,23 +164,18 @@ function Lawn() {
 function signature(w: World) {
   const p = res(w, Plant),
     f = res(w, Field)
-  let piles = ''
-  for (const b of p.b.values()) if (b.pile.length) piles += b.pileX + ',' + b.pileY + ';'
-  return p.b.size + ':' + p.occ.size + ':' + res(w, GameState).fieldVersion + ':' + res(w, Flock).pastures.length + ':' + f.plots.size + ':' + piles
+  return p.b.size + ':' + p.occ.size + ':' + res(w, GameState).fieldVersion + ':' + res(w, Flock).pastures.length + ':' + f.plots.size + ':' + res(w, GameState).pileVersion
 }
 
 const _c = new Color()
 
 /**
  * Does the lawn grow on this cell? Everywhere the ground is free (the author: «должна занимать всё пространство что
- * есть свободное на земле») — round trees, rocks and bushes too, which stand in it — but not on water, meadows,
- * buildings and belts, the pen, the road, or where goods lie.
+ * есть свободное на земле») — round trees, rocks and bushes too, which stand in it, and the hills' tops — but not on
+ * water, meadows, buildings and belts, the pen, or where goods lie.
  */
 function grows(w: World, x: number, y: number, bare: Set<string>) {
-  // the road row, the road and the market past it stay clear
-  if (y >= GRID.roadY && y <= GRID.roadY + 2 + MARKET.rows) return false
-  const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
-  if (!inside) return true
+  if (!inIsland(x, y)) return true
   const t = res(w, Field).terrain.get(key(x, y))
   if (t === 'water' || t === 'meadow' || t === 'sprout') return false
   return !get(w, x, y) && !pastureAt(w, x, y) && !bare.has(key(x, y))
@@ -187,10 +183,10 @@ function grows(w: World, x: number, y: number, bare: Set<string>) {
 
 /** Inside the island's rounded top. */
 function onIsland(px: number, pz: number) {
-  const x0 = -ISLAND.margin + 0.25,
+  const x0 = island.left - ISLAND.margin + 0.25,
     z0 = island.top - ISLAND.margin + 0.25,
     x1 = island.right + ISLAND.margin - 0.25,
-    z1 = GRID.rows + ISLAND.margin - 0.25
+    z1 = island.bottom + ISLAND.margin - 0.25
   if (px < x0 || pz < z0 || px > x1 || pz > z1) return false
   const R = ISLAND.corner - 0.25
   const cx = Math.min(x1 - R, Math.max(x0 + R, px)),
@@ -199,16 +195,16 @@ function onIsland(px: number, pz: number) {
 }
 
 /** Where the lawn grows: every free cell of the island, tufts scattered over it, laid far side first. */
-function lay(w: World, put: (k: number, x: number, z: number, yaw: number, s: number, h: number, shade: Color) => void) {
-  // where goods lie — a machine's pile — the grass gives way
-  const bare = new Set<string>()
-  for (const b of res(w, Plant).b.values()) if (b.pile.length) bare.add(key(b.pileX, b.pileY))
+function lay(w: World, put: (k: number, x: number, y: number, z: number, yaw: number, s: number, h: number, shade: Color) => void) {
+  // where goods lie on the ground the grass gives way
+  const bare = new Set(res(w, Field).piles.keys())
   const m = Math.ceil(ISLAND.margin)
-  const spots: [number, number, number, number, number, number, Color][] = []
-  for (let y = island.top - m; y < GRID.rows + m; y++)
-    for (let x = -m; x < island.right + m; x++) {
-      const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
+  const spots: [number, number, number, number, number, number, number, Color][] = []
+  for (let y = island.top - m; y < island.bottom + m; y++)
+    for (let x = island.left - m; x < island.right + m; x++) {
+      const inside = inIsland(x, y)
       if (!grows(w, x, y, bare)) continue
+      const hill = levelAt(w, x, y) > 1
       // land for sale grows a deeper green
       const mine = !inside || owned(w, x, y)
       // by a belt or a building the grass gets short instead of stopping: no leaf lies across it, no bare strip
@@ -223,8 +219,9 @@ function lay(w: World, put: (k: number, x: number, z: number, yaw: number, s: nu
         const n = x * 7919 + y * 104729 + i * 31
         const px = x + x0 + ((i % G) + 0.15 + hash(n) * 0.7) * ((x1 - x0) / G),
           pz = y + z0 + (Math.floor(i / G) + 0.15 + hash(n + 1) * 0.7) * ((z1 - z0) / G)
-        // keep inside the island's rounded outline
-        if (!onIsland(px, pz)) continue
+        // keep inside the island's rounded outline; on a hill only on its top, off its lip
+        if (!onIsland(px, pz) || (hill && !onHillTop(px, pz))) continue
+        const py = hillHeight(px, pz)
         const v = 0.97 + hash(n + 2) * 0.06
         _c.setRGB(v, v, v)
         if (!mine) _c.multiplyScalar(0.95)
@@ -235,10 +232,10 @@ function lay(w: World, put: (k: number, x: number, z: number, yaw: number, s: nu
           ease = k * k * (3 - 2 * k)
         _c.multiplyScalar(0.94 + 0.06 * ease)
         const size = 0.85 + hash(n + 5) * 0.35
-        spots.push([Math.floor(hash(n + 3) * KINDS), px, pz, (hash(n + 4) - 0.5) * 0.6, size * (0.8 + hash(n + 6) * 0.4), size * (0.45 + 0.55 * ease), _c.clone()])
+        spots.push([Math.floor(hash(n + 3) * KINDS), px, py, pz, (hash(n + 4) - 0.5) * 0.6, size * (0.8 + hash(n + 6) * 0.4), size * (0.45 + 0.55 * ease), _c.clone()])
       }
     }
   // far side first, so later (nearer) tufts are drawn over earlier ones
-  spots.sort((a, b) => a[2] - b[2])
-  for (const [k, x, z, yaw, s, h, c] of spots) put(k, x, z, yaw, s, h, c)
+  spots.sort((a, b) => a[3] - b[3])
+  for (const [k, x, y, z, yaw, s, h, c] of spots) put(k, x, y, z, yaw, s, h, c)
 }

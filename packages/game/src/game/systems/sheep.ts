@@ -1,6 +1,6 @@
-import { DIRS, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
-import { get, inGrid, isBeltLike, isStation, outCells, owned, pastureAt, step, terr } from '../grid'
-import { Flock, GameState, Plant, Rng, Time, Ui, key, newItem, pastureSpot, penOf, puff, res, type Building, type PastureT, type SheepT, type World } from '../world'
+import { DIRS, DROP, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
+import { get, inGrid, isBeltLike, isStation, levelAt, outCells, owned, pastureAt, step, terr } from '../grid'
+import { Flock, GameState, Plant, Rng, Time, Ui, float, key, newItem, pastureSpot, penOf, puff, res, sound, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 
 /**
@@ -22,18 +22,18 @@ export function toPasture(w: World, s: SheepT, p: PastureT, x: number, y: number
   s.via = null
   s.px = Math.min(p.x + p.w - 0.28, Math.max(p.x + 0.28, x))
   s.py = Math.min(p.y + p.h - 0.4, Math.max(p.y + 0.3, y))
-  const t = pastureSpot(w, p)
+  const t = pastureSpot(w, p, s)
   s.tx = t.x
   s.ty = t.y
 }
 
 /** Ground a roaming sheep may stop on: own land with nothing built, no pen, none of ROAM's blocking ground. */
 export function grazeable(w: World, x: number, y: number) {
-  return inGrid(x, y) && owned(w, x, y) && !get(w, x, y) && !pastureAt(w, x, y) && !ROAM.blocking.includes(terr(w, x, y) as never)
+  return inGrid(x, y) && owned(w, x, y) && levelAt(w, x, y) === 1 && !get(w, x, y) && !pastureAt(w, x, y) && !ROAM.blocking.includes(terr(w, x, y) as never)
 }
-/** Ground it may walk over: that, or a belt, a splitter or a merger (it steps over them). */
+/** Ground it may walk over: that, or a belt, a splitter or a merger (it steps over them). Never up a hill. */
 function walkable(w: World, x: number, y: number) {
-  if (!inGrid(x, y) || !owned(w, x, y) || pastureAt(w, x, y) || ROAM.blocking.includes(terr(w, x, y) as never)) return false
+  if (!inGrid(x, y) || !owned(w, x, y) || levelAt(w, x, y) > 1 || pastureAt(w, x, y) || ROAM.blocking.includes(terr(w, x, y) as never)) return false
   const b = get(w, x, y)
   return !b || isBeltLike(b)
 }
@@ -155,15 +155,8 @@ export function crossPen(w: World, s: SheepT, p: PastureT, x: number, y: number)
 
 /** A sheep into a pen, at a spot of its own there. */
 export function penIn(w: World, s: SheepT, p: PastureT) {
-  const t = pastureSpot(w, p)
+  const t = pastureSpot(w, p, s)
   toPasture(w, s, p, t.x, t.y)
-}
-
-/** A sheep back to its pen; one with no pen (or whose pen is gone) roams from where it is. */
-export function sendHome(w: World, s: SheepT) {
-  const p = penOf(w, s.home)
-  if (!p) return toRoam(w, s, s.px, s.py)
-  penIn(w, s, p)
 }
 
 /** The feeder on the way out of a pen, before the way comes back in — through any other pens the loop crosses. */
@@ -204,6 +197,18 @@ export function loopHasFeeder(w: World, p: PastureT) {
   return !!c.f && (c.f.inv.hay ?? 0) > 0 && res(w, Plant).b.get(key(c.f.x, c.f.y)) === c.f
 }
 
+/** A sheep coming down on its parachute (DROP): touching the grass it raises a puff of wool, with a thump and a heart. */
+function land(w: World, s: SheepT, dt: number) {
+  const was = s.drop!
+  s.drop = was - dt
+  if (was > DROP.land && s.drop <= DROP.land) {
+    puff(w, s.px, s.py, LOOK.wool, 10)
+    sound(w, 'place')
+    float(w, s.px, s.py, '♥', 'accent')
+  }
+  if (s.drop <= 0) delete s.drop
+}
+
 /** It stops where it is: the way it was going is dropped, it picks a new one once its rest is over. */
 function stand(s: SheepT) {
   s.tx = s.px
@@ -217,6 +222,11 @@ export function sheepSystem(w: World, dt: number) {
   const under = res(w, Ui).hover?.sheep ?? null
   for (const p of flock.pastures) if (p.exitT > 0) p.exitT -= dt
   for (const s of flock.sheep) {
+    // a bought sheep comes down first: nothing else happens to it till it has landed
+    if (s.drop !== undefined) {
+      land(w, s, dt)
+      continue
+    }
     if (s.state === 'transit') {
       crossing(w, s, dt)
       continue
@@ -253,7 +263,7 @@ export function sheepSystem(w: World, dt: number) {
     }
     s.wanderT -= dt
     if (s.wanderT <= 0) {
-      const t = pastureSpot(w, p)
+      const t = pastureSpot(w, p, s)
       s.tx = t.x
       s.ty = t.y
       s.wanderT = 2 + res(w, Rng).next() * 3
@@ -270,10 +280,10 @@ export function sheepSystem(w: World, dt: number) {
   }
 }
 
-/** A sheep crossing another pen walks briskly to its way out and leaves by it as soon as the gate is free. */
+/** A sheep crossing another pen walks briskly to its way out and leaves by it as soon as the gate is free; with that pen gone, it roams from where it is. */
 function crossing(w: World, s: SheepT, dt: number) {
   const p = s.via === null ? null : penOf(w, s.via)
-  if (!p) return sendHome(w, s)
+  if (!p) return toRoam(w, s, s.px, s.py)
   const dx = s.tx - s.px,
     dy = s.ty - s.py,
     dist = Math.hypot(dx, dy)

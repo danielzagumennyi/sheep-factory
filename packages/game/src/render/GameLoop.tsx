@@ -1,26 +1,29 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Vector3 } from 'three'
+import { Raycaster, Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
-import { CAMERA, GRID, ITEMS, LEVELS, RECIPE_ORDER, TOOL_ORDER, type ItemId } from '@/game/balance'
+import { CAMERA, COLORED, GRID, ITEMS, LEVELS, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { buildPrice, get, outCells, residents } from '@/game/grid'
+import { buildPrice, get, outCells, pilesBy, residents } from '@/game/grid'
 import { remove, rotate } from '@/game/actions/build'
 import { createBot, runBot } from '@/game/bot'
 import { buildShowcase } from '@/game/showcase'
 import { buildStress, feedStress } from '@/game/stress'
 import { FIXED_DT, isFrozen, stepSimulation } from '@/game/systems'
-import { openAsks } from '@/game/systems/village'
 import { hungry, loopHasFeeder } from '@/game/systems/sheep'
+import { putDownCarry } from '@/game/actions/hand'
+import { contentBar } from '@/game/systems/village'
 import { startWorld } from '@/game/start'
-import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, type World } from '@/game/world'
+import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, stockOf, type World } from '@/game/world'
 import { BINDINGS, type Action } from '@/input/bindings'
 import { SLOTS, barOf, useAppStore } from '@/app/store'
 import { renderIcons } from './iconRender'
+import { renderSheepSheet } from './sheepSheet'
 import { useHudStore, type GoalHud } from '@/ui/hudStore'
 import { setTool } from '@/ui/actions'
 import { cam, clampCam, fitOwned, turnCam } from './camera'
 import { collectFrame, frame } from './frame'
+import { groundHit, pointer } from './pick'
 
 /** At most this many fixed steps per frame (×4 speed at 60 fps needs four). */
 const MAX_STEPS = 8
@@ -57,26 +60,31 @@ export function GameLoop() {
     const gs = () => res(world, GameState)
     // the keys that act on the field work only while the world's keys are on (not behind the main menu); Esc and
     // Enter, which close a card, the book or the menu, always do
-    const field = <E,>(f: (e: E) => void) => (e: E) => {
-      if (isOn(world, 'keys')) f(e)
-    }
+    const field =
+      <E,>(f: (e: E) => void) =>
+      (e: E) => {
+        if (isOn(world, 'keys')) f(e)
+      }
     const offs = [
       k.on(
         'pause',
         field((e) => {
-        e.preventDefault()
+          e.preventDefault()
           // a «Новое» card is closed by the same keys that pause
           if (res(world, Unlocks).cardQ.length) res(world, Unlocks).cardQ.shift()
           else gs().speed = gs().speed === 0 ? 1 : 0
         }),
       ),
-      // Esc steps back one thing at a time: a card, the book, the menu, the tool or selection — and then opens the menu
+      // Esc steps back one thing at a time: a card, the book, the menu, the goods in the hand (put down under it), the
+      // tool or selection — and then opens the menu
       k.on('cancel', () => {
         const app = useAppStore.getState()
         if (res(world, Unlocks).cardQ.length) return void res(world, Unlocks).cardQ.shift()
         if (app.book) return app.setBook(false)
         if (app.screen !== 'run') return
         if (app.menuOver) return app.closeMenu()
+        const h = ui().hover
+        if (ui().carry.length && h) return putDownCarry(world, h.wx, h.wy)
         if (ui().tool !== 'hand' || ui().sel || ui().pending) {
           setTool(world, 'hand')
           ui().sel = null
@@ -150,10 +158,7 @@ export function GameLoop() {
       coins: (n: number) => (res(world, GameState).coins += n),
       speed: (n: number) => (res(world, GameState).speed = n),
       start: () => useAppStore.getState().start(),
-      unlockAll: () => {
-        TOOL_ORDER.forEach((t) => res(world, Unlocks).unlocked.add(t))
-        RECIPE_ORDER.forEach((r) => res(world, Unlocks).recipes.add(r))
-      },
+      unlockAll: () => TOOL_ORDER.forEach((t) => res(world, Unlocks).unlocked.add(t)),
       /** Screen point (CSS px) of a field point, for scripted clicks. */
       project: (x: number, z: number) => {
         const v = new Vector3(x, 0, z).project(camera)
@@ -184,6 +189,8 @@ export function GameLoop() {
       app: useAppStore,
       /** Draw every rendered icon from its model into public/icons (render/iconRender.ts). */
       icons: () => renderIcons(gl),
+      /** Draw every kind of sheep on one sheet, docs/concept/shots/sheep-sheet.png (render/sheepSheet.ts). */
+      sheep: () => renderSheepSheet(gl),
       /** R3F's own state (its frame subscribers, for timing them). */
       r3f,
       /** The cost of whole frames — simulation, views, shadows, the draw — waited for on the GPU: ms per frame. */
@@ -283,7 +290,13 @@ export function GameLoop() {
       if (k.held('turnRight')) turnCam(CAMERA.turnKeys * delta)
       clampCam()
     }
-    collectFrame(world)
+    // the goods in the hand are held up over the ground under the pointer: let go, they fall straight down onto it
+    let carryAt: { x: number; y: number; h: number } | null = null
+    if (res(world, Ui).carry.length && pointer.inside) {
+      carryRay.setFromCamera(pointer.ndc, camera)
+      carryAt = groundHit(world, carryRay.ray)
+    }
+    collectFrame(world, carryAt)
     if (isOn(world, 'hud') && ++hudN.current >= HUD_EVERY) {
       hudN.current = 0
       pushHud(world, camera, size)
@@ -293,6 +306,7 @@ export function GameLoop() {
 }
 
 const _v = new Vector3()
+const carryRay = new Raycaster()
 let autoTimer = 0
 let stressTimer = 0
 
@@ -311,34 +325,37 @@ function goalOf(world: World): GoalHud {
   const plant = [...res(world, Plant).b.values()]
   const roaming = flock.sheep.filter((s) => s.state === 'roam')
   if (gs.level === 0 && roaming.some((s) => s.wool >= 1)) return { tone: 'plain', icon: 'shear', text: 'shearGoal' }
+  // what the hand shore lies beside the sheep: to the market by hand, before there is a belt (PILE)
+  const woolAbout = [...res(world, Field).piles.values(), res(world, Ui).carry].some((p) => p.some((q) => q.kind === 'wool'))
+  if (gs.level <= SHEARER_LEVEL && !un.unlocked.has('belt') && woolAbout) return { tone: 'plain', icon: 'wool', text: 'carryGoal' }
   if (un.unlocked.has('pen') && !flock.pastures.length) return { tone: 'plain', icon: 'pen', text: 'penGoal' }
   if (gs.level <= SHEARER_LEVEL && un.unlocked.has('shearer') && !plant.some((b) => b.type === 'shearer')) return { tone: 'plain', icon: 'shearer', text: 'shearerGoal' }
   if (un.unlocked.has('belt') && !plant.some((b) => b.type === 'belt')) return { tone: 'plain', icon: 'belt', text: 'loopGoal' }
   if (roaming.length && flock.pastures.some((p) => residents(world, p) < p.cap)) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
   // the shearer's wool piling up beside it with nothing on its wool side: a belt takes it to the post
   const woolPiles = plant.some((b) => {
-    if (b.type !== 'shearer' || !b.pile.length) return false
+    if (b.type !== 'shearer' || !pilesBy(world, b).length) return false
     const c = outCells(b).find((o) => o.d === (b.dir + 1) % 4)
     return !!c && !get(world, c.x, c.y)
   })
   if (gs.level === SHEARER_LEVEL && woolPiles) return { tone: 'plain', icon: 'wool', text: 'woolGoal' }
-  const a = openAsks(world).sort((p, q) => p.have / p.total - q.have / q.total)[0]
-  return a ? { tone: 'plain', icon: a.kind, text: 'order', params: { have: a.have, total: a.total, kind: a.kind } } : null
+  // the client least content: its good, so many a minute
+  const n = [...res(world, Market).needs].sort((p, q) => p.fill - q.fill)[0]
+  return n && contentBar(n) < 1 ? { tone: 'plain', icon: n.kind, text: 'need', params: { rate: n.rate, kind: n.kind } } : null
 }
 
-/** Goods the farm has met: what the stock holds, what its buildings make, what the village asks. */
+/** Goods the farm has met: what the stock holds, what its buildings make, what the clients take. */
 function metGoods(world: World): ItemId[] {
   const met = new Set<ItemId>(['wool', 'hay'])
   for (const [k, n] of Object.entries(res(world, Stock).n)) if (n) met.add(k as ItemId)
-  for (const a of res(world, Market).asks) met.add(a.kind)
+  for (const n of res(world, Market).needs) met.add(n.kind)
+  // what the salon's stations open: a step up for each, felt from the bath, every one coloured from the dye station
   const un = res(world, Unlocks)
-  if (un.unlocked.has('carder')) met.add('roving')
-  if (un.unlocked.has('spinner')) met.add('yarn')
-  if (un.unlocked.has('felter')) met.add('felt')
+  const steps = (['comb', 'curl', 'knit'] as const).filter((t) => un.unlocked.has(t)).length
+  for (const k of (['thread', 'yarn', 'sweater'] as const).slice(0, steps)) met.add(k)
+  if (un.unlocked.has('bath')) met.add('felt')
   if (un.unlocked.has('berry')) met.add('dye')
-  if (un.unlocked.has('dyer')) for (const k of ['pwool', 'proving', 'pyarn'] as const) met.add(k)
-  if (un.recipes.has('sweater')) met.add('sweater')
-  if (un.recipes.has('valenki')) met.add('valenki')
+  if (un.unlocked.has('dyer')) for (const k of [...met]) if (COLORED[k]) met.add(COLORED[k])
   return (Object.keys(ITEMS) as ItemId[]).filter((k) => met.has(k))
 }
 
@@ -355,7 +372,7 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
       const b = res(world, Plant).b.get(sel.key)
       if (b) _v.set(b.x + b.w, 0.6, b.y + 0.2)
       else ui.sel = null
-    } else if (sel.kind === 'plot') _v.set((sel.px + 0.5) * GRID.plotW, 0.3, sel.py * GRID.plotH + 1)
+    } else if (sel.kind === 'plot') _v.set((sel.px + 0.5) * GRID.plotW, 0.3, (sel.py + 0.5) * GRID.plotH)
     else {
       const p = penOf(world, sel.id)
       if (p) _v.set(p.x + p.w, 0.3, p.y)
@@ -372,15 +389,14 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
     noMoney: gs.noMoney,
     pauseNudge: gs.pauseNudge,
     stock: { ...res(world, Stock).n },
+    hand: res(world, Ui).carry.map((q) => q.kind as ItemId),
     clock: gs.clock,
     level: gs.level + 1,
     speed: gs.speed,
     goal: goalOf(world),
-    asks: res(world, Market).asks.map((a) => ({ id: a.id, client: a.client, kind: a.kind, have: a.have, total: a.total, price: ITEMS[a.kind].price })),
+    needs: res(world, Market).needs.map((n) => ({ client: n.client, kind: n.kind, rate: n.rate, fill: contentBar(n), price: ITEMS[n.kind].price, stock: stockOf(world, n.kind) })),
     tools: barOf(useAppStore.getState().bar, un.unlocked).map((t) => (t ? { id: t, price: buildPrice(world, t), short: gs.coins < buildPrice(world, t), fresh: un.fresh.has(t) } : null)),
-    recipes: [...un.recipes],
     tool: ui.tool,
-    recipe: ui.recipe,
     seed: ui.seed,
     met: metGoods(world),
     sel: ui.sel,

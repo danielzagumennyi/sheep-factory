@@ -1,62 +1,58 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type Group } from 'three'
-import { HAND, LOOK } from '@/game/balance'
+import { CircleGeometry, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type Group } from 'three'
+import { DROP, HAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { Flock, isOn, res, type SheepT } from '@/game/world'
 import { Icon } from '@/ui/Icon'
-import { vmat } from './kit'
-import { fleece, sheepHead, sheepLegs, shorn } from './models'
+import { flat } from './kit'
 import { frame } from './frame'
 import { sheepPoses, type SheepPose } from './pick'
+import { dropPose, liveliness, newPose, sheepDrawer, sheepMeshes } from './sheepLook'
 
 /** Most sheep drawn at once. */
 const CAP = 256
 
-const _m = new Matrix4(),
-  _p = new Vector3(),
+const _p = new Vector3(),
   _q = new Quaternion(),
   _s = new Vector3(),
-  _e = new Euler()
-/** A fleece as it grows: white, or pink after the dyer (an instance tint over the white). */
-const WHITE = new Color('#ffffff'),
-  PINK = new Color(LOOK.pinkFleece)
+  _e = new Euler(),
+  _chute = new Matrix4(),
+  _mark = new Matrix4()
+/** Most sheep coming down at once, each with its mark on the grass. */
+const MARKS = 16
 
 /**
- * The flock: cube sheep with big eyes, like the animals of the reference dioramas. The fleece grows from a pink shorn
- * body to a big white block — a pink one after the dyer; a bubble shows what a sheep needs. All of them are four instanced meshes — legs, fleece,
- * shorn body, head — posed in one pass (a sheep of four meshes cost eight draw calls with its shadow: 48 sheep, 380);
- * each sheep's pose is also kept in `sheepPoses`, which the pointer and the hover line read.
+ * The flock, drawn as a few instanced meshes (sheepLook.ts) posed in one pass (a sheep of four meshes cost eight draw
+ * calls with its shadow: 48 sheep, 380): each sheep where it stands, a waddle while it walks, a slow nod while it
+ * grazes, breathing and blinking all the while. Each sheep's pose is also kept in `sheepPoses`, which the pointer and the hover line read. A bubble shows what
+ * a sheep needs.
  */
 export function Flock3D() {
   const { world } = useGame()
   const [ids, setIds] = useState<SheepT[]>([])
-  const meshes = useMemo(() => {
-    const make = (geo: ReturnType<typeof fleece>, name: string) => {
-      const m = new InstancedMesh(geo, vmat(), CAP)
-      m.name = name
-      m.count = 0
-      m.castShadow = true
-      m.receiveShadow = true
-      m.frustumCulled = false
-      return m
-    }
-    const out = { legs: make(sheepLegs(), 'sheep_legs'), fleece: make(fleece(), 'sheep_fleece'), skin: make(shorn(), 'sheep_shorn'), head: make(sheepHead(), 'sheep_heads') }
-    // the fleece's tint from the start, so its shader is built with it
-    for (let i = 0; i < CAP; i++) out.fleece.setColorAt(i, WHITE)
-    return out
+  const meshes = useMemo(() => sheepMeshes(CAP), [])
+  const draw = useMemo(() => sheepDrawer(meshes), [meshes])
+  // the spots where bought sheep will land, darkening as they come down
+  const marks = useMemo(() => {
+    const m = new InstancedMesh(new CircleGeometry(1, 20).rotateX(-Math.PI / 2), flat(LOOK.dropMark, DROP.mark.opacity), MARKS)
+    m.name = 'sheep_drop_marks'
+    m.count = 0
+    m.frustumCulled = false
+    return m
   }, [])
+  // when each sheep still coming down began its drop, on the animation clock: it is drawn smoothly between the steps
+  const dropStart = useRef(new Map<number, number>())
   useEffect(() => () => Object.values(meshes).forEach((m) => m.dispose()), [meshes])
+  useEffect(() => () => marks.geometry.dispose(), [marks])
   useFrame(() => {
     const list = res(world, Flock).sheep
     if (list.length !== ids.length || list.some((s, i) => ids[i] !== s)) setIds([...list])
     const t = frame.t
-    let nl = 0,
-      nf = 0,
-      ns = 0,
-      nh = 0
     const seen = new Set<number>()
+    let nm = 0
+    draw.begin()
     for (const s of list) {
       const spot = frame.sheep.get(s)
       if (!spot || spot.inMachine) {
@@ -65,42 +61,39 @@ export function Flock3D() {
       }
       seen.add(s.id)
       const hop = (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam') && Math.hypot(s.tx - s.px, s.ty - s.py) > 0.05 ? Math.abs(Math.sin(t * 9 + s.id)) * 0.05 : 0
-      // the whole sheep: where it stands, which way it faces, a waddle while it walks
-      const base = poseOf(s.id).base
-      base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0)) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
       const pose = poseOf(s.id)
-      pose.legs.copy(base)
-      meshes.legs.setMatrixAt(nl++, pose.legs)
-      // the fleece sits on the legs however big it is
-      const w = Math.max(0, s.wool * (1 - s.clicks / HAND.shearClicks))
-      pose.woolly = w > 0.12
-      if (pose.woolly) {
-        const k = 0.62 + 0.5 * w
-        pose.fleece.multiplyMatrices(base, _m.compose(_p.set(-0.02, 0.15 + 0.18 * k, 0), _q.identity(), _s.set(k, k, k)))
-        meshes.fleece.setColorAt(nf, s.pink ? PINK : WHITE)
-        meshes.fleece.setMatrixAt(nf++, pose.fleece)
-      } else {
-        pose.fleece.multiplyMatrices(base, _m.makeTranslation(-0.02, 0.27, 0))
-        meshes.skin.setMatrixAt(ns++, pose.fleece)
+      // a bought sheep coming down on its parachute
+      if (s.drop !== undefined) {
+        let t0 = dropStart.current.get(s.id)
+        if (t0 === undefined) dropStart.current.set(s.id, (t0 = t - (DROP.fall + DROP.land - s.drop)))
+        const k = Math.min(1, (t - t0) / DROP.fall)
+        if (k < 1 && nm < MARKS) {
+          const r = DROP.mark.from + (DROP.mark.to - DROP.mark.from) * k
+          marks.setMatrixAt(nm++, _mark.makeTranslation(spot.x, 0.02, spot.z).multiply(_chute.makeScale(r, 1, r)))
+        }
+        const chute = dropPose(t - t0, t, s.id, spot.x, spot.z, spot.yaw, pose.base, _chute)
+        draw.add({ id: s.id, wool: s.wool, marks: s.marks }, pose.base, { nod: 0.3, ...liveliness(s.id, t), chute: chute ? _chute : null }, pose)
+        continue
       }
+      dropStart.current.delete(s.id)
+      // the whole sheep: where it stands, which way it faces, a waddle while it walks
+      pose.base.compose(_p.set(spot.x, (s.state === 'held' ? 0.5 : s.state === 'belt' ? 0.13 : (spot.lift ?? 0)) + hop, spot.z), _q.setFromEuler(_e.set(hop ? Math.sin(t * 9 + s.id) * 0.08 : 0, spot.yaw, 0, 'YXZ')), _s.set(1, 1, 1))
       // a slow nod while it grazes
       const nod = 0.2 + ((s.state === 'pasture' || s.state === 'roam') && !hop ? Math.sin(t * 1.3 + s.id * 1.7) * 0.1 : 0)
-      pose.head.multiplyMatrices(base, _m.compose(_p.set(0.34, 0.45, 0), _q.setFromEuler(_e.set(0, 0, nod)), _s.set(0.78, 0.78, 0.78)))
-      meshes.head.setMatrixAt(nh++, pose.head)
+      draw.add({ id: s.id, wool: Math.max(0, s.wool * (1 - s.clicks / HAND.shearClicks)), marks: s.marks }, pose.base, { nod, ...liveliness(s.id, t) }, pose)
     }
+    draw.end()
+    marks.count = nm
+    marks.instanceMatrix.needsUpdate = true
     for (const id of sheepPoses.keys()) if (!seen.has(id)) sheepPoses.delete(id)
-    meshes.legs.count = nl
-    meshes.fleece.count = nf
-    meshes.skin.count = ns
-    meshes.head.count = nh
-    for (const m of Object.values(meshes)) m.instanceMatrix.needsUpdate = true
-    if (meshes.fleece.instanceColor) meshes.fleece.instanceColor.needsUpdate = true
+    for (const id of dropStart.current.keys()) if (!seen.has(id)) dropStart.current.delete(id)
   })
   return (
     <group>
       {Object.values(meshes).map((m) => (
         <primitive key={m.name} object={m} />
       ))}
+      <primitive object={marks} />
       {isOn(world, 'tags') &&
         ids.map((s) => (
           <SheepBubble key={s.id} s={s} />
@@ -112,7 +105,7 @@ export function Flock3D() {
 function poseOf(id: number): SheepPose {
   let p = sheepPoses.get(id)
   if (!p) {
-    p = { base: new Matrix4(), legs: new Matrix4(), fleece: new Matrix4(), head: new Matrix4(), woolly: true }
+    p = newPose()
     sheepPoses.set(id, p)
   }
   return p

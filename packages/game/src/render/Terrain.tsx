@@ -39,7 +39,7 @@ export function Terrain() {
         X = x + 0.5,
         Z = y + 0.5
       // under the sky until the island grows
-      if (y < f.top || x >= f.right) continue
+      if (x < f.left || y < f.top || x >= f.right || y >= f.bottom) continue
       const r = f.res.get(k)
       // a little per-cell variety, stable across frames
       const j = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453,

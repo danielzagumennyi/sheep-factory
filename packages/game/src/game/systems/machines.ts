@@ -1,15 +1,16 @@
-import { BELT, BUILDINGS, LOOK, PRODUCERS, SEED, SHEEP, SOW, type BuildingId, type ResId } from '../balance'
-import { freeCell, get, inGrid, isMachine, jobsOf, outCells, pastureAt, reachOf, sowable } from '../grid'
-import { Field, GameState, Plant, key, newItem, puff, res, unkey, type Building, type SheepT, type World } from '../world'
+import { BATH_YIELD, BUILDINGS, COLORED, LOOK, PRODUCERS, SEED, SHEAR_YIELD, SHEEP, SOW, STEPS, type BuildingId, type Dir, type ItemId, type ResId, type StationId } from '../balance'
+import { freeCell, get, inGrid, isMachine, outCells, pastureAt, pileAt, pileOk, reachOf, sowable } from '../grid'
+import { Field, GameState, Plant, key, newItem, noMarks, puff, res, unkey, type Building, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
+import { putPile } from './ground'
 import { toRoam } from './sheep'
 
 /**
- * Machines (GDD 4.3). A machine starts a job when its inputs hold one of its jobs whole; a producer takes one unit from
- * the nearest owned resource cell in reach every `time` seconds; a station works on the sheep that comes in — the
- * shearer cuts a fluffy one, the feeder feeds a hungry one, the dyer colours a fluffy one — and lets any other pass,
- * so the loop never stands; a seeder sows. A finished output waits until it can leave: onto a belt, into a pen or a
- * dock, or onto a small pile beside the machine.
+ * Machines (GDD 4.3). A producer takes one unit from the nearest owned resource cell in reach every `time` seconds; a
+ * station works on the sheep that comes in — the salon's stations mark a fluffy one (combed, curled, knitted, felted,
+ * coloured), the shearer takes off what grew on it, the feeder feeds a hungry one — and lets any other pass, so the
+ * loop never stands; a seeder sows. A finished output waits until it can leave: onto a belt, into a pen or a dock, or
+ * onto a small pile beside the machine.
  */
 
 /** Take one unit from a resource cell. An empty cell disappears and becomes plain ground (GDD 6.1). */
@@ -53,14 +54,36 @@ export function sproutSystem(w: World, dt: number) {
   }
 }
 
+/**
+ * What shearing a fluffy sheep gives (GDD 5): by how many of the salon's three steps it went through, in any order —
+ * wool, thread, yarn, a sweater; felt from the bath whatever else it went through; the coloured good from the dye.
+ */
+export function shearYield(s: SheepT): [ItemId, number] {
+  const m = s.marks
+  const [k, n] = m.bath ? BATH_YIELD : SHEAR_YIELD[STEPS.filter((st) => m[st as keyof typeof m]).length]!
+  return [m.dye ? (COLORED[k] ?? k) : k, n]
+}
+/** A sheep's fleece shorn: what it went through is gone with it. */
+export function shorn(s: SheepT) {
+  s.wool = 0
+  s.clicks = 0
+  s.marks = noMarks()
+}
+
+/** Does a station work on this sheep: one with a fleece it has not marked yet (the dye also needs its dye in). */
+function works(m: Building, st: StationId, s: SheepT) {
+  if (st === 'shear') return s.wool >= 0.95
+  if (st === 'feed') return s.wool < 1 && !s.fed && (m.inv.hay ?? 0) >= 1
+  if (s.wool < 0.95) return false
+  if (st === 'dye') return !s.marks.dye && (m.inv.dye ?? 0) >= 1
+  return !s.marks[st]
+}
+
 /** A sheep comes into a station: work on it or let it pass. True when the station took it. */
 export function stationTake(m: Building, s: SheepT) {
   if (m.slot) return false
   const def = BUILDINGS[m.type as BuildingId]
-  let work = false
-  if (def.station === 'shear') work = s.wool >= 0.95
-  else if (def.station === 'feed') work = s.wool < 1 && !s.fed && (m.inv.hay ?? 0) >= 1
-  else if (def.station === 'dye') work = s.wool >= 0.95 && !s.pink && (m.inv.dye ?? 0) >= 1
+  const work = works(m, def.station!, s)
   if (work && def.uses) m.inv[def.uses] = (m.inv[def.uses] ?? 0) - 1
   s.state = 'machine'
   m.slot = { sheep: s, pass: !work }
@@ -76,29 +99,26 @@ function finishMachine(w: World, m: Building) {
     m.outs.push({ item: newItem('sheep', s), dir: m.dir })
     if (!slot.pass) {
       m.count++
-      if (def.station === 'shear') {
-        const kind = s.pink ? 'pwool' : 'wool'
-        puff(w, m.x + 1, m.y + 1, s.pink ? LOOK.pinkFleece : LOOK.wool, 8)
-        s.wool = 0
-        s.clicks = 0
-        s.pink = false
-        for (let i = 0; i < 2; i++) m.outs.push({ item: newItem(kind), dir: ((m.dir + 1) % 4) as 0 | 1 | 2 | 3 })
-      } else if (def.station === 'feed') s.fed = true
+      const st = def.station
+      if (st === 'shear') {
+        const [kind, n] = shearYield(s)
+        puff(w, m.x + 1, m.y + 1, fleeceColor(s), 8)
+        shorn(s)
+        for (let i = 0; i < n; i++) m.outs.push({ item: newItem(kind), dir: ((m.dir + 1) % 4) as Dir })
+      } else if (st === 'feed') s.fed = true
       else {
-        s.pink = true
-        puff(w, m.x + 1, m.y + 1, LOOK.pinkFleece, 8)
+        s.marks[st] = true
+        puff(w, m.x + 1, m.y + 1, fleeceColor(s), 8)
       }
     }
-  } else if (slot.job) {
-    m.outs.push({ item: newItem(slot.job.out), dir: m.dir })
-    m.count++
   }
   m.slot = null
 }
 
 /**
  * One finished output tries to leave. It goes to whatever takes it on an output cell (a belt, a pen, a dock, a
- * machine); a full receiver makes it wait. With nothing there it drops onto a small pile on a free output cell. A sheep
+ * machine); a full receiver makes it wait. With nothing there it drops onto a pile on the ground by an output cell
+ * (PILE), the same pile while it has room; a full one makes it wait. A sheep
  * with nowhere to go roams off over the own land (the author, 19.10.2026: «просто дальше бегают по всей территории»).
  */
 function pushOut(w: World, m: Building, o: Building['outs'][number]) {
@@ -128,12 +148,10 @@ function pushOut(w: World, m: Building, o: Building['outs'][number]) {
     m.status = 'jam'
     return false
   }
-  // no belt: a pile on one output cell (the same cell while the pile lasts)
-  const spot = m.pile.length ? cells.find((c) => c.x === m.pileX && c.y === m.pileY) : cells.find((c) => freeCell(w, c.x, c.y))
-  if (spot && m.pile.length < BELT.pileMax && freeCell(w, spot.x, spot.y)) {
-    m.pile.push(o.item)
-    m.pileX = spot.x
-    m.pileY = spot.y
+  // no belt: onto the pile already lying by an output cell, else a new one on the first that may hold one
+  const spot = cells.find((c) => pileAt(w, c.x, c.y)) ?? cells.find((c) => pileOk(w, c.x, c.y))
+  // it slides out of the machine's way out onto the pile
+  if (spot && putPile(w, spot.x, spot.y, [o.item], { x: spot.sx + 0.5, y: spot.sy + 0.5, h: 0.4 }).length) {
     m.status = ''
     return true
   }
@@ -186,26 +204,16 @@ export function machineSystem(w: World, dt: number) {
         m.count++
         m.status = ''
       }
-      continue
-    }
-    if (!m.slot) {
-      const job = jobsOf(m).find((j) => (Object.entries(j.inp) as [keyof typeof j.inp, number][]).every(([k, n]) => (m.inv[k] ?? 0) >= n))
-      if (job) {
-        for (const [k, n] of Object.entries(job.inp) as [keyof typeof job.inp, number][]) m.inv[k] = (m.inv[k] ?? 0) - n
-        m.slot = { job }
-        m.timer = m.total = job.time
-      }
-    } else {
-      m.timer -= dt
-      if (m.timer <= 0) finishMachine(w, m)
     }
   }
 }
 
-/** Seconds one job (a fleece shorn, a unit gathered, a recipe made, a cell sown) takes. */
+/** The colour of a sheep's fleece puff: white, or the colour it took at the dye station. */
+export const fleeceColor = (s: SheepT) => (s.marks.dye ? LOOK.fleeceColors[s.id % LOOK.fleeceColors.length]! : s.marks.bath ? LOOK.feltFleece : LOOK.wool)
+
+/** Seconds one job (a sheep worked on, a unit gathered, a cell sown) takes. */
 export function cycleTime(b: Building) {
-  const def = BUILDINGS[b.type as BuildingId]
-  return def?.time ?? jobsOf(b)[0]?.time ?? 0
+  return BUILDINGS[b.type as BuildingId]?.time ?? 0
 }
 /** How far the job in hand has got, 0..1 (0 when idle). */
 export function jobProgress(b: Building) {
@@ -236,16 +244,6 @@ export function machineState(w: World, b: Building): { tone: MachineTone; text: 
     if (!(b.inv[seed] ?? 0)) return { tone: 'warn', text: 'waitsFor', item: seed }
     if (b.status === 'empty') return { tone: 'warn', text: 'noRoom' }
     return { tone: 'ok', text: 'working' }
-  }
-  const jobs = jobsOf(b)
-  if (jobs.length) {
-    if (b.status === 'full' || b.status === 'jam') return { tone: 'bad', text: 'outBlocked' }
-    if (b.slot) return { tone: 'ok', text: 'working' }
-    // what it waits for: the first input short in its first job
-    const j = jobs.find((q) => Object.keys(q.inp).some((k) => (b.inv[k as keyof typeof b.inv] ?? 0) > 0)) ?? jobs[0]!
-    const miss = (Object.entries(j.inp) as [string, number][]).find(([k, n]) => (b.inv[k as keyof typeof b.inv] ?? 0) < n)
-    if (!miss) return { tone: 'ok', text: 'working' }
-    return { tone: 'warn', text: 'waitsFor', item: miss[0] }
   }
   return { tone: 'ok', text: '' }
 }

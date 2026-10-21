@@ -73,8 +73,7 @@ export function Hover() {
           machine.position.set(b.x + b.w / 2, 0, b.y + b.h / 2)
           machine.rotation.y = machineYaw(b.type, b.dir)
           next = machine
-        } else if (b && b.part !== 'row') next = views.buildings.get(key(b.x, b.y)) ?? null
-        else if (b) next = null
+        } else if (b) next = views.buildings.get(key(b.x, b.y)) ?? null
         else {
           // a pasture is outlined the same way, fence and lawn
           const pa = pastureAt(world, h.x, h.y)

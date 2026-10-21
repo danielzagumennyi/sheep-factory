@@ -1,5 +1,25 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, GRID, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
+import {
+  dimsOf,
+  GRID,
+  HILLS,
+  ISLAND_START,
+  MAP_TERRAIN,
+  MARKET,
+  PEN,
+  RES,
+  ROAM,
+  SHEEP,
+  SHEEP_NAMES,
+  START,
+  type BuildingId,
+  type CardId,
+  type ClientId,
+  type Dir,
+  type ItemId,
+  type ResId,
+  type TerrainId,
+} from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -41,21 +61,15 @@ export interface Building {
   buf: Item[]
   /** A machine's input store, by item (a station's good, a seeder's seeds). */
   inv: Partial<Record<ItemId, number>>
-  /** The current job: a sheep in a station, or a machine's batch (which of its jobs). */
-  slot: { sheep?: SheepT; pass?: boolean; job?: Job } | null
+  /** The sheep in a station, and whether it only passes through. */
+  slot: { sheep?: SheepT; pass?: boolean } | null
   timer: number
   total: number
   /** Finished outputs waiting for room. */
   outs: { item: Item; dir: Dir }[]
-  /** Outputs dropped beside a machine that has no belt, on the cell (pileX, pileY). */
-  pile: Item[]
-  pileX: number
-  pileY: number
   /** Footprint in cells along x and y; (x, y) is its top-left cell. */
   w: number
   h: number
-  /** What a workshop makes now (null for every other building). */
-  recipe: RecipeId | null
   /** What a seeder sows (null for every other building). */
   seed: ResId | null
   count: number
@@ -65,8 +79,7 @@ export interface Building {
   rules: SplitRules | null
   /** Coins spent on it (refunded on removal). */
   paid: number
-  /** For the market's parts (type `dock`): its row beside the field, one of its stalls, or the trading post. */
-  part?: MarketPart
+  /** Can't be moved or removed: the market. */
   fixed?: boolean
   /** Round-robin cursor of a splitter. */
   rr: number
@@ -95,10 +108,22 @@ export interface SheepT {
   clicks: number
   /** It has eaten (at a feeder, or from the hand): its next fleece grows. */
   fed: boolean
-  /** Its fleece went through the dyer: it shears pink. */
-  pink: boolean
+  /** What its fleece went through in the salon since it was last shorn: what shearing it gives (SHEAR_YIELD). */
+  marks: SheepMarks
   face: Dir
+  /** Seconds left of its arrival (DROP): a bought sheep floats down on a parachute, then lands. Absent once it is here. */
+  drop?: number
 }
+
+/** The salon's marks on a fleece: combed, curled, knitted into a sweater, felted in the bath, coloured. */
+export interface SheepMarks {
+  comb: boolean
+  curl: boolean
+  knit: boolean
+  bath: boolean
+  dye: boolean
+}
+export const noMarks = (): SheepMarks => ({ comb: false, curl: false, knit: false, bath: false, dye: false })
 
 /** A pen (GDD 5): a 3×3 building of its own, with a way out and a way in, for PEN.cap sheep. */
 export interface PastureT {
@@ -116,30 +141,17 @@ export interface PastureT {
   paid: number
 }
 
-/** The market's parts: the row beside the field that takes goods in, a stall where a truck is loaded, the trading post. */
-export type MarketPart = 'row' | 'stall' | 'buy'
-
-/** A client's ask (GDD 7): this many of a good. It pays the good's price for each one as it comes. */
-export interface AskT {
-  id: number
+/**
+ * A client's need (GDD 7): one good, taken from the stock `rate` a minute for good, each one paid at its price. `due`
+ * runs up to the next one; `fill` is how content the client is, 0…1: the share of its goods it has lately got
+ * (`fillStep` in systems/village.ts).
+ */
+export interface NeedT {
   client: ClientId
   kind: ItemId
-  total: number
-  have: number
-  /** The stall its truck parks at (an index of MARKET.stalls). */
-  stall: number
-}
-
-export type TruckState = 'arrive' | 'in' | 'park' | 'out' | 'leave'
-export interface TruckT {
-  ask: number
-  x: number
-  tx: number
-  state: TruckState
-  /** 0 = parking lane A, 1 = driving lane B. */
-  lane: number
-  /** Parked: towards the next good it takes from the stock (MARKET.loadRate a second). */
-  load?: number
+  rate: number
+  due: number
+  fill: number
 }
 
 export interface ResCell {
@@ -154,10 +166,15 @@ export type FxEvent =
   | { kind: 'float'; x: number; y: number; text: string; tone: 'good' | 'soft' | 'bad' | 'accent' | 'water' }
   | { kind: 'puff'; x: number; y: number; color: string; n: number }
   | { kind: 'sound'; id: SoundId }
-  /** A good handed to the market's row at column x: it rides the chute to a stall, then into the truck there or into the stall's store. */
-  | { kind: 'deliver'; x: number; good: ItemId; stall: number; truck: boolean }
-  /** A good taken from the stock into the truck at a stall. */
-  | { kind: 'load'; stall: number; good: ItemId }
+  /** A good handed to the market at its cell (x, y), from the cell it came from (fx, fy). */
+  | { kind: 'deliver'; x: number; y: number; fx: number; fy: number; good: ItemId }
+  /** A good a client took from the stock. */
+  | { kind: 'take'; client: ClientId; good: ItemId }
+  /**
+   * A good falls onto the pile on cell (x, y), as its `slot`-th: from the point (fx, fy) at height `fh` — the sheep's back
+   * it was shorn off, the hand, a belt, a machine's way out. `n` counts the goods of one fall, so they come one after another.
+   */
+  | { kind: 'fall'; x: number; y: number; slot: number; good: ItemId; fx: number; fy: number; fh: number; n: number; hand?: boolean }
 /** The game's sounds for now (the author's recordings): a building set down, one removed. The UI click is the HUD's own. */
 export type SoundId = 'place' | 'remove'
 
@@ -197,6 +214,8 @@ export const GameState = trait(() => ({
   fieldVersion: 0,
   /** Bumped whenever a building is set down, taken off or turned: cached routes and views go stale on it. */
   plantVersion: 0,
+  /** Bumped whenever goods are put down on the ground or taken up (Field.piles): the lawn gives way under them. */
+  pileVersion: 0,
 }))
 
 export const Field = trait(() => ({
@@ -207,9 +226,15 @@ export const Field = trait(() => ({
   plots: new Set<string>(),
   /** Plots that held anything at the start: for sale (an empty one never is). */
   forSale: new Set<string>(),
-  /** The island's first row and the column past its east edge: the rest is under the sky until it rises (ISLAND_GROW). */
-  top: ISLAND_START.top as number,
-  right: ISLAND_START.right as number,
+  /** The level of each hill's cell, 2 or 3 (HILL): the map's, never changed by play, so not saved. */
+  hills: new Map(HILLS),
+  /** Goods lying on the ground, by cell (PILE): until the hand carries them or a belt takes them on. */
+  piles: new Map<string, Item[]>(),
+  /** The island's edges (from `left` to before `right`, from `top` to before `bottom`): the rest is under the sky until it rises (ISLAND_GROW). */
+  left: ISLAND_START.left,
+  top: ISLAND_START.top,
+  right: ISLAND_START.right,
+  bottom: ISLAND_START.bottom,
 }))
 
 /** Buildings by their top-left cell; `occ` maps every other cell a 2×2 building covers to that cell. */
@@ -217,19 +242,17 @@ export const Plant = trait(() => ({ b: new Map<string, Building>(), occ: new Map
 
 export const Flock = trait(() => ({ sheep: [] as SheepT[], pastures: [] as PastureT[], penUid: 0 }))
 
-export const Market = trait(() => ({ asks: [] as AskT[], trucks: [] as TruckT[], askUid: 0 }))
+/** The market's clients and what each needs (GDD 7). */
+export const Market = trait(() => ({ needs: [] as NeedT[] }))
 
 /**
- * The stock, which is the hand too (the author: «этот склад и рука одно и тоже»): what the player gathers, shears and
- * picks up counts here with no limit. Docks are loaded and the market trades from it, the hand feeds sheep and sows
- * from it; machines take only from belts (docs/05-REWORK.md).
+ * The market's stock: what has come into the market — by a belt or in the hand — and what the clients take from it and
+ * the market's window trades (GDD 7). Nothing gets here but by the market (PILE): no limit.
  */
 export const Stock = trait(() => ({ n: {} as Partial<Record<ItemId, number>> }))
 
 export const Unlocks = trait(() => ({
   unlocked: new Set<BuildingId>(),
-  /** Recipes the workshop knows. */
-  recipes: new Set<RecipeId>(),
   /** Tools that glow on the hotbar until first picked. */
   fresh: new Set<BuildingId>(),
   /** «Новое» cards waiting to be shown; the game pauses while one is up. */
@@ -246,8 +269,6 @@ export const Unlocks = trait(() => ({
 export const Ui = trait(() => ({
   tool: 'hand' as Tool,
   rot: 0 as Dir,
-  /** The recipe a newly placed workshop starts with: the last one picked, or the newest learnt. */
-  recipe: 'sweater' as RecipeId,
   /** What the hand sows, and what a new seeder starts with. */
   seed: 'meadow' as ResId,
   sel: null as Selection,
@@ -257,6 +278,9 @@ export const Ui = trait(() => ({
   drag: null as SheepT | null,
   /** A building picked up to move (its menu, a right click), and where it stood: it goes back there if the move is called off. */
   moving: null as { b: Building; x: number; y: number; dir: Dir } | null,
+  /** The goods in the hand (PILE), and the cell they were picked up from. */
+  carry: [] as Item[],
+  carryFrom: null as { x: number; y: number } | null,
 }))
 
 export const Fx = trait(() => ({ q: [] as FxEvent[] }))
@@ -275,14 +299,14 @@ export const Rng = trait(() => ({ next: makeRng(1) }))
  */
 export const SYSTEMS = [
   // the simulation's steps (systems/index.ts), in their order
-  'trucks', // trucks drive to their docks and away
+  'clients', // the market's clients take their goods from the stock, a level is done when all are content
   'sheep', // sheep walk their loops, eat, grow their wool
   'sprouts', // sown cells grow
   'hints', // the land hint: its card when the owned land runs low
   'belts', // goods ride the belts
   'machines', // machines and stations work
   // what the farm tells the player
-  'village', // asks are counted, a done level opens the next with its cards, the island grows
+  'village', // what the market gets is counted, a done level opens the next with its cards, the island grows
   'floats', // numbers float up from the field
   'sound',
   // the player's hands and what shows them
@@ -290,7 +314,7 @@ export const SYSTEMS = [
   'pointer', // the mouse and touchpad on the field: the hand, building, the camera
   'ghost', // what is in hand: its preview, the cell grid, the reach
   'hover', // the outline and the label under the pointer
-  'tags', // labels on the field: plots' prices, docks' signs, trucks' and pens' counts, the signs over machines and sheep
+  'tags', // labels on the field: plots' prices, pens' counts, the signs over machines and sheep
   'portIcons', // beside every way in and out, while building or pointing at it: what goes through it
   'hud', // the screen's panels, fed a few times a second
   'fps', // the frame rate panel
@@ -303,7 +327,7 @@ export const PLAY: readonly SystemId[] = SYSTEMS.filter((s) => s !== 'orbit')
  * The main menu's farm (the author: «в демо на главном меню должно быть только визуально»): the farm works and the
  * camera turns round it; no hands, no grid, no numbers, no sound, no levels.
  */
-export const DEMO: readonly SystemId[] = ['trucks', 'sheep', 'sprouts', 'belts', 'machines', 'orbit']
+export const DEMO: readonly SystemId[] = ['sheep', 'sprouts', 'belts', 'machines', 'orbit']
 export const Systems = trait(() => ({ on: new Set<SystemId>(PLAY) }))
 
 // ---------------------------------------------------------------- access
@@ -356,8 +380,9 @@ export function emptyWorld(opts: WorldOptions = {}): World {
 }
 
 /**
- * A fresh long game (docs/05-REWORK.md): the map's terrain, the four central plots, the fluffy sheep roaming them (no
- * pen yet: the author, 19.10.2026), the market. The village's first level (asks, cards) is opened by `startWorld`.
+ * A fresh long game (docs/05-REWORK.md): the map's terrain and hills, the start's three plots, the market on the middle
+ * one, the fluffy sheep roaming them (no pen yet: the author, 19.10.2026). The first level (its client, its card) is opened by
+ * `startWorld`.
  */
 export function createGameWorld(opts: WorldOptions = {}): World {
   const world = emptyWorld(opts)
@@ -375,36 +400,32 @@ export function createGameWorld(opts: WorldOptions = {}): World {
   }
   addMarket(world)
   const rnd = res(world, Rng).next
+  // each on open grass: not in the bushes or among the stones round where the first pen will stand
+  const open = (p: { x: number; y: number }) => !ROAM.blocking.includes(f.terrain.get(key(Math.floor(p.x), Math.floor(p.y))) as never)
+  const spot = () => ({ x: START.pen.x + 0.5 + rnd() * 2, y: START.pen.y + 0.5 + rnd() * 2 })
   for (let i = 0; i < START.sheep; i++) {
-    const at = { x: START.pen.x + 0.5 + rnd() * 3, y: START.pen.y + 0.5 + rnd() * 3 }
+    let at = spot()
+    for (let k = 0; k < 8 && !open(at); k++) at = spot()
     res(world, Flock).sheep.push(makeSheep(world, 0, true, at))
   }
   return world
 }
 
 /**
- * The market (TDD 3.4.1, GDD 7), as docks: the row beside the field, as wide as the island (it grows with it), taking
- * goods from every cell a belt brings them to; past it four stalls, and the trading post once trade is open. None of
- * them takes a cell of the field. Kept as they are, added where missing.
+ * The market (GDD 2, 7): one fixed building of MARKET.size×MARKET.size in the middle of the land the game starts on,
+ * as a dock — it takes goods from every side. Added if missing.
  */
 export function addMarket(world: World) {
-  const plant = res(world, Plant),
-    right = res(world, Field).right
-  const part = (p: MarketPart, x: number, y: number, w: number, h: number) => {
-    let d = plant.b.get(key(x, y))
-    if (!d) {
-      d = { ...blankBuilding('dock', x, y, 3), part: p, fixed: true }
-      plant.b.set(key(x, y), d)
-    }
-    d.w = w
-    d.h = h
-    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) if (dx || dy) plant.occ.set(key(x + dx, y + dy), key(x, y))
-    return d
+  const plant = res(world, Plant)
+  const { x, y, size } = MARKET
+  let d = plant.b.get(key(x, y))
+  if (!d) {
+    d = { ...blankBuilding('dock', x, y, 3), fixed: true }
+    plant.b.set(key(x, y), d)
   }
-  const row = part('row', 0, MARKET.row, right, 1)
-  for (const x of MARKET.stalls) part('stall', x, MARKET.row + 1, MARKET.stallW, MARKET.rows)
-  if (res(world, GameState).trade) part('buy', MARKET.buyX, MARKET.row + 1, MARKET.buyW, MARKET.rows)
-  return row
+  d.w = d.h = size
+  for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) if (dx || dy) plant.occ.set(key(x + dx, y + dy), key(x, y))
+  return d
 }
 
 /** A pen standing at (x, y), facing `dir` (its way out): not yet on the field. */
@@ -436,13 +457,52 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
 
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
   const [w, h] = type === 'dock' ? [1, 1] : dimsOf(type, dir)
-  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], pile: [], pileX: x, pileY: y, w, h, recipe: null, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
+  return {
+    type,
+    x,
+    y,
+    dir,
+    item: null,
+    buf: [],
+    inv: {},
+    slot: null,
+    timer: 0,
+    total: 0,
+    outs: [],
+    w,
+    h,
+    seed: null,
+    count: 0,
+    prog: 0,
+    status: '',
+    rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null,
+    paid: 0,
+    rr: 0,
+    phase: 0,
+  }
 }
 
-/** A random spot inside a pen where a sheep may stand (clear of the fence). */
-export function pastureSpot(world: World, p: PastureT) {
+/**
+ * A spot inside a pen where a sheep may stand (clear of the fence), away from the others there: the best of
+ * `SHEEP.spotTries` random spots, the furthest from where its pen-mates stand and are going, taken at once when it is
+ * `SHEEP.apart` from all of them (the round sheep are big: put anywhere, they stood inside one another).
+ */
+export function pastureSpot(world: World, p: PastureT, self?: SheepT) {
   const rnd = res(world, Rng).next
-  return { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
+  const mates = res(world, Flock).sheep.filter((s) => s.home === p.id && s.state === 'pasture' && s !== self)
+  let best = { x: 0, y: 0 },
+    far = -1
+  for (let i = 0; i < SHEEP.spotTries; i++) {
+    const c = { x: p.x + 0.35 + rnd() * (p.w - 0.7), y: p.y + 0.4 + rnd() * (p.h - 0.9) }
+    let d = Infinity
+    for (const m of mates) d = Math.min(d, Math.hypot(m.px - c.x, m.py - c.y), Math.hypot(m.tx - c.x, m.ty - c.y))
+    if (d > far) {
+      best = c
+      far = d
+    }
+    if (d >= SHEEP.apart) break
+  }
+  return best
 }
 
 /**
@@ -469,7 +529,7 @@ export function makeSheep(world: World, home: number, fluffy = true, at0?: { x: 
     clicks: 0,
     // before food comes into the game every sheep counts as fed, so its fleece grows by itself
     fed: !gs.food,
-    pink: false,
+    marks: noMarks(),
     face: 0,
   }
 }
@@ -485,9 +545,5 @@ export function stockTake(world: World, k: ItemId, n: number) {
     got = Math.max(0, Math.min(n, s[k] ?? 0))
   if (got) s[k] = (s[k] ?? 0) - got
   return got
-}
-/** A good (not a sheep) into the stock. */
-export function toStock(world: World, it: Item) {
-  if (it.kind !== 'sheep') stockAdd(world, it.kind)
 }
 export const newItem = (kind: ItemId | 'sheep', sheep?: SheepT): Item => ({ kind, sheep, p: 0, ed: 0, strayT: 0 })

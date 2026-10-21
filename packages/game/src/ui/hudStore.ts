@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BuildingId, CardId, ClientId, ItemId, RecipeId, ResId } from '@/game/balance'
+import type { BuildingId, CardId, ClientId, ItemId, ResId } from '@/game/balance'
 import type { Selection, Tool } from '@/game/world'
 
 /**
@@ -7,14 +7,14 @@ import type { Selection, Tool } from '@/game/world'
  * components subscribe to the slices they draw. Clicks in the HUD act on the world directly and the next refresh
  * shows the result.
  */
-export interface AskHud {
-  id: number
+/** A client's need (GDD 7): its good, how many a minute, how content it is (0…1), what one pays, how many the stock holds. */
+export interface NeedHud {
   client: ClientId
   kind: ItemId
-  have: number
-  total: number
-  /** What one pays. */
+  rate: number
+  fill: number
   price: number
+  stock: number
 }
 export interface ToolHud {
   id: BuildingId
@@ -31,19 +31,17 @@ export interface HudState {
   pauseNudge: number
   /** The stock: how many of each good. */
   stock: Partial<Record<ItemId, number>>
+  /** The goods in the hand, one by one. */
+  hand: ItemId[]
   clock: number
   /** The village level open now, from 1. */
   level: number
   speed: number
   goal: GoalHud
-  asks: AskHud[]
+  needs: NeedHud[]
   /** The quick bar's ten slots (an empty slot is null). */
   tools: (ToolHud | null)[]
-  /** The recipes the workshop knows in this mission. */
-  recipes: RecipeId[]
   tool: Tool
-  /** The recipe a new workshop starts with. */
-  recipe: RecipeId
   /** What the hand sows, and what a new seeder starts with. */
   seed: ResId
   /** Kinds the farm has met so far: the splitter's rules and the market offer only these. */
@@ -62,15 +60,14 @@ export const useHudStore = create<HudState>((set) => ({
   noMoney: 0,
   pauseNudge: 0,
   stock: {},
+  hand: [],
   clock: 0,
   level: 1,
   speed: 1,
   goal: null,
-  asks: [],
+  needs: [],
   tools: [],
-  recipes: [],
   tool: 'hand',
-  recipe: 'sweater',
   seed: 'meadow',
   met: [],
   sel: null,

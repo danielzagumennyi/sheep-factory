@@ -1,12 +1,12 @@
 import { useEffect, type RefObject } from 'react'
-import { Box3, Group, Matrix4, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
-import type { BuildingId } from '@/game/balance'
+import { Box3, Group, Matrix4, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Object3D, type Ray } from 'three'
+import { HILL, type BuildingId } from '@/game/balance'
 import { sheepAt } from '@/game/actions/hand'
-import { get, isBeltLike } from '@/game/grid'
+import { get, isBeltLike, levelAt } from '@/game/grid'
 import { Flock, Plant, key, res, type Building, type SheepT, type World } from '@/game/world'
 import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
-import { fleece, sheepHead, sheepLegs, shorn } from './models'
+import { fleece, sheepHead, sheepLegs, sheepTuft, shorn } from './models'
 
 /** The scene objects the pointer can be over, so the hover line can find them: docks by their cell, pastures by id. */
 export const views = { buildings: new Map<string, Object3D>(), pastures: new Map<number, Object3D>() }
@@ -17,7 +17,7 @@ export interface SheepPose {
   legs: Matrix4
   fleece: Matrix4
   head: Matrix4
-  /** Fleece on (or the pink shorn body, posed by `fleece`). */
+  /** Fleece on (or the shorn body, posed by `fleece`). */
   woolly: boolean
 }
 /** Every drawn sheep's pose, by id. The flock is instanced, so this is what the pointer and the hover line read. */
@@ -32,7 +32,7 @@ export function sheepProxy() {
     group.add(m)
     return m
   }
-  const proxy = { group, legs: part(sheepLegs()), body: part(fleece()), skin: part(shorn()), head: part(sheepHead()) }
+  const proxy = { group, legs: part(sheepLegs()), body: part(fleece()), skin: part(shorn()), head: part(sheepHead()), tuft: part(sheepTuft()) }
   return proxy
 }
 export type SheepProxy = ReturnType<typeof sheepProxy>
@@ -44,6 +44,7 @@ export function poseProxy(p: SheepProxy, pose: SheepPose) {
   p.body.visible = pose.woolly
   p.skin.visible = !pose.woolly
   p.head.matrix.copy(pose.head)
+  p.tuft.matrix.copy(pose.head)
   p.group.updateMatrixWorld(true)
 }
 const picker = sheepProxy()
@@ -63,6 +64,15 @@ export function useView<K>(map: Map<K, Object3D>, k: K, ref: RefObject<Object3D 
 /** Where the pointer last was over the field, in normalised device coordinates, and whether it is still over it. */
 export const pointer = { ndc: new Vector2(), inside: false }
 
+/** The tops of the hills' third and second levels (HILL): a ray meets them before the ground behind. */
+const tops = [3, 2].map((l) => ({ l, plane: new Plane(new Vector3(0, 1, 0), -(l - 1) * HILL.tier) }))
+const _g = new Vector3()
+/** Where a ray from the camera meets the field — a hill's top over a cell of that level, else the ground — and how high. */
+export function groundHit(world: World, r: Ray): { x: number; y: number; h: number } | null {
+  for (const t of tops) if (r.intersectPlane(t.plane, _g) && levelAt(world, Math.floor(_g.x), Math.floor(_g.z)) === t.l) return { x: _g.x, y: _g.z, h: (t.l - 1) * HILL.tier }
+  return r.intersectPlane(ground, _g) ? { x: _g.x, y: _g.z, h: 0 } : null
+}
+
 /** The height of a sheep's back: a near miss is looked for here rather than on the ground behind it. */
 const backs = new Plane(new Vector3(0, 1, 0), -0.32)
 const ground = new Plane(new Vector3(0, 1, 0), 0)
@@ -74,7 +84,8 @@ const ray = new Raycaster(),
   turn = new Matrix4()
 /** A machine's whole model, put where one stands, for the ray to be tested against. */
 const body = new Mesh(undefined, vmat())
-const pickable = (s: SheepT) => s.state === 'pasture' || s.state === 'transit' || s.state === 'roam' || s.state === 'belt'
+// one still coming down on its parachute is out of reach (DROP)
+const pickable = (s: SheepT) => (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam' || s.state === 'belt') && s.drop === undefined
 
 /** What the pointer is over: a sheep or a building, and whether the ray met its model or only the ground under it. */
 export interface Picked {

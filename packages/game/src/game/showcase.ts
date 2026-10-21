@@ -1,32 +1,33 @@
-import { GRID, PEN, RECIPE_ORDER, TOOL_ORDER } from './balance'
+import { GRID, LEVELS, PEN, TOOL_ORDER } from './balance'
 import { createBot } from './bot'
 import { PLAN, applyJob } from './plan'
 import { stepSimulation } from './systems'
 import { roomFor } from './grid'
 import { penIn } from './systems/sheep'
-import { Field, Flock, GameState, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
+import { Field, Flock, GameState, Market, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
 
 /**
  * The farm of chapter 1 built whole (game/plan.ts), for the main menu's background and for screenshots (dev console:
- * `__game.showcase()`): five pens on three loops of stations, every line, the workshops making sweaters and felt
- * boots, the market whole; the pens full of sheep, the deposits kept full. Then it runs a while so goods are on the
- * belts, with the bot's hand tending it as a player would — dead ends emptied, the dye held back while white is short
- * — and returns that hand, for whoever shows the farm to keep tending it (`act` about every 0.7 s).
+ * `__game.showcase()`): the six loops round the market, every line; the pens full of sheep, the deposits kept full;
+ * the clients of the chapter's last level at the market, every one content (behind the menu their bars stay so).
+ * Then it runs a while so goods are on the belts, with the bot's hand tending it as a player would — dead ends
+ * emptied — and returns that hand, for whoever shows the farm to keep tending it (`act` about every 0.7 s).
  */
 export function buildShowcase(w: World, warmup = 90) {
   const un = res(w, Unlocks),
     gs = res(w, GameState),
     f = res(w, Field)
   for (const t of TOOL_ORDER) un.unlocked.add(t)
-  for (const r of RECIPE_ORDER) un.recipes.add(r)
   gs.coins += 50_000
   gs.food = true
-  f.top = 0
-  f.right = GRID.cols
-  for (let py = 0; py * GRID.plotH < GRID.roadY; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
+  Object.assign(f, { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
+  for (let py = 0; py * GRID.plotH < GRID.rows; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
   gs.fieldVersion++
   gs.trade = true
   addMarket(w)
+  gs.level = LEVELS.length - 1
+  gs.chapterDone = true
+  res(w, Market).needs = LEVELS.at(-1)!.needs.map(([client, kind, rate]) => ({ client, kind, rate, due: 0, fill: 1 }))
   for (const j of PLAN) applyJob(w, j, true)
   const flock = res(w, Flock)
   // the sheep that roamed at the start live in pens on a finished farm

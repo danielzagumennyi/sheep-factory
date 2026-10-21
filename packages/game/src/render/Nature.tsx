@@ -40,7 +40,7 @@ export function Nature() {
     for (const [k, kind] of f.terrain) {
       if (kind !== 'tree' && kind !== 'rock') continue
       const [x, y] = unkey(k)
-      if (y < f.top || x >= f.right) continue
+      if (x < f.left || y < f.top || x >= f.right || y >= f.bottom) continue
       const j = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453,
         rnd = j - Math.floor(j)
       const set = SETS[kind]

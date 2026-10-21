@@ -1,6 +1,7 @@
-import { BELT, BUILDINGS, type Dir } from '../balance'
-import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, isStation, pastureAt, step, usesGood } from '../grid'
-import { GameState, Plant, float, key, res, toStock, type Building, type Item, type World } from '../world'
+import { BELT, type Dir } from '../balance'
+import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, isStation, pastureAt, step } from '../grid'
+import { GameState, Plant, float, key, res, type Building, type Item, type World } from '../world'
+import { dropNear } from './ground'
 import { stationTake } from './machines'
 import { dockAccept } from './village'
 import { crossPen, toPasture } from './sheep'
@@ -51,22 +52,20 @@ export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boole
     t.item = it
     return true
   }
-  if (t.type === 'dock') return dockAccept(w, t, it, tx)
   const way = entersAt(t, tx, ty, d)
   if (!way) return false
-  return machineAccept(w, t, it, way === true ? undefined : way.takes)
+  if (t.type === 'dock') return dockAccept(w, t, it, tx, ty, d)
+  return machineAccept(w, t, it, way.takes)
 }
 
 /**
  * A machine takes an item by one of its ways in (`takes` says what that way takes; a hand dropping a sheep gives
- * 'sheep'): a station its sheep, or its good up to BELT.bufMax; any other machine a good one of its jobs uses.
+ * 'sheep'): a station its sheep, or its good up to BELT.bufMax; a seeder its seeds.
  */
 export function machineAccept(_w: World, m: Building, it: Item, takes?: string): boolean {
   if (it.sheep) return takes === 'sheep' && isStation(m) && stationTake(m, it.sheep)
-  if (takes === 'sheep') return false
   const kind = it.kind as Exclude<Item['kind'], 'sheep'>
-  if (takes ? takes !== kind : !usesGood(m, kind)) return false
-  if (!takes && BUILDINGS[m.type as keyof typeof BUILDINGS]?.station) return false
+  if (takes !== kind) return false
   if ((m.inv[kind] ?? 0) >= BELT.bufMax) return false
   m.inv[kind] = (m.inv[kind] ?? 0) + 1
   return true
@@ -101,7 +100,7 @@ function sheepLaneAhead(w: World, b: Building) {
   const nb = inGrid(nx, ny) ? get(w, nx, ny) : null
   if (!nb || !isStation(nb)) return false
   const way = entersAt(nb, nx, ny, b.dir)
-  return !!way && way !== true && way.takes === 'sheep'
+  return way?.takes === 'sheep'
 }
 
 export function beltSystem(w: World, dt: number) {
@@ -128,15 +127,15 @@ export function beltSystem(w: World, dt: number) {
       b.item = null
       continue
     }
-    // a good stuck in front of the sheep's lane jumps into the stock, so the sheep loop never stops (GDD 4.4)
+    // a good stuck in front of the sheep's lane falls off the belt beside it, so the sheep loop never stops (GDD 4.4)
     if (!it.sheep && b.type === 'belt' && sheepLaneAhead(w, b)) {
       it.strayT += dt
       if (it.strayT > BELT.strayAfter) {
-        toStock(w, it)
+        dropNear(w, b.x, b.y, [it], { x: b.x + 0.5, y: b.y + 0.5, h: 0.25 })
         b.item = null
         gs.strayAt = key(b.x, b.y)
         gs.strayT = 6
-        float(w, b.x + 0.5, b.y, 'toHand', 'bad')
+        float(w, b.x + 0.5, b.y, 'fellOff', 'bad')
       }
     }
   }

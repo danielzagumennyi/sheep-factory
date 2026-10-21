@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BELT, BUILDINGS, MARKET, RECIPES, RECIPE_ORDER, SEED, type BuildingId, type CardId, type ItemId, type RecipeId, type ResId } from '@/game/balance'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { BATH_YIELD, BELT, BUILDINGS, ITEMS, LOOK, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { jobOf, jobsOf, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
-import { buyPlot, cycleRule, liftUp, remove, setRecipe, setSeed } from '@/game/actions/build'
+import { pilesBy, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
+import { buyPlot, cycleRule, liftUp, remove, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
-import { askAt, buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
+import { buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
 import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type Building, type SplitRules, type World } from '@/game/world'
 import { useAppStore } from '@/app/store'
 import { NewGame } from './Title'
@@ -17,6 +17,7 @@ import { setTool } from './actions'
 import { useHudStore } from './hudStore'
 import { Icon } from './Icon'
 import { Book } from './Book'
+import { ShearCursor } from './ShearCursor'
 
 /** m:ss of game time. */
 export const fmtT = (t: number) => {
@@ -44,21 +45,35 @@ function Recipe({ r }: { r: readonly [Part, Part] | null }) {
     </span>
   )
 }
-const recipeLine = (r: RecipeId): readonly [Part, Part] => [Object.entries(RECIPES[r].inp) as [string, number][], [[RECIPES[r].out, 1]]]
-/** A building's or card's recipe line; a workshop shows the recipe it is set to (or would start with). */
-export function recipeOf(id: BuildingId | CardId, recipe?: RecipeId | null): readonly [Part, Part] | null {
+/**
+ * A building's or card's recipe line. A salon station shows what a sheep that went through it gives when shorn: the
+ * comb a step up (thread), the curl as the second step (yarn), the knitting as the third (a sweater), the bath felt,
+ * the dye a coloured good.
+ */
+export function recipeOf(id: BuildingId | CardId): readonly [Part, Part] | null {
   if (id === 'shearer') return [[['sheep', 1]], [['wool', 2]]]
   if (id === 'feeder') return [[['sheep', 1], ['hay', 1]], [['sheep', 1]]]
-  if (id === 'dyer') return [[['sheep', 1], ['dye', 1]], [['pwool', 2]]]
+  if (id === 'dyer') return [[['sheep', 1], ['dye', 1]], [['cwool', 2]]]
+  if (id === 'bath') return [[['sheep', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]]
+  const step = STEPS.indexOf(id as (typeof STEPS)[number])
+  if (step >= 0) return [STEPS.slice(0, step + 1).map((st) => [st, 1] as const), [[SHEAR_YIELD[step + 1]![0], SHEAR_YIELD[step + 1]![1]]]]
   if (id === 'sow' || id === 'seeder') return [[['hay', 1]], [['meadow', 1]]]
-  if (id === 'workshop') return recipeLine(recipe ?? 'sweater')
-  if (id === 'valenki') return recipeLine('valenki')
   const b = (BUILDINGS as Record<string, (typeof BUILDINGS)[BuildingId]>)[id]
-  if (!b) return null
-  const j = b.jobs?.[0]
-  if (j) return [Object.entries(j.inp) as [string, number][], [[j.out, 1]]]
-  if (b.near) return [[[b.near, 1]], [[b.gives!, 1]]]
+  if (b?.near) return [[[b.near, 1]], [[b.gives!, 1]]]
   return null
+}
+/**
+ * What shearing gives, line by line, as far as the farm knows it (the author's sum, 19.10.2026): a sheep that went
+ * through none of the steps — wool; through one, two, three of them — thread, yarn, a sweater; out of the bath — felt.
+ */
+export function shearLines(met: readonly ItemId[]): (readonly [Part, Part])[] {
+  const lines: (readonly [Part, Part])[] = [[[['sheep', 1]], [[SHEAR_YIELD[0]![0], SHEAR_YIELD[0]![1]]]]]
+  STEPS.forEach((_, i) => {
+    const [k, n] = SHEAR_YIELD[i + 1]!
+    if (met.includes(k)) lines.push([STEPS.slice(0, i + 1).map((st) => [st, 1] as const), [[k, n]]])
+  })
+  if (met.includes(BATH_YIELD[0])) lines.push([[['bath', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]])
+  return lines
 }
 
 export function Hud() {
@@ -67,15 +82,17 @@ export function Hud() {
       <TopLeft />
       <TopCenter />
       <TopRight />
-      <Asks />
+      <Clients />
       <Bottom />
       <BottomRight />
+      <HandPanel />
       <StockPanel />
       <Popup />
       <Book />
       <NewCard />
       <MenuOverlay />
       <ErrorToast />
+      <ShearCursor />
     </>
   )
 }
@@ -115,14 +132,11 @@ function TopCenter() {
   const nudge = useHudStore((s) => s.pauseNudge)
   let text: ReactNode = null
   if (goal) {
-    if (goal.text === 'order') {
+    if (goal.text === 'need') {
       const p = goal.params!
       text = (
         <>
-          {t(ITEM_NAMES[p.kind as ItemId])}{' '}
-          <b>
-            {p.have}/{p.total}
-          </b>
+          {t(ITEM_NAMES[p.kind as ItemId])} <b>{t(UI.perMin, { n: p.rate! })}</b>
         </>
       )
     } else text = t(UI[goal.text as keyof typeof UI])
@@ -173,30 +187,33 @@ function TopRight() {
   )
 }
 
-/** The village's asks for this level: the good, how many of how many, what one pays. All done — the next level opens. */
-function Asks() {
+/**
+ * The market's clients (GDD 7): each one's good, how many it takes a minute, what one pays, and the bar of how content
+ * it is. Every bar full at once — the next level opens.
+ */
+function Clients() {
   const { t } = useT()
-  const asks = useHudStore((s) => s.asks)
+  const needs = useHudStore((s) => s.needs)
   return (
-    <div className="ov ov-orders" title={t(UI.asks)}>
-      {asks.map((a) => {
-        const done = a.have >= a.total
+    <div className="ov ov-orders" title={t(UI.clients)}>
+      {needs.map((n) => {
+        const done = n.fill >= 1
         return (
-          <div key={a.id} className={'panel order' + (done ? ' order--done' : '')}>
-            <span className="order__who">
-              {t(CLIENT_NAMES[a.client])}
+          <div key={n.client + n.kind} className={'panel order' + (done ? ' order--done' : '')}>
+            <span className="order__who" style={{ color: LOOK.client[n.client] }}>
+              {t(CLIENT_NAMES[n.client])}
               {done ? ' ✓' : ''}
             </span>
             <span className="order__rw">
               +<Icon kind="coin" size={14} />
-              {a.price}
+              {n.price}
             </span>
             <span className="order__need">
-              <Icon kind={a.kind} size={22} />
-              {a.have} / {a.total}
+              <Icon kind={n.kind} size={22} />
+              {t(UI.perMin, { n: n.rate })}
             </span>
             <span className="order__bar">
-              <i style={{ width: (Math.min(1, a.have / a.total) * 100).toFixed(1) + '%' }} />
+              <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
             </span>
           </div>
         )
@@ -205,30 +222,21 @@ function Asks() {
   )
 }
 
-/** A building's recipes for its tip: a workshop every recipe it knows, a carder or spinner white and pink, others their one line. */
+/** A building's recipes for its tip: the shearer what it gives for each sheep, others their one line. */
 function Recipes({ id }: { id: BuildingId }) {
-  const known = useHudStore((s) => s.recipes)
-  const recipe = useHudStore((s) => s.recipe)
   const met = useHudStore((s) => s.met)
-  if (id === 'workshop' && known.length)
-    return (
-      <span className="recipes-tip">
-        {known.map((r) => (
-          <Recipe key={r} r={recipeLine(r)} />
-        ))}
-      </span>
-    )
-  // a pink job shows once pink wool is met
-  const jobs = (BUILDINGS[id].jobs ?? []).filter((j, i) => i === 0 || Object.keys(j.inp).every((k) => met.includes(k as ItemId)))
-  if (jobs.length > 1)
-    return (
-      <span className="recipes-tip">
-        {jobs.map((j) => (
-          <Recipe key={j.out} r={[Object.entries(j.inp) as [string, number][], [[j.out, 1]]]} />
-        ))}
-      </span>
-    )
-  return <Recipe r={recipeOf(id, recipe)} />
+  if (id === 'shearer') return <ShearLines met={met} />
+  return <Recipe r={recipeOf(id)} />
+}
+/** The shearer's lines: what a sheep gives by the stations it went through. */
+function ShearLines({ met }: { met: readonly ItemId[] }) {
+  return (
+    <span className="recipes-tip">
+      {shearLines(met).map((r, i) => (
+        <Recipe key={i} r={r} />
+      ))}
+    </span>
+  )
 }
 
 /** What is sown (by hand, or by a seeder): hay → a meadow, dye → a bush once bushes are known. */
@@ -350,11 +358,28 @@ function BottomRight() {
   )
 }
 
+/** What the hand carries (GDD 3), over the stock: its goods, one icon each; nothing while it is empty. */
+function HandPanel() {
+  const { t } = useT()
+  const hand = useHudStore((s) => s.hand)
+  if (!hand.length) return null
+  return (
+    <div className="ov ov-hand">
+      <div className="panel hand" title={t(UI.hand)}>
+        <Icon kind="hand" size={24} />
+        {hand.map((k, i) => (
+          <Icon key={i} kind={k} size={26} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /**
- * The stock, which is the hand, bottom left as in Tower Factory (the author): a column of goods with their counts, only
- * those there are.
+ * The market's stock, bottom left as in Tower Factory (the author): a column of goods with their counts, only those
+ * there are — what has come into the market, by a belt or in the hand.
  */
-const STOCK_ORDER: readonly ItemId[] = ['hay', 'dye', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'sweater', 'valenki']
+const STOCK_ORDER = Object.keys(ITEMS) as ItemId[]
 function StockPanel() {
   const { t } = useT()
   const stock = useHudStore((s) => s.stock)
@@ -390,7 +415,7 @@ function marketGoods(w: World, met: readonly ItemId[]): ItemId[] {
   return STOCK_ORDER.filter((k) => met.includes(k) || stockOf(w, k) > 0)
 }
 
-/** The trading post (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
+/** Trade in the market's window (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
 function MarketBody({ refresh }: { refresh: () => void }) {
   const { world } = useGame()
   const { t } = useT()
@@ -451,17 +476,21 @@ const secs = (n: number) => String(Math.round(n * 10) / 10)
 
 /**
  * How loaded a machine is (the author: «видеть его загруженность»): the job in hand as a bar with one job's seconds;
- * each good it takes with its four places, filled as far as it holds; what is done and waiting to leave. Machines take
- * goods only from belts (docs/05-REWORK.md), so nothing is loaded by hand.
+ * each good it takes with its four places, filled as far as it holds; what is done and waiting to leave (and lying by
+ * its way out). Goods come by belt or in the hand (GDD 3), not from the window.
  */
 function MachineLoad({ b }: { b: Building }) {
+  const { world } = useGame()
   const { t } = useT()
   const type = b.type as BuildingId
   const def = BUILDINGS[type]
-  if (!def.time && !jobOf(b)) return null
-  const kinds: ItemId[] = def.station ? (def.uses ? [def.uses] : []) : def.sows ? [SEED[b.seed ?? 'meadow']] : [...new Set(jobsOf(b).flatMap((j) => Object.keys(j.inp) as ItemId[]))]
-  const out = b.slot?.job?.out ?? jobOf(b)?.out ?? def.gives ?? (type === 'shearer' ? 'wool' : null)
-  const ready = b.outs.filter((o) => !o.item.sheep).length + b.pile.length
+  if (!def.time) return null
+  const kinds: ItemId[] = def.uses ? [def.uses] : def.sows ? [SEED[b.seed ?? 'meadow']] : []
+  // what waits to leave: a producer's good, or what the last sheep's fleece gave
+  const lying = pilesBy(world, b)
+  const waiting = b.outs.find((o) => !o.item.sheep)?.item.kind ?? lying[0]?.kind
+  const out = waiting && waiting !== 'sheep' ? waiting : (def.gives ?? null)
+  const ready = b.outs.filter((o) => !o.item.sheep).length + lying.length
   return (
     <div className="load">
       <div className="load__job" title={t(UI.cycle, { a: secs(cycleTime(b)) })}>
@@ -502,9 +531,17 @@ function Popup() {
   const sel = useHudStore((s) => s.sel)
   const at = useHudStore((s) => s.popAt)
   const met = useHudStore((s) => s.met)
-  const asksHud = useHudStore((s) => s.asks)
+  const needs = useHudStore((s) => s.needs)
   useHudStore((s) => s.tick)
   const el = useRef<HTMLDivElement>(null)
+  // beside what it is for, kept on the screen by its size as drawn, before the frame shows (the market's window is
+  // wider than a building's)
+  useLayoutEffect(() => {
+    const e = el.current
+    if (!e || !at) return
+    e.style.left = Math.max(8, Math.min(window.innerWidth - e.offsetWidth - 16, at.x + 8)) + 'px'
+    e.style.top = Math.max(58, Math.min(window.innerHeight - e.offsetHeight - 90, at.y)) + 'px'
+  })
   if (!sel || !at) return null
   const gs = res(world, GameState)
   const refresh = () => useHudStore.getState().set({ tick: useHudStore.getState().tick + 1, sel: res(world, Ui).sel })
@@ -512,48 +549,31 @@ function Popup() {
   if (sel.kind === 'b') {
     const b = res(world, Plant).b.get(sel.key)
     if (!b) return null
-    if (b.part === 'buy') {
-      // the trading post: buying into the stock and selling from it
+    if (b.type === 'dock') {
+      // the market: every client with its good, how many a minute, how many the stock holds and its bar; trade under them
       body = (
         <>
           <h3>
             <Icon kind="coin" size={20} />
-            {t(UI.tradePost)}
-          </h3>
-          <MarketBody refresh={refresh} />
-        </>
-      )
-    } else if (b.type === 'dock') {
-      // a stall: the ask whose truck is loaded there, with how many of its good wait in the stock
-      const a = askAt(world, MARKET.stalls.indexOf(b.x as (typeof MARKET.stalls)[number]))
-      body = a ? (
-        <>
-          <h3>
-            <Icon kind={a.kind} size={20} />
-            {t(CLIENT_NAMES[a.client])}
+            {t(UI.market)}
           </h3>
           <div className="pop__rows">
-            <div>
-              <Icon kind={a.kind} size={20} /> {a.have} / {a.total}
-            </div>
-            <div>
-              <Icon kind="coin" size={16} />
-              {t(UI.each, { n: asksHud.find((q) => q.id === a.id)?.price ?? 0 })}
-            </div>
-            {stockOf(world, a.kind) > 0 && (
-              <div title={t(UI.stock)}>
-                <Icon kind="stock" size={16} /> {stockOf(world, a.kind)}
+            {needs.map((n) => (
+              <div key={n.client + n.kind} className="pop__need" title={t(CLIENT_NAMES[n.client])}>
+                <i className="pop__dot" style={{ background: LOOK.client[n.client] }} />
+                <Icon kind={n.kind} size={20} />
+                {t(UI.perMin, { n: n.rate })}
+                <span className="pop__stock" title={t(UI.stock)}>
+                  <Icon kind="stock" size={14} />
+                  {n.stock}
+                </span>
+                <span className="order__bar">
+                  <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
+                </span>
               </div>
-            )}
+            ))}
           </div>
-        </>
-      ) : (
-        <>
-          <h3>
-            <Icon kind="coin" size={20} />
-            {t(UI.stall)}
-          </h3>
-          <div className="pop__st pop__st--plain">{t(UI.noTruck)}</div>
+          {gs.trade && <MarketBody refresh={refresh} />}
         </>
       )
     } else {
@@ -566,27 +586,8 @@ function Popup() {
             <Icon kind={type} size={22} />
             {t(BUILDING_TEXT[type].name)}
           </h3>
-          <Recipe r={recipeOf(type, b.recipe)} />
+          {type === 'shearer' ? <ShearLines met={met} /> : <Recipe r={recipeOf(type)} />}
           <div className="pop__st pop__st--plain">{t(BUILDING_TEXT[type].desc)}</div>
-          {BUILDINGS[type].recipes && (
-            <div className="recipes" role="group" aria-label={t(UI.recipe)}>
-              {RECIPE_ORDER.filter((r) => res(world, Unlocks).recipes.has(r)).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  className="rule"
-                  aria-pressed={b.recipe === r}
-                  title={t(ITEM_NAMES[RECIPES[r].out])}
-                  onClick={() => {
-                    setRecipe(world, b, r)
-                    refresh()
-                  }}
-                >
-                  <Icon kind={RECIPES[r].out} size={22} />
-                </button>
-              ))}
-            </div>
-          )}
           {BUILDINGS[type].sows && (
             <SeedPick
               value={b.seed ?? 'meadow'}
@@ -713,12 +714,8 @@ function Popup() {
     )
   }
 
-  const pw = el.current?.offsetWidth ?? 200,
-    ph = el.current?.offsetHeight ?? 140
-  const left = Math.max(8, Math.min(window.innerWidth - pw - 16, at.x + 8)),
-    top = Math.max(58, Math.min(window.innerHeight - ph - 90, at.y))
   return (
-    <div ref={el} className="panel pop" style={{ left, top }}>
+    <div ref={el} className="panel pop">
       {body}
     </div>
   )

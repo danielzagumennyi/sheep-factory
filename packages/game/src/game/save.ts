@@ -1,6 +1,5 @@
-import { BUILDINGS, LEVELS, MARKET, RECIPES, dimsOf, type BuildingId, type CardId, type ItemId, type Job, type RecipeId, type ResId, type TerrainId } from './balance'
-import { sendHome } from './systems/sheep'
-import { stallX } from './systems/village'
+import { dimsOf, type BuildingId, type CardId, type ItemId, type ResId, type TerrainId } from './balance'
+import { toRoam } from './systems/sheep'
 import {
   Field,
   Flock,
@@ -18,13 +17,12 @@ import {
   key,
   penOf,
   res,
-  type AskT,
   type Building,
   type Item,
   type PastureT,
   type ResCell,
+  type NeedT,
   type SheepT,
-  type TruckT,
   type World,
   type WorldOptions,
 } from './world'
@@ -38,60 +36,24 @@ import {
  * in the hand walks home), which systems are on, and the once-per-game cards (the app keeps those).
  */
 
-/** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 4
-/** The level the market starts trading at (a version-1 save knew no `trade`). */
-const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
+/**
+ * The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. Saves
+ * before 7 were made on the map before the square one (21.10.2026): their cells are not this map's, so they are not
+ * loaded — nothing is left to step them from.
+ */
+export const SAVE_VERSION = 7
+
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
-const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
-  // 2: one market along the road instead of a dock per client and a market stall (18.10.2026); trading is a flag
-  1: (g) => {
-    const s = g as GameSave
-    s.plant = s.plant.filter((b) => b.type !== 'dock')
-    s.gs = { ...s.gs, trade: s.gs.level >= TRADE_LEVEL }
-    return s
-  },
-  // 3: four stalls past the row and the road along the island's edge (18.10.2026); each ask has the stall its truck parks at
-  2: (g) => {
-    const s = g as GameSave
-    s.plant = s.plant.filter((b) => b.type !== 'dock')
-    s.market.asks.forEach((a, i) => (a.stall = i % MARKET.stalls.length))
-    for (const t of s.market.trucks) {
-      const a = s.market.asks.find((q) => q.id === t.ask)
-      if (!a) continue
-      t.tx = stallX(a.stall) - 0.5
-      if (t.state !== 'arrive' && t.state !== 'leave') t.x = t.tx
-    }
-    return s
-  },
-  // 4: sheep roam (19.10.2026). A first level of shearing by hand came before the others and the pen's level before the
-  // shearer's, so a level is now one later — the shearer's (then first) is now third; what the levels up to it open is
-  // open. A sheep that waited beside a station roams
-  3: (g) => {
-    const s = g as GameSave
-    const old = s.gs.level
-    s.gs = { ...s.gs, level: old === 0 ? 2 : old === 1 ? 1 : old + 1 }
-    for (const L of LEVELS.slice(0, s.gs.level + 1))
-      for (const id of [...L.open, ...(L.after ? [L.after.open] : [])]) if (id in BUILDINGS && !s.unlocks.unlocked.includes(id as BuildingId)) s.unlocks.unlocked.push(id as BuildingId)
-    if (!s.unlocks.seen.includes('shear')) s.unlocks.seen.push('shear')
-    for (const q of s.flock.sheep) {
-      const sh = q as SheepT & { waitAt?: string | null }
-      if ((sh.state as string) === 'waiting') Object.assign(sh, { state: 'roam', home: 0, tx: sh.px, ty: sh.py })
-      delete sh.waitAt
-    }
-    return s
-  },
-}
+const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {}
 
 /** A good as saved: the sheep it carries by its id. */
 type ItemSave = Omit<Item, 'sheep'> & { sheep?: number }
-/** A building as saved: its goods as ItemSave, the sheep in its slot by id, its job by what it makes. */
-type BuildingSave = Omit<Building, 'item' | 'buf' | 'outs' | 'pile' | 'slot'> & {
+/** A building as saved: its goods as ItemSave, the sheep in its slot by id. */
+type BuildingSave = Omit<Building, 'item' | 'buf' | 'outs' | 'slot'> & {
   item: ItemSave | null
   buf: ItemSave[]
   outs: { item: ItemSave; dir: Building['dir'] }[]
-  pile: ItemSave[]
-  slot: { sheep?: number; pass?: boolean; job?: ItemId } | null
+  slot: { sheep?: number; pass?: boolean } | null
 }
 
 export interface GameSave {
@@ -103,16 +65,21 @@ export interface GameSave {
     sprouts: [string, { t: ResId; left: number }][]
     plots: string[]
     forSale: string[]
+    /** The goods on the ground, by cell. */
+    piles: [string, ItemSave[]][]
+    left: number
     top: number
     right: number
+    bottom: number
   }
   plant: BuildingSave[]
   flock: { sheep: SheepT[]; pastures: PastureT[]; penUid: number }
-  market: { asks: AskT[]; trucks: TruckT[]; askUid: number }
+  market: { needs: NeedT[] }
   stock: Partial<Record<ItemId, number>>
-  unlocks: { unlocked: BuildingId[]; recipes: RecipeId[]; fresh: BuildingId[]; cardQ: CardId[]; seen: CardId[]; events: string[]; shownEver: CardId[] }
-  /** The player's last picks: the recipe a new workshop starts with, what the hand sows. */
-  ui: { recipe: RecipeId; seed: ResId }
+  unlocks: { unlocked: BuildingId[]; fresh: BuildingId[]; cardQ: CardId[]; seen: CardId[]; events: string[]; shownEver: CardId[] }
+  /** The player's last pick: what the hand sows. */
+  /** The hand's tool seed, and the goods in it (back in the hand on loading). */
+  ui: { seed: ResId; carry: ItemSave[]; carryFrom: { x: number; y: number } | null }
   stats: ReturnType<typeof res<typeof Stats>>
   rng: number
 }
@@ -141,13 +108,11 @@ function buildingOut(b: Building): BuildingSave {
     item: b.item && itemOut(b.item),
     buf: b.buf.map(itemOut),
     outs: b.outs.map((o) => ({ item: itemOut(o.item), dir: o.dir })),
-    pile: b.pile.map(itemOut),
     rules: b.rules && { ...b.rules },
     inv: { ...b.inv },
     slot: b.slot && {
       ...(b.slot.pass !== undefined ? { pass: b.slot.pass } : {}),
       ...(b.slot.sheep ? { sheep: b.slot.sheep.id } : {}),
-      ...(b.slot.job ? { job: b.slot.job.out } : {}),
     },
   }
 }
@@ -180,15 +145,18 @@ export function saveGame(w: World): SaveData {
         sprouts: [...f.sprouts].map(([k, s]) => [k, { ...s }]),
         plots: [...f.plots],
         forSale: [...f.forSale],
+        piles: [...f.piles].map(([k, items]) => [k, items.map(itemOut)]),
+        left: f.left,
         top: f.top,
         right: f.right,
+        bottom: f.bottom,
       },
       plant,
       flock: { sheep: copy(flock.sheep), pastures: copy(flock.pastures), penUid: flock.penUid },
-      market: { asks: copy(market.asks), trucks: copy(market.trucks), askUid: market.askUid },
+      market: { needs: copy(market.needs) },
       stock: { ...res(w, Stock).n },
-      unlocks: { unlocked: [...un.unlocked], recipes: [...un.recipes], fresh: [...un.fresh], cardQ: [...un.cardQ], seen: [...un.seen], events: [...un.events], shownEver: [...un.shownEver] },
-      ui: { recipe: ui.recipe, seed: ui.seed },
+      unlocks: { unlocked: [...un.unlocked], fresh: [...un.fresh], cardQ: [...un.cardQ], seen: [...un.seen], events: [...un.events], shownEver: [...un.shownEver] },
+      ui: { seed: ui.seed, carry: ui.carry.map(itemOut), carryFrom: ui.carryFrom },
       stats: { ...res(w, Stats) },
       rng: res(w, Rng).next.state,
     },
@@ -196,9 +164,6 @@ export function saveGame(w: World): SaveData {
 }
 
 // ---------------------------------------------------------------- loading
-
-/** Every job a machine can be busy with, by what it makes (each good is made by one job). */
-const JOB_BY_OUT: ReadonlyMap<ItemId, Job> = new Map([...Object.values(BUILDINGS).flatMap((d) => d.jobs ?? []), ...Object.values(RECIPES)].map((j) => [j.out, j]))
 
 /** A save brought up to this version, or null when it is no save of ours (or one newer than this build). */
 function upgrade(data: unknown): GameSave | null {
@@ -249,8 +214,8 @@ function fill(w: World, g: GameSave) {
   f.sprouts = new Map(g.field.sprouts)
   f.plots = new Set(g.field.plots)
   f.forSale = new Set(g.field.forSale)
-  f.top = g.field.top
-  f.right = g.field.right
+  f.piles = new Map(g.field.piles.map(([k, items]) => [k, items.map((it) => ({ ...it, sheep: undefined }))]))
+  Object.assign(f, { left: g.field.left, top: g.field.top, right: g.field.right, bottom: g.field.bottom })
   const flock = res(w, Flock)
   flock.sheep = g.flock.sheep
   flock.pastures = g.flock.pastures
@@ -267,7 +232,6 @@ function fill(w: World, g: GameSave) {
     const out: NonNullable<Building['slot']> = {}
     if (sl.pass !== undefined) out.pass = sl.pass
     if (sl.sheep !== undefined) out.sheep = sheepOf(sl.sheep)
-    if (sl.job) out.job = JOB_BY_OUT.get(sl.job)
     return out
   }
   const plant = res(w, Plant)
@@ -277,30 +241,31 @@ function fill(w: World, g: GameSave) {
       item: bs.item && itemIn(bs.item),
       buf: bs.buf.map(itemIn),
       outs: bs.outs.map((o) => ({ item: itemIn(o.item), dir: o.dir })),
-      pile: bs.pile.map(itemIn),
       slot: bs.slot && slotIn(bs.slot),
     }
     plant.b.set(key(b.x, b.y), b)
     for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
   }
-  // the market's parts, the row as wide as the island (a save from before them had none)
+  // the market (a save from before it had none)
   addMarket(w)
-  const market = res(w, Market)
-  market.asks = g.market.asks
-  market.trucks = g.market.trucks
-  market.askUid = g.market.askUid
+  res(w, Market).needs = g.market.needs
   res(w, Stock).n = { ...g.stock }
   const un = res(w, Unlocks)
   un.unlocked = new Set(g.unlocks.unlocked)
-  un.recipes = new Set(g.unlocks.recipes)
   un.fresh = new Set(g.unlocks.fresh)
   un.cardQ = [...g.unlocks.cardQ]
   un.seen = new Set(g.unlocks.seen)
   un.events = new Set(g.unlocks.events)
   un.shownEver = [...g.unlocks.shownEver]
-  Object.assign(res(w, Ui), { recipe: g.ui.recipe, seed: g.ui.seed })
+  Object.assign(res(w, Ui), { seed: g.ui.seed, carry: g.ui.carry.map((it) => ({ ...it, sheep: undefined })), carryFrom: g.ui.carryFrom })
   Object.assign(res(w, Stats), g.stats)
   res(w, Rng).next.state = g.rng
-  // a sheep that was in the hand walks home; one in a pen that is gone roams
-  for (const s of flock.sheep) if (s.state === 'held' || (s.state === 'pasture' && !penOf(w, s.home))) sendHome(w, s)
+  // a sheep that was in the hand comes down where it was and roams; so does one on a belt or in a station that is gone,
+  // or in a pen that is gone
+  const carried = new Set<number>()
+  for (const b of plant.b.values()) for (const q of [b.item, ...b.buf, ...b.outs.map((o) => o.item), b.slot]) if (q?.sheep) carried.add(q.sheep.id)
+  for (const s of flock.sheep) {
+    const lost = (s.state === 'belt' || s.state === 'machine') && !carried.has(s.id)
+    if (s.state === 'held' || lost || (s.state === 'pasture' && !penOf(w, s.home))) toRoam(w, s, s.px, s.py)
+  }
 }

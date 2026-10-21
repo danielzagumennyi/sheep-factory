@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { BUILDINGS, RECIPES, RECIPE_ORDER, SEED, dimsOf, type BuildingId, type Job, type ItemId, type RecipeId } from '@/game/balance'
+import { BATH_YIELD, BUILDINGS, COLORED, ITEMS, SEED, SHEAR_YIELD, STEPS, dimsOf, type BuildingId, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { buildPrice, inCells, outCells } from '@/game/grid'
 import { buyPrice, sellPrice } from '@/game/systems/village'
@@ -11,16 +11,16 @@ import { BUILDING_TEXT, ITEM_DESC, ITEM_NAMES } from '@/i18n/content'
 import { setTool } from './actions'
 import { useHudStore } from './hudStore'
 import { Icon } from './Icon'
-import { recipeOf } from './Hud'
+import { recipeOf, shearLines } from './Hud'
 
 /** The book's shelves: buildings by what they do, then the goods (the author's «словарь»). */
 const GROUPS: readonly { title: keyof typeof UI; ids: readonly BuildingId[] }[] = [
   { title: 'groupBelts', ids: ['belt', 'splitter', 'merger'] },
-  { title: 'groupSheep', ids: ['pen', 'sheep', 'shearer', 'feeder', 'dyer'] },
+  { title: 'groupSheep', ids: ['pen', 'sheep', 'shearer', 'feeder'] },
+  { title: 'groupSalon', ids: ['comb', 'curl', 'knit', 'bath', 'dyer'] },
   { title: 'groupLand', ids: ['mower', 'berry', 'sow', 'seeder'] },
-  { title: 'groupWool', ids: ['carder', 'spinner', 'felter', 'workshop'] },
 ]
-const GOODS: readonly ItemId[] = ['hay', 'dye', 'wool', 'pwool', 'roving', 'proving', 'yarn', 'pyarn', 'felt', 'sweater', 'valenki']
+const GOODS = Object.keys(ITEMS) as ItemId[]
 
 /** A line of goods: n× icon + … → icon. */
 function Line({ inp, out }: { inp: readonly (readonly [string, number])[]; out: readonly (readonly [string, number])[] }) {
@@ -40,21 +40,24 @@ function Line({ inp, out }: { inp: readonly (readonly [string, number])[]; out: 
     </span>
   )
 }
-const jobLine = (j: Job) => <Line key={j.out} inp={Object.entries(j.inp) as [string, number][]} out={[[j.out, 1]]} />
-const recipeLine = (r: RecipeId) => jobLine(RECIPES[r])
-
-/** Who makes a good: a station on the loop, a producer, a machine's job, or the workshop's recipe. */
-function makerOf(k: ItemId): { by: BuildingId; job?: Job } | null {
-  if (k === 'wool') return { by: 'shearer' }
-  if (k === 'pwool') return { by: 'dyer' }
-  for (const b of Object.keys(BUILDINGS) as BuildingId[]) {
-    const d = BUILDINGS[b]
-    if (d.gives === k) return { by: b }
-    const job = d.jobs?.find((j) => j.out === k)
-    if (job) return { by: b, job }
+type Part = readonly (readonly [string, number])[]
+/**
+ * Where a good comes from, and its line: a producer's good from its resource; a shorn one from the salon station that
+ * sets it (wool from the shearer itself, thread from one step, yarn from two, a sweater from three, felt from the bath);
+ * a coloured one from the dye station, the same line with dye in it.
+ */
+function makerOf(k: ItemId): { by: BuildingId; line: readonly [Part, Part] } | null {
+  const plain = (Object.keys(COLORED) as ItemId[]).find((q) => COLORED[q] === k)
+  if (plain) {
+    const m = makerOf(plain)
+    return m && { by: 'dyer', line: [[...m.line[0], ['dye', 1]], [[k, m.line[1][0]![1]]]] }
   }
-  const r = RECIPE_ORDER.find((q) => RECIPES[q].out === k)
-  return r ? { by: 'workshop', job: RECIPES[r] } : null
+  if (k === BATH_YIELD[0]) return { by: 'bath', line: [[['sheep', 1]], [[k, BATH_YIELD[1]]]] }
+  const step = SHEAR_YIELD.findIndex(([q]) => q === k)
+  if (step === 0) return { by: 'shearer', line: [[['sheep', 1]], [[k, SHEAR_YIELD[0]![1]]]] }
+  if (step > 0) return { by: STEPS[step - 1]! as BuildingId, line: recipeOf(STEPS[step - 1]! as BuildingId)! }
+  const b = (Object.keys(BUILDINGS) as BuildingId[]).find((q) => BUILDINGS[q].gives === k)
+  return b ? { by: b, line: recipeOf(b)! } : null
 }
 
 /**
@@ -87,7 +90,6 @@ export function Book() {
     setTool(world, id)
     close()
   }
-  const recipes = inRun ? RECIPE_ORDER.filter((r) => un.recipes.has(r)) : RECIPE_ORDER
 
   let detail: ReactNode
   if (pick in BUILDINGS) {
@@ -107,7 +109,7 @@ export function Book() {
         <h2>{t(BUILDING_TEXT[id].name)}</h2>
         <p className="book__desc">{t(BUILDING_TEXT[id].desc)}</p>
         <div className="book__recipes">
-          {id === 'workshop' ? recipes.map(recipeLine) : def.jobs && def.jobs.length > 1 ? def.jobs.map(jobLine) : r && <Line inp={r[0]} out={r[1]} />}
+          {id === 'shearer' ? shearLines(GOODS).map((l, i) => <Line key={i} inp={l[0]} out={l[1]} />) : r && <Line inp={r[0]} out={r[1]} />}
           {(id === 'sow' || id === 'seeder') && <Line inp={[[SEED.bush, 1]]} out={[['bush', 1]]} />}
         </div>
         <div className="book__facts">
@@ -140,7 +142,6 @@ export function Book() {
   } else {
     const k = pick as ItemId
     const maker = makerOf(k)
-    const made = maker && !maker.job ? recipeOf(maker.by) : null
     detail = (
       <>
         <div className="book__hero">
@@ -152,7 +153,7 @@ export function Book() {
           {maker && (
             <span className="book__maker">
               <Icon kind={maker.by} size={26} />
-              {maker.job ? jobLine(maker.job) : made && <Line inp={made[0]} out={made[1]} />}
+              <Line inp={maker.line[0]} out={maker.line[1]} />
             </span>
           )}
         </div>
