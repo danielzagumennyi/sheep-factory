@@ -14,6 +14,8 @@ export interface GoodSpot {
   x: number
   z: number
   y: number
+  /** How much it still looks as it did in the hand (1 — as held, 0 — as lying), on its way down from it (falls.ts). */
+  held?: number
 }
 export const frame = {
   /**
@@ -38,10 +40,21 @@ const yawOfDir = (d: number) => -d * (Math.PI / 2)
 const BELT_LIFT = 0.2,
   PLINTH_LIFT = 0.14
 
-/** How high over the ground the stack in the hand is held: the pointer's ray is met there (GameLoop.tsx). */
+/** How high over the ground under the pointer the stack in the hand is held (GameLoop.tsx). */
 export const CARRY_Y = 1.2
+/** The stack in the hand: a little one swaying side to side, each good a step over the one under it. */
+const CARRY_STEP = { side: 0.08, up: 0.13 } as const
 
-export function collectFrame(world: World, carryAt: { x: number; z: number } | null = null) {
+export function collectFrame(world: World, carryAt: { x: number; y: number; h: number } | null = null) {
+  // the falls just set off (by this frame's steps, or a click since the last frame) start here, not in FxView, which
+  // runs after this: else their goods would show in their places for a frame before they fly. One let go from the hand
+  // sets off from where its good was drawn in it the last frame, before the stack is gathered anew
+  const q = res(world, Fx).q
+  let j = 0
+  for (const e of q)
+    if (e.kind === 'fall') startFall(e, e.hand ? frame.carry[e.n] : undefined)
+    else q[j++] = e
+  q.length = j
   frame.goods.length = 0
   frame.carry.length = 0
   frame.sheep.clear()
@@ -49,18 +62,10 @@ export function collectFrame(world: World, carryAt: { x: number; z: number } | n
   // the goods on the ground, a heap on each cell (PILE) — those still falling there in the air (falls.ts), their places
   // in the heap empty till they land
   const piles = res(world, Field).piles
-  // the falls just set off (by this frame's steps, or a click since the last frame) start here, not in FxView, which
-  // runs after this: else their goods would show in their places for a frame before they fly
-  const q = res(world, Fx).q
-  let j = 0
-  for (const e of q)
-    if (e.kind === 'fall') startFall(e)
-    else q[j++] = e
-  q.length = j
   const falling = stepFalls(
     frame.dt,
     (cell) => piles.get(cell)?.length ?? 0,
-    (kind, x, y, z) => frame.goods.push({ kind, x, z, y }),
+    (kind, x, y, z, held) => frame.goods.push({ kind, x, z, y, held }),
   )
   for (const [k, items] of piles) {
     const [x, y] = unkey(k)
@@ -70,9 +75,10 @@ export function collectFrame(world: World, carryAt: { x: number; z: number } | n
       frame.goods.push({ kind: it.kind as ItemId, x: x + 0.5 + dx, z: y + 0.5 + dz, y: dy })
     })
   }
-  // what the hand carries, a little stack where the pointer's ray meets CARRY_Y
+  // what the hand carries, a little stack held CARRY_Y over the ground under the pointer
   const ui = res(world, Ui)
-  if (ui.carry.length && carryAt) ui.carry.forEach((it, i) => frame.carry.push({ kind: it.kind as ItemId, x: carryAt.x + (i % 2 ? 0.08 : -0.08), z: carryAt.z, y: CARRY_Y + i * 0.13 }))
+  if (ui.carry.length && carryAt)
+    ui.carry.forEach((it, i) => frame.carry.push({ kind: it.kind as ItemId, x: carryAt.x + (i % 2 ? CARRY_STEP.side : -CARRY_STEP.side), z: carryAt.y, y: carryAt.h + CARRY_Y + i * CARRY_STEP.up }))
   const plant = res(world, Plant)
   for (const b of plant.b.values()) {
     if (isBeltLike(b)) {

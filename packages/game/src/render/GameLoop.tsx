@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Plane, Raycaster, Vector3 } from 'three'
+import { Raycaster, Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
 import { CAMERA, COLORED, GRID, ITEMS, LEVELS, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
@@ -22,8 +22,8 @@ import { renderSheepSheet } from './sheepSheet'
 import { useHudStore, type GoalHud } from '@/ui/hudStore'
 import { setTool } from '@/ui/actions'
 import { cam, clampCam, fitOwned, turnCam } from './camera'
-import { CARRY_Y, collectFrame, frame } from './frame'
-import { pointer } from './pick'
+import { collectFrame, frame } from './frame'
+import { groundHit, pointer } from './pick'
 
 /** At most this many fixed steps per frame (×4 speed at 60 fps needs four). */
 const MAX_STEPS = 8
@@ -60,14 +60,16 @@ export function GameLoop() {
     const gs = () => res(world, GameState)
     // the keys that act on the field work only while the world's keys are on (not behind the main menu); Esc and
     // Enter, which close a card, the book or the menu, always do
-    const field = <E,>(f: (e: E) => void) => (e: E) => {
-      if (isOn(world, 'keys')) f(e)
-    }
+    const field =
+      <E,>(f: (e: E) => void) =>
+      (e: E) => {
+        if (isOn(world, 'keys')) f(e)
+      }
     const offs = [
       k.on(
         'pause',
         field((e) => {
-        e.preventDefault()
+          e.preventDefault()
           // a «Новое» card is closed by the same keys that pause
           if (res(world, Unlocks).cardQ.length) res(world, Unlocks).cardQ.shift()
           else gs().speed = gs().speed === 0 ? 1 : 0
@@ -288,11 +290,11 @@ export function GameLoop() {
       if (k.held('turnRight')) turnCam(CAMERA.turnKeys * delta)
       clampCam()
     }
-    // the goods in the hand ride under the pointer, held up at CARRY_Y
-    let carryAt: { x: number; z: number } | null = null
+    // the goods in the hand are held up over the ground under the pointer: let go, they fall straight down onto it
+    let carryAt: { x: number; y: number; h: number } | null = null
     if (res(world, Ui).carry.length && pointer.inside) {
       carryRay.setFromCamera(pointer.ndc, camera)
-      if (carryRay.ray.intersectPlane(carryPlane, _hit)) carryAt = { x: _hit.x, z: _hit.z }
+      carryAt = groundHit(world, carryRay.ray)
     }
     collectFrame(world, carryAt)
     if (isOn(world, 'hud') && ++hudN.current >= HUD_EVERY) {
@@ -303,10 +305,8 @@ export function GameLoop() {
   return null
 }
 
-const _v = new Vector3(),
-  _hit = new Vector3()
-const carryRay = new Raycaster(),
-  carryPlane = new Plane(new Vector3(0, 1, 0), -CARRY_Y)
+const _v = new Vector3()
+const carryRay = new Raycaster()
 let autoTimer = 0
 let stressTimer = 0
 

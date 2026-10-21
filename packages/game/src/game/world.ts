@@ -1,5 +1,25 @@
 import { createWorld, trait, type Trait, type World } from 'koota'
-import { dimsOf, GRID, HILLS, ISLAND_START, MAP_TERRAIN, MARKET, PEN, RES, ROAM, SHEEP, SHEEP_NAMES, START, type BuildingId, type CardId, type ClientId, type Dir, type ItemId, type ResId, type TerrainId } from './balance'
+import {
+  dimsOf,
+  GRID,
+  HILLS,
+  ISLAND_START,
+  MAP_TERRAIN,
+  MARKET,
+  PEN,
+  RES,
+  ROAM,
+  SHEEP,
+  SHEEP_NAMES,
+  START,
+  type BuildingId,
+  type CardId,
+  type ClientId,
+  type Dir,
+  type ItemId,
+  type ResId,
+  type TerrainId,
+} from './balance'
 import { makeRng } from './rng'
 
 export type { World }
@@ -154,7 +174,7 @@ export type FxEvent =
    * A good falls onto the pile on cell (x, y), as its `slot`-th: from the point (fx, fy) at height `fh` — the sheep's back
    * it was shorn off, the hand, a belt, a machine's way out. `n` counts the goods of one fall, so they come one after another.
    */
-  | { kind: 'fall'; x: number; y: number; slot: number; good: ItemId; fx: number; fy: number; fh: number; n: number }
+  | { kind: 'fall'; x: number; y: number; slot: number; good: ItemId; fx: number; fy: number; fh: number; n: number; hand?: boolean }
 /** The game's sounds for now (the author's recordings): a building set down, one removed. The UI click is the HUD's own. */
 export type SoundId = 'place' | 'remove'
 
@@ -437,7 +457,29 @@ export function entryOf(p: { x: number; y: number; w: number; h: number; dir: Di
 
 export function blankBuilding(type: BuildingId | 'dock', x: number, y: number, dir: Dir): Building {
   const [w, h] = type === 'dock' ? [1, 1] : dimsOf(type, dir)
-  return { type, x, y, dir, item: null, buf: [], inv: {}, slot: null, timer: 0, total: 0, outs: [], w, h, seed: null, count: 0, prog: 0, status: '', rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null, paid: 0, rr: 0, phase: 0 }
+  return {
+    type,
+    x,
+    y,
+    dir,
+    item: null,
+    buf: [],
+    inv: {},
+    slot: null,
+    timer: 0,
+    total: 0,
+    outs: [],
+    w,
+    h,
+    seed: null,
+    count: 0,
+    prog: 0,
+    status: '',
+    rules: type === 'splitter' ? { l: 'any', f: 'any', r: 'any' } : null,
+    paid: 0,
+    rr: 0,
+    phase: 0,
+  }
 }
 
 /**

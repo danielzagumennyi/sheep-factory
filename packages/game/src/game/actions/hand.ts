@@ -153,7 +153,7 @@ export function dropCarry(w: World, px: number, py: number) {
   } else if (b) {
     // into the machine by any of its ways in that takes the good
     ui.carry = ui.carry.filter((it) => !takenIn(w, b, it))
-  } else ui.carry.splice(0, putPile(w, x, y, ui.carry, { x: px, y: py, h: HAND.carryAt }).length)
+  } else ui.carry.splice(0, putPile(w, x, y, ui.carry, { x: px, y: py, h: HAND.carryAt, hand: true }).length)
   if (!ui.carry.length) ui.carryFrom = null
   return n0 - ui.carry.length
 }
@@ -172,7 +172,7 @@ function takenIn(w: World, b: Building, it: Item) {
 export function putDownCarry(w: World, px: number, py: number) {
   const ui = res(w, Ui)
   if (!ui.carry.length) return
-  ui.carry = dropNear(w, Math.floor(px), Math.floor(py), ui.carry, { x: px, y: py, h: HAND.carryAt })
+  ui.carry = dropNear(w, Math.floor(px), Math.floor(py), ui.carry, { x: px, y: py, h: HAND.carryAt, hand: true })
   if (!ui.carry.length) ui.carryFrom = null
 }
 

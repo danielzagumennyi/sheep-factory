@@ -1,8 +1,8 @@
 import { useEffect, type RefObject } from 'react'
-import { Box3, Group, Matrix4, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Object3D } from 'three'
-import type { BuildingId } from '@/game/balance'
+import { Box3, Group, Matrix4, Mesh, Plane, Raycaster, Sphere, Vector2, Vector3, type Camera, type Object3D, type Ray } from 'three'
+import { HILL, type BuildingId } from '@/game/balance'
 import { sheepAt } from '@/game/actions/hand'
-import { get, isBeltLike } from '@/game/grid'
+import { get, isBeltLike, levelAt } from '@/game/grid'
 import { Flock, Plant, key, res, type Building, type SheepT, type World } from '@/game/world'
 import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
@@ -63,6 +63,15 @@ export function useView<K>(map: Map<K, Object3D>, k: K, ref: RefObject<Object3D 
 
 /** Where the pointer last was over the field, in normalised device coordinates, and whether it is still over it. */
 export const pointer = { ndc: new Vector2(), inside: false }
+
+/** The tops of the hills' third and second levels (HILL): a ray meets them before the ground behind. */
+const tops = [3, 2].map((l) => ({ l, plane: new Plane(new Vector3(0, 1, 0), -(l - 1) * HILL.tier) }))
+const _g = new Vector3()
+/** Where a ray from the camera meets the field — a hill's top over a cell of that level, else the ground — and how high. */
+export function groundHit(world: World, r: Ray): { x: number; y: number; h: number } | null {
+  for (const t of tops) if (r.intersectPlane(t.plane, _g) && levelAt(world, Math.floor(_g.x), Math.floor(_g.z)) === t.l) return { x: _g.x, y: _g.z, h: (t.l - 1) * HILL.tier }
+  return r.intersectPlane(ground, _g) ? { x: _g.x, y: _g.z, h: 0 } : null
+}
 
 /** The height of a sheep's back: a near miss is looked for here rather than on the ground behind it. */
 const backs = new Plane(new Vector3(0, 1, 0), -0.32)

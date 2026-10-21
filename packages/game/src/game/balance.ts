@@ -60,7 +60,8 @@ export type Dir = 0 | 1 | 2 | 3
 export const HAND = {
   /** A fluffy sheep is shorn by hand in this many clicks; what it gives falls beside it. Gathering is one click, one item into the hand. */
   shearClicks: 3,
-  /** Heights goods fall from: a shorn sheep's back, the hand (as its stack is held, render/frame.ts CARRY_Y). */
+  /** Heights goods fall from: a shorn sheep's back, the hand (as its stack is held, render/frame.ts CARRY_Y; the view
+   * sets a fall from the hand off from where it drew each good in it). */
   fallFrom: 0.6,
   carryAt: 1.2,
 } as const
@@ -129,8 +130,10 @@ export const DROP = { fall: 1.9, land: 0.6, height: 6, mark: { from: 0.12, to: 0
  * A good falling onto a pile (render/falls.ts; the author, 21.10.2026: шерсть должна «падать», а не просто мгновенно
  * появляться рядом): `base` seconds and `perCell` more for each cell it flies, an arc `arc` high, each of one fall
  * `stagger` seconds after the one before; on the ground it hops `hop` high for `bounce` seconds, a little dust going up.
+ * Let go from the hand, goods fall straight down from where they were held, all at once, speeding up by `gravity`
+ * (cells/s²) (the author: «должна падать с того же места где была в момент отпускания»).
  */
-export const FALL = { base: 0.32, perCell: 0.12, arc: 0.45, stagger: 0.09, bounce: 0.22, hop: 0.13 } as const
+export const FALL = { base: 0.32, perCell: 0.12, arc: 0.45, stagger: 0.09, bounce: 0.22, hop: 0.13, gravity: 18 } as const
 
 /**
  * A sheep with no pen roams the own land (the author, 19.10.2026: «овцы вообще просто бегают по всей территории»): to a
@@ -311,24 +314,7 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
 export const MARKET = { x: 16, y: 16, size: 8, ports: [2, 5], keep: 10 } as const
 
 /** Hotbar order; only unlocked tools are shown. */
-export const TOOL_ORDER: readonly BuildingId[] = [
-  'shearer',
-  'belt',
-  'pen',
-  'sheep',
-  'comb',
-  'mower',
-  'feeder',
-  'splitter',
-  'curl',
-  'merger',
-  'bath',
-  'sow',
-  'berry',
-  'dyer',
-  'seeder',
-  'knit',
-]
+export const TOOL_ORDER: readonly BuildingId[] = ['shearer', 'belt', 'pen', 'sheep', 'comb', 'mower', 'feeder', 'splitter', 'curl', 'merger', 'bath', 'sow', 'berry', 'dyer', 'seeder', 'knit']
 export const PRODUCERS: readonly BuildingId[] = ['mower', 'berry']
 /** What a splitter's rule chip cycles through on click; the popup shows only goods the farm has met. */
 export const SPLIT_RULES = ['any', 'wool', 'cwool', 'thread', 'cthread', 'yarn', 'cyarn', 'sweater', 'csweater', 'felt', 'cfelt', 'dye', 'hay', 'sheep', 'off'] as const

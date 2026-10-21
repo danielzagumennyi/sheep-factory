@@ -2,11 +2,15 @@ import { GRID, PILE } from '../balance'
 import { pileAt, pileOk } from '../grid'
 import { Field, GameState, emit, key, res, type Item, type World } from '../world'
 
-/** Where goods fall from (a point on the field and its height), for their fall to be seen (FxEvent 'fall'). */
+/**
+ * Where goods fall from (a point on the field and its height), for their fall to be seen (FxEvent 'fall'). `hand`: let go
+ * from the hand, the n-th of the fall being the n-th in it.
+ */
 export interface FallFrom {
   x: number
   y: number
   h: number
+  hand?: boolean
 }
 
 /**
@@ -47,7 +51,7 @@ export function putPile(w: World, x: number, y: number, items: readonly Item[], 
   const put = items.slice(0, n).map((it) => ({ ...it, p: 0, strayT: 0 }))
   f.piles.set(k, [...pile, ...put])
   res(w, GameState).pileVersion++
-  if (from) put.forEach((it, i) => it.kind !== 'sheep' && emit(w, { kind: 'fall', x, y, slot: pile.length + i, good: it.kind, fx: from.x, fy: from.y, fh: from.h, n: before + i }))
+  if (from) put.forEach((it, i) => it.kind !== 'sheep' && emit(w, { kind: 'fall', x, y, slot: pile.length + i, good: it.kind, fx: from.x, fy: from.y, fh: from.h, n: before + i, hand: from.hand }))
   return put
 }
 
