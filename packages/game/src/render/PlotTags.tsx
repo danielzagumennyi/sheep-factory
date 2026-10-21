@@ -23,7 +23,7 @@ export function PlotTags() {
     const f = res(world, Field),
       gs = res(world, GameState)
     const out: Tag[] = []
-    for (let py = 0; py * GRID.plotH < GRID.roadY; py++)
+    for (let py = 0; py * GRID.plotH < GRID.rows; py++)
       for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
         if (f.plots.has(key(px, py))) continue
         const price = plotPrice(world, px, py)

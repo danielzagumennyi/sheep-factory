@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { BUILDINGS, DROP, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
+import { BUILDINGS, CLIENT, DROP, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
 import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pastureAt, plotPrice, reachOf, terr, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setSeed } from './actions/build'
 import { dropSheep, gather, handClick, pickSheep, sheepAt, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
 import { shearYield } from './systems/machines'
 import { penIn, toRoam } from './systems/sheep'
-import { dockAccept, nearestStall, openAsks, openLevel, sell, sellPrice, buy, buyPrice, stallX } from './systems/village'
+import { dockAccept, openLevel, sell, sellPrice, buy, buyPrice } from './systems/village'
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
-import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, Plant, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
+import { openField, putTerrain, TEST_PEN } from './testing'
+import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -19,7 +20,7 @@ afterEach(() => {
 /** A fresh long game with everything open, plenty of coins and the plots of rows 1–3 bought. */
 /** The first pen, where the sheep roam at the start, with all of them in it (as the game began before they roamed). */
 function penned(w: World) {
-  const p = makePen(w, START.pen.x, START.pen.y, START.pen.dir)
+  const p = makePen(openField(w), TEST_PEN.x, TEST_PEN.y, TEST_PEN.dir)
   res(w, Flock).pastures.push(p)
   for (const s of res(w, Flock).sheep) penIn(w, s, p)
   return w
@@ -52,22 +53,17 @@ function onBelt(w: World, x: number, y: number, kind: Parameters<typeof newItem>
   return b
 }
 const pen0 = (w: World) => res(w, Flock).pastures[0]!
-/** The market's parts: its row beside the field, a stall, the trading post. */
-const part = (w: World, p: 'row' | 'stall' | 'buy') => [...res(w, Plant).b.values()].filter((b) => b.part === p)
-const row = (w: World) => part(w, 'row')[0]!
-/** Every truck that is coming for an open ask, parked at its stall at once. */
-function park(w: World) {
-  for (const t of res(w, Market).trucks)
-    if (t.state === 'arrive' || t.state === 'in') {
-      t.x = t.tx
-      t.lane = 0
-      t.state = 'park'
-    }
-}
-/** Every open ask filled through the market's row, its truck parked first. */
-function fillAll(w: World) {
-  park(w)
-  for (const a of openAsks(w)) while (a.have < a.total) dockAccept(w, row(w), newItem(a.kind), 0)
+/** The market, in the middle of the start. */
+const market = (w: World) => get(w, MARKET.x, MARKET.y)!
+/** Every client fed all it takes until the next level opens: the stock kept full of what they take. */
+function nextLevel(w: World) {
+  const gs = res(w, GameState),
+    level = gs.level
+  for (let i = 0; i < 10 * 60 * 60 && gs.level === level; i++) {
+    for (const n of res(w, Market).needs) res(w, Stock).n[n.kind] = 99
+    stepSimulation(w)
+    res(w, Unlocks).cardQ.length = 0
+  }
 }
 const sheepOf = (w: World) => res(w, Flock).sheep
 
@@ -104,7 +100,7 @@ describe('belts (GDD 4.2)', () => {
 describe('resources and land (GDD 6)', () => {
   it('a producer takes from the nearest owned cell and the empty cell disappears', () => {
     const w = world()
-    // the meadow by the first pen: (19, 11..14) and (17..18, 14)
+    putTerrain(w, 'meadow', [19, 11, 19, 14], [17, 14, 18, 14])
     expect(place(w, 'mower', 20, 15, 0)).toBe(true)
     const m = get(w, 20, 15)!
     const near = reachOf(w, m, 'meadow', true)[0]!
@@ -118,6 +114,7 @@ describe('resources and land (GDD 6)', () => {
   })
   it('the hand gathers one item a click, and only on own land', () => {
     const w = world({ all: false })
+    putTerrain(w, 'meadow', [19, 14, 19, 14], [13, 7, 13, 7])
     expect(gather(w, 19, 14)).toBe(true)
     expect(stockOf(w, 'hay')).toBe(1)
     // the north plots aren't bought yet
@@ -280,14 +277,11 @@ describe('pens and sheep (GDD 5)', () => {
     expect(un.unlocked.size).toBe(0)
     expect(res(w, Flock).pastures).toEqual([])
     expect(sheepOf(w).every((s) => s.state === 'roam' && s.wool === 1)).toBe(true)
-    // the market takes goods from the start; its trading post comes only at its level
-    expect(row(w)).toBeTruthy()
-    expect(part(w, 'stall').length).toBe(MARKET.stalls.length)
-    expect(part(w, 'buy')).toEqual([])
+    // the market takes goods from the start; trade comes only at its level
+    expect(market(w).type).toBe('dock')
     expect(gs.trade).toBe(false)
-    // shorn by hand, the wool goes to the stock and the post's truck takes it from there: the pen's level opens
-    park(w)
-    for (let n = 0; n < 60 && gs.level === 0; n++) {
+    // shorn by hand, the wool goes to the stock and the post takes it from there: the pen's level opens
+    for (let n = 0; n < 300 && gs.level === 0; n++) {
       for (const s of sheepOf(w)) if (s.wool >= 1) for (let i = 0; i < 3; i++) shearClick(w, s)
       run(w, 1)
     }
@@ -309,7 +303,6 @@ describe('pens and sheep (GDD 5)', () => {
     expect(sell(w, 'wool', 5)).toBe(0)
     openLevel(w, LEVELS.findIndex((L) => L.open.includes('market')))
     expect(gs.trade).toBe(true)
-    expect(part(w, 'buy').length).toBe(1)
     expect(sell(w, 'wool', 5)).toBe(5)
   })
   it('a sheep with no pen roams the own land: round buildings and pens, over belts, never off its land; built over, it runs off', () => {
@@ -335,6 +328,8 @@ describe('pens and sheep (GDD 5)', () => {
     }
     // built over, it runs to the nearest free ground at once
     const [x, y] = [Math.floor(s.px), Math.floor(s.py)]
+    // (it may graze on a meadow: the mower stands on bare grass)
+    for (const k of [key(x, y), key(x + 1, y), key(x, y + 1), key(x + 1, y + 1)]) res(w, Field).terrain.delete(k)
     if (!get(w, x, y)) expect(place(w, 'mower', x, y, 0)).toBe(true)
     stepSimulation(w)
     expect(get(w, Math.floor(s.px), Math.floor(s.py))).toBeFalsy()
@@ -585,7 +580,8 @@ describe('the salon (GDD 5)', () => {
   })
   it('the bath stands only by water', () => {
     const w = world()
-    expect(whyNot(w, 'bath', 16, 16, 0)).toBe('needWater')
+    putTerrain(w, 'water', [22, 16, 23, 17])
+    expect(whyNot(w, 'bath', 24, 6, 0)).toBe('needWater')
     expect(whyNot(w, 'bath', 19, 16, 0)).toBe('')
   })
   it('shearing by hand gives what the shearer would', () => {
@@ -614,13 +610,13 @@ describe('building', () => {
     const c0 = res(w, GameState).coins
     place(w, 'feeder', 16, 16, 0)
     const c1 = res(w, GameState).coins
-    place(w, 'feeder', 16, 18, 0)
+    place(w, 'feeder', 16, 13, 0)
     expect(c0 - c1).toBe(c1 - res(w, GameState).coins)
     const m = get(w, 16, 16)!
     m.inv.hay = 3
     const hay = stockOf(w, 'hay')
     remove(w, 16, 16)
-    remove(w, 16, 18)
+    remove(w, 16, 13)
     expect(res(w, GameState).coins).toBe(c0)
     expect(stockOf(w, 'hay')).toBe(hay + 3)
   })
@@ -632,15 +628,13 @@ describe('building', () => {
     const c0 = res(w, GameState).coins
     expect(liftUp(w, m)).toBe(true)
     expect(putDown(w, 16, 40, 0)).toBe(false)
-    expect(putDown(w, 16, 18, 1)).toBe(true)
-    expect(get(w, 17, 19)).toBe(m)
+    expect(putDown(w, 16, 13, 1)).toBe(true)
+    expect(get(w, 17, 14)).toBe(m)
     expect(m.inv.hay).toBe(3)
     expect(res(w, GameState).coins).toBe(c0)
     liftUp(w, m)
     putBack(w)
-    expect(get(w, 16, 18)).toBe(m)
-    const dock = [...res(w, Plant).b.values()].find((q) => q.type === 'dock')!
-    expect(liftUp(w, dock)).toBe(false)
+    expect(get(w, 16, 13)).toBe(m)
   })
   it('a mower stands anywhere, a berry picker only by bushes', () => {
     const w = world()
@@ -668,110 +662,102 @@ describe('building', () => {
   })
 })
 
-describe('the village (GDD 7–8)', () => {
-  it('an ask pays its price for each one; when all of a level are done the next opens one thing', () => {
+describe('the market and its clients (GDD 7–8)', () => {
+  it('the market stands fixed in the middle of the start, takes a good from a belt on any side, and no sheep', () => {
+    const w = startWorld({ seed: 1 })
+    worlds.push(w)
+    const m = market(w)
+    expect([m.type, m.x, m.y, m.w, m.h]).toEqual(['dock', MARKET.x, MARKET.y, MARKET.size, MARKET.size])
+    expect(get(w, MARKET.x + MARKET.size - 1, MARKET.y + MARKET.size - 1)).toBe(m)
+    for (let y = MARKET.y; y < MARKET.y + MARKET.size; y++) for (let x = MARKET.x; x < MARKET.x + MARKET.size; x++) expect(owned(w, x, y), `${x},${y}`).toBe(true)
+    expect(remove(w, MARKET.x, MARKET.y)).toBe(false)
+    expect(liftUp(w, m)).toBe(false)
+    expect(whyNot(w, 'belt', MARKET.x + 2, MARKET.y + 2, 0)).toBe('taken')
+    // a belt on each side hands its goods in (the plots north of it bought first)
+    res(w, Unlocks).unlocked.add('belt')
+    res(w, Field).plots.add(key(1, 1)).add(key(2, 1))
+    const sides: [number, number, Dir][] = [
+      [MARKET.x - 1, MARKET.y + 2, 0],
+      [MARKET.x + MARKET.size, MARKET.y + 3, 2],
+      [MARKET.x + 2, MARKET.y - 1, 1],
+      [MARKET.x + 4, MARKET.y + MARKET.size, 3],
+    ]
+    for (const [x, y, d] of sides) {
+      expect(place(w, 'belt', x, y, d, true), `${x},${y}`).toBe(true)
+      onBelt(w, x, y, 'thread')
+    }
+    res(w, Fx).q.length = 0
+    stepSimulation(w)
+    expect(stockOf(w, 'thread')).toBe(4)
+    expect(res(w, Fx).q.filter((e) => e.kind === 'deliver').length).toBe(4)
+    // a sheep is not taken: it waits on its belt
+    const [x, y] = sides[0]!
+    onBelt(w, x, y, 'sheep', sheepOf(w)[0])
+    stepSimulation(w)
+    expect(get(w, x, y)!.item?.kind).toBe('sheep')
+  })
+  it('a client takes its good from the stock so many a minute and pays its price; fed less it is never content, fed all it is', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
     res(w, Unlocks).cardQ.length = 0
-    const a = openAsks(w)[0]!
-    const c0 = res(w, GameState).coins
-    fillAll(w)
-    expect(res(w, GameState).coins - c0).toBe(a.total * ITEMS.wool.price)
-    expect(res(w, GameState).level).toBe(1)
+    const gs = res(w, GameState)
+    const n = res(w, Market).needs[0]!
+    expect([n.client, n.kind, n.rate]).toEqual([...LEVELS[0]!.needs[0]!])
+    // three in the stock: taken one by one at its rate, each paid in full
+    res(w, Stock).n.wool = 3
+    const c0 = gs.coins
+    res(w, Fx).q.length = 0
+    run(w, (3 * 60) / n.rate + 0.1)
+    expect(stockOf(w, 'wool')).toBe(0)
+    expect(gs.coins - c0).toBe(3 * ITEMS.wool.price)
+    expect(res(w, Fx).q.filter((e) => e.kind === 'take').length).toBe(3)
+    // fed half of what it takes, its bar settles about half way: never content, the level stays
+    for (let t = 0; t < 300; t += (2 * 60) / n.rate) {
+      res(w, Stock).n.wool = 1
+      run(w, (2 * 60) / n.rate)
+    }
+    expect(n.fill).toBeGreaterThan(0.3)
+    expect(n.fill).toBeLessThan(0.7)
+    expect(gs.level).toBe(0)
+    // fed all it takes it is content within about three times CLIENT.fillSec, and the next level opens one new thing
+    const t0 = gs.clock
+    nextLevel(w)
+    expect(gs.level).toBe(1)
+    expect(gs.clock - t0).toBeLessThan(CLIENT.fillSec * 4)
     expect(res(w, Unlocks).unlocked.has(LEVELS[1]!.open[0] as BuildingId)).toBe(true)
   })
-  it('a good no truck takes waits in the stock, up to a truckload; a parked truck takes its good from the stock by itself', () => {
+  it('a client once come never leaves: each level brings a new one or more for the old, every bar empty again', () => {
+    const w = startWorld({ seed: 1 })
+    worlds.push(w)
+    for (let i = 1; i < LEVELS.length + 2; i++) {
+      const before = res(w, Market).needs.map((q) => ({ ...q }))
+      for (const q of res(w, Market).needs) q.fill = 1
+      openLevel(w, i)
+      res(w, Unlocks).cardQ.length = 0
+      const after = res(w, Market).needs
+      for (const b of before) expect(after.find((q) => q.client === b.client && q.kind === b.kind)!.rate, `level ${i + 1}: ${b.client}`).toBeGreaterThanOrEqual(b.rate)
+      // every level asks more than the one before: a new client or more of the old
+      expect(after.length + after.reduce((a, q) => a + q.rate, 0), `level ${i + 1}`).toBeGreaterThan(before.length + before.reduce((a, q) => a + q.rate, 0))
+      expect(after.every((q) => q.fill === 0)).toBe(true)
+    }
+  })
+  it('a good past what the stock keeps for the clients is sold at once for a quarter', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
     const gs = res(w, GameState),
-      a = openAsks(w)[0]!
+      m = market(w)
     const c0 = gs.coins
-    // nobody asks for felt: it goes to the stock, to the stall nearest to where it came, and earns nothing
-    dockAccept(w, row(w), newItem('felt'), 25)
+    res(w, Fx).q.length = 0
+    expect(dockAccept(w, m, newItem('felt'), MARKET.x, MARKET.y + 1, 0)).toBe(true)
     expect(stockOf(w, 'felt')).toBe(1)
     expect(gs.coins).toBe(c0)
-    expect(res(w, Fx).q).toContainEqual({ kind: 'deliver', x: 25, good: 'felt', stall: nearestStall(25), truck: false })
-    // past MARKET.keep of it the market sells it at once, for a quarter: a farm never runs out of coins
+    expect(res(w, Fx).q).toContainEqual({ kind: 'deliver', x: MARKET.x, y: MARKET.y + 1, fx: MARKET.x - 1, fy: MARKET.y + 1, good: 'felt' })
     res(w, Stock).n.felt = MARKET.keep
-    dockAccept(w, row(w), newItem('felt'), 25)
+    dockAccept(w, m, newItem('felt'), MARKET.x, MARKET.y + 1, 0)
     expect(stockOf(w, 'felt')).toBe(MARKET.keep)
     expect(gs.coins - c0).toBe(sellPrice('felt'))
-    res(w, Stock).n.felt = 1
-    // the post's truck is still on its way: its wool waits in the stock too
-    dockAccept(w, row(w), newItem('wool'), 3)
-    dockAccept(w, row(w), newItem('wool'), 3)
-    expect(a.have).toBe(0)
-    expect(stockOf(w, 'wool')).toBe(2)
-    // once it is parked it takes them, a few a second, at the full price
-    for (let i = 0; i < 20 * 60 && !res(w, Market).trucks.some((t) => t.state === 'park'); i++) stepSimulation(w)
-    run(w, 1)
-    expect(a.have).toBe(2)
-    expect(stockOf(w, 'wool')).toBe(0)
-    expect(gs.coins - c0).toBe(sellPrice('felt') + 2 * ITEMS.wool.price)
-    expect(res(w, Fx).q.filter((e) => e.kind === 'load' && e.stall === a.stall && e.good === 'wool').length).toBe(2)
   })
-  it('the row beside the field takes goods anywhere; past it four stalls and the trading post, none on the field', () => {
-    const w = startWorld({ seed: 1 })
-    worlds.push(w)
-    const gs = res(w, GameState)
-    const m = row(w)
-    expect([m.x, m.y, m.w]).toEqual([0, GRID.roadY, res(w, Field).right])
-    for (const x of [0, 7, res(w, Field).right - 1]) expect(get(w, x, GRID.roadY)).toBe(m)
-    // the stalls stand past the row, each its own
-    const stalls = part(w, 'stall')
-    expect(stalls.map((b) => b.x)).toEqual([...MARKET.stalls])
-    for (const b of stalls) {
-      expect(b.y).toBe(GRID.roadY + 1)
-      expect(get(w, b.x + MARKET.stallW - 1, b.y + MARKET.rows - 1)).toBe(b)
-    }
-    // a belt coming down anywhere along the row hands its wool over; the truck parked for it takes it
-    res(w, Unlocks).unlocked.add('belt')
-    res(w, Field).plots.add(key(0, 3))
-    const a = openAsks(w)[0]!
-    expect(a.kind).toBe('wool')
-    park(w)
-    place(w, 'belt', 3, 19, 1, true)
-    onBelt(w, 3, 19, 'wool')
-    const c0 = gs.coins
-    stepSimulation(w)
-    expect(a.have).toBe(1)
-    expect(gs.coins - c0).toBe(ITEMS.wool.price)
-    expect(res(w, Fx).q).toContainEqual({ kind: 'deliver', x: 3, good: 'wool', stall: a.stall, truck: true })
-  })
-  it('each ask has a stall of its own and its truck parks there; a new level takes the stalls no truck stands at', () => {
-    const w = startWorld({ seed: 1 })
-    worlds.push(w)
-    const gs = res(w, GameState)
-    for (let n = 0; n < 12; n++) {
-      res(w, Unlocks).cardQ.length = 0
-      const asks = openAsks(w)
-      expect(new Set(asks.map((a) => a.stall)).size).toBe(asks.length)
-      for (const a of asks) expect(res(w, Market).trucks.find((t) => t.ask === a.id)!.tx).toBe(stallX(a.stall) - 0.5)
-      // the asks done one by one, as a farm does them: a truck drives off when its ask is done
-      const level = gs.level
-      for (const a of asks) {
-        park(w)
-        while (a.have < a.total) dockAccept(w, row(w), newItem(a.kind), 0)
-        if (gs.level === level) run(w, 3)
-      }
-      expect(gs.level).toBe(level + 1)
-      // the last truck of the level is still at its stall: the next asks go to others
-      const leaving = res(w, Market).trucks.filter((t) => t.state === 'out').map((t) => t.tx)
-      for (const a of openAsks(w)) expect(leaving).not.toContain(stallX(a.stall) - 0.5)
-      run(w, 3)
-    }
-  })
-  it('a truck waiting a gap behind one pulling out of its stall gets the stall: neither waits for the other', () => {
-    const w = startWorld({ seed: 1 })
-    worlds.push(w)
-    const m = res(w, Market)
-    const t = m.trucks[0]!
-    Object.assign(t, { x: t.tx, lane: 0, state: 'out' })
-    m.trucks.push({ ask: 999, x: t.tx - 1.6, tx: t.tx, state: 'arrive', lane: 1 })
-    run(w, 10)
-    expect(m.trucks.find((q) => q.ask === 999)!.state).toBe('park')
-  })
-  it('the endless mode: everything open from the start, the island whole, no card; coins and asks as in the long game, without end', () => {
+  it('the endless mode: everything open from the start, the island whole, no card; coins and clients as in the long game, without end', () => {
     const w = startWorld({ seed: 1, endless: true })
     worlds.push(w)
     const un = res(w, Unlocks),
@@ -781,19 +767,17 @@ describe('the village (GDD 7–8)', () => {
     for (const t of TOOL_ORDER) expect(un.unlocked.has(t), t).toBe(true)
     expect(gs.trade && gs.food).toBe(true)
     expect([f.top, f.right]).toEqual([0, GRID.cols])
-    expect(row(w).w).toBe(GRID.cols)
-    expect(part(w, 'buy').length).toBe(1)
     expect(un.cardQ).toEqual([])
     expect(gs.coins).toBe(START.coins)
     expect(gs.level).toBe(0)
     // the levels go on past the table, and no card comes — the chapter's neither
     while (gs.level <= LEVELS.length) {
-      fillAll(w)
+      nextLevel(w)
       expect(un.cardQ).toEqual([])
     }
-    expect(openAsks(w).length).toBeGreaterThan(0)
+    expect(res(w, Market).needs.length).toBeGreaterThan(0)
   })
-  it('the trading post buys from the stock for a quarter and sells at twice the price', () => {
+  it("trade in the market's window sells from the stock for a quarter and buys at twice the price", () => {
     const w = world()
     res(w, Stock).n.yarn = 4
     const c0 = res(w, GameState).coins
@@ -803,24 +787,20 @@ describe('the village (GDD 7–8)', () => {
     expect(res(w, GameState).coins - c0).toBe(4 * sellPrice('yarn') - 3 * buyPrice('hay'))
     expect(stockOf(w, 'hay')).toBe(3)
   })
-  it('the island grows at its levels: east twice, the market row with it, then the far row', () => {
+  it('the island grows at its levels: east twice, then the far row', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
     const gs = res(w, GameState),
       f = res(w, Field)
     for (const g of ISLAND_GROW) {
       // finish levels until the one where the island grows
-      while (gs.level + 1 < g.level) fillAll(w)
+      while (gs.level + 1 < g.level) nextLevel(w)
       expect(f.top).toBe(g.top ?? f.top)
       expect(f.right).toBe(g.right ?? f.right)
-      expect(row(w).w).toBe(f.right)
-      expect(res(w, Unlocks).cardQ).toContain('island')
-      res(w, Unlocks).cardQ.length = 0
+      expect(res(w, Unlocks).seen.has('island') || res(w, Unlocks).cardQ.includes('island')).toBe(true)
     }
     expect(f.top).toBe(0)
     expect(f.right).toBe(GRID.cols)
-    expect(res(w, Market).asks.length).toBeGreaterThan(0)
-    void GRID
   })
 })
 
@@ -830,16 +810,20 @@ describe('systems (TDD 3)', () => {
     const w = startWorld({ seed: 1, systems: DEMO })
     worlds.push(w)
     const gs = res(w, GameState)
-    const ask = openAsks(w)[0]!
-    const d = row(w)
+    const m = market(w)
     const coins = gs.coins
-    // a dock takes what comes, and nothing is counted: no coins, no level, no card
-    for (let i = 0; i < ask.total; i++) expect(dockAccept(w, d, newItem(ask.kind))).toBe(true)
-    expect(ask.have).toBe(0)
+    // the market takes what comes, and nothing is counted: no stock, no coins, no level, no card
+    for (let i = 0; i < 5; i++) expect(dockAccept(w, m, newItem('wool'), MARKET.x, MARKET.y, 0)).toBe(true)
+    expect(stockOf(w, 'wool')).toBe(0)
     expect(gs.coins).toBe(coins)
     expect(gs.level).toBe(0)
-    // the goods still slide along the chute to the stalls, for the eye
-    expect(res(w, Fx).q.filter((e) => e.kind === 'deliver').length).toBe(ask.total)
+    // the goods still hop in, for the eye
+    expect(res(w, Fx).q.filter((e) => e.kind === 'deliver').length).toBe(5)
+    res(w, Fx).q.length = 0
+    // no client takes anything: their system is off
+    res(w, Stock).n.wool = 5
+    for (let i = 0; i < 600; i++) stepSimulation(w)
+    expect(stockOf(w, 'wool')).toBe(5)
     res(w, Fx).q.length = 0
     // no numbers float up and no sound plays; a wool puff still does
     float(w, 1, 1, '+3')
@@ -848,17 +832,17 @@ describe('systems (TDD 3)', () => {
     expect(res(w, Fx).q.map((e) => e.kind)).toEqual(['puff'])
     // the farm still works: a good rides its belt; with the belts off it stands
     res(w, Unlocks).unlocked.add('belt')
-    place(w, 'belt', 12, 15, 0, true)
-    place(w, 'belt', 13, 15, 0, true)
-    const b = get(w, 12, 15)!
+    place(w, 'belt', 21, 15, 0, true)
+    place(w, 'belt', 22, 15, 0, true)
+    const b = get(w, 21, 15)!
     b.item = newItem('wool')
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 13, 15)!.item?.kind).toBe('wool')
+    expect(get(w, 22, 15)!.item?.kind).toBe('wool')
     res(w, Systems).on.delete('belts')
-    const it = get(w, 13, 15)!.item!
+    const it = get(w, 22, 15)!.item!
     const p = it.p
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 13, 15)!.item).toBe(it)
+    expect(get(w, 22, 15)!.item).toBe(it)
     expect(it.p).toBe(p)
   })
 })

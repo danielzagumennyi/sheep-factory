@@ -30,7 +30,7 @@ export function buildStress(w: World, opts: { sheep?: number } = {}) {
     gs = res(w, GameState)
   gs.coins += 100_000
   let n = 0
-  for (let py = 0; (py + 1) * GRID.plotH <= GRID.roadY; py++)
+  for (let py = 0; (py + 1) * GRID.plotH <= GRID.rows; py++)
     for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
       const x0 = px * GRID.plotW,
         y0 = py * GRID.plotH,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BATH_YIELD, COLORED, ISLAND_START, ITEMS, LEVELS, MARKET, SHEAR_YIELD, TOOL_ORDER } from './balance'
+import { BATH_YIELD, COLORED, GRID, ISLAND_START, ITEMS, LEVELS, MARKET, SHEAR_YIELD, TOOL_ORDER } from './balance'
 
 describe('the village (GDD 7–8)', () => {
   it('every level opens at most one thing (and one more once it is placed), and every building opens once', () => {
@@ -24,12 +24,16 @@ describe('the village (GDD 7–8)', () => {
     expect(at('market')).toBeGreaterThan(at('sheep'))
     expect(at('feeder')).toBeGreaterThan(at('mower'))
   })
-  it('the market has a stall for every ask of a level and one more; stalls and trading post stand apart on the first island', () => {
-    expect(Math.max(...LEVELS.map((L) => L.asks.length))).toBeLessThan(MARKET.stalls.length)
-    const spans = [[MARKET.buyX, MARKET.buyW] as const, ...MARKET.stalls.map((x) => [x, MARKET.stallW] as const)].sort((a, b) => a[0] - b[0])
-    for (let i = 1; i < spans.length; i++) expect(spans[i]![0] - (spans[i - 1]![0] + spans[i - 1]![1]), 'a truck length between').toBeGreaterThanOrEqual(2)
-    expect(spans[0]![0]).toBeGreaterThanOrEqual(0)
-    expect(spans.at(-1)![0] + spans.at(-1)![1]).toBeLessThanOrEqual(ISLAND_START.right)
+  it('the market stands in the middle of the land the game starts on, with room round it; it has a sign for every client', () => {
+    expect(MARKET.x).toBeGreaterThanOrEqual(2)
+    expect(MARKET.y).toBeGreaterThanOrEqual(ISLAND_START.top + 2)
+    expect(MARKET.x + MARKET.size).toBeLessThanOrEqual(ISLAND_START.right - 2)
+    expect(MARKET.y + MARKET.size).toBeLessThanOrEqual(GRID.rows - 2)
+    const clients = new Set(LEVELS.flatMap((L) => L.needs.map(([c, g]) => c + g)))
+    expect(clients.size).toBeLessThanOrEqual(8)
+    // a client once come stays in every later level, at no lower a rate
+    for (let i = 1; i < LEVELS.length; i++)
+      for (const [c, g, n] of LEVELS[i - 1]!.needs) expect(LEVELS[i]!.needs.find((q) => q[0] === c && q[1] === g)?.[2], `level ${i + 1}: ${c}`).toBeGreaterThanOrEqual(n)
   })
 })
 

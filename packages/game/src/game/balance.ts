@@ -8,22 +8,22 @@ import { RECT, type Spot } from './land'
 // ---------------------------------------------------------------- world (GDD 2)
 
 /**
- * The field: 48×25 cells, cut into 8×5 plots; row ROAD_Y holds the docks, the two road lanes run below it. Only part
- * of it is the island at the start (ISLAND_START): the rest is under the sky until the island grows (ISLAND_GROW).
+ * The field: 48×20 cells, cut into 8×5 plots, with the market in the middle of the land the game starts on (MARKET).
+ * Only part of it is the island at the start (ISLAND_START): the rest is under the sky until the island grows
+ * (ISLAND_GROW).
  */
-export const GRID = { cols: 48, rows: 25, plotW: 8, plotH: 5, roadY: 20 } as const
+export const GRID = { cols: 48, rows: 20, plotW: 8, plotH: 5 } as const
 /** The island at the start: the rows from `top` down, the columns left of `right`. */
 export const ISLAND_START = { top: GRID.plotH, right: 32 } as const
-/** One growth of the island: its new edge, and the docks that come with the land by the road. */
+/** One growth of the island: its new edge. */
 export interface GrowDef {
   level: number
   top?: number
   right?: number
 }
 /**
- * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), at these village levels: twice
- * a column of plots rises in the east, along the road — the market's row grows with it, so a farm there sends its goods
- * straight down; then the far row. The new plots hold fresh deposits, for sale.
+ * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), at these levels: twice a
+ * column of plots rises in the east, then the far row. The new plots hold fresh deposits, for sale.
  */
 export const ISLAND_GROW: readonly GrowDef[] = [
   { level: 7, right: 40 },
@@ -162,8 +162,8 @@ export type ItemId = 'wool' | 'cwool' | 'thread' | 'cthread' | 'yarn' | 'cyarn' 
 /**
  * Base prices. One sheep shorn gives 6 coins of wool, 10 of thread, 16 of yarn, 24 of a sweater: each station it
  * passed is worth more than the time it takes, so a longer loop pays. Colour adds more than the dye it takes; felt
- * pays a little more than thread for the water it needs. A truck pays the full price for its ask; the market pays a
- * quarter.
+ * pays a little more than thread for the water it needs. A client pays the full price for each one it takes; the
+ * market pays a quarter for one nobody wants.
  */
 export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
   hay: { price: 1 },
@@ -181,9 +181,9 @@ export const ITEMS: Readonly<Record<ItemId, { price: number }>> = {
 }
 /** Each plain good shorn and the coloured one a sheep from the dye station gives instead. */
 export const COLORED: Readonly<Partial<Record<ItemId, ItemId>>> = { wool: 'cwool', thread: 'cthread', yarn: 'cyarn', sweater: 'csweater', felt: 'cfelt' }
-/** What the trading post pays for a good from the stock, as a share of its price. */
+/** What the market pays for a good nobody wants (sold from the stock, or past MARKET.keep), as a share of its price. */
 export const MARKET_SHARE = 0.25
-/** The trading post sells anything at this many times a good's price, so buying never pays for an ask (the author: «как продавать так и покупать»). */
+/** The market's trade sells anything at this many times a good's price, so feeding a client bought goods never pays (the author: «как продавать так и покупать»). */
 export const BUY_SHARE = 2
 
 export type BuildingId = 'belt' | 'pen' | 'sheep' | 'shearer' | 'feeder' | 'dyer' | 'comb' | 'curl' | 'knit' | 'bath' | 'mower' | 'berry' | 'seeder' | 'splitter' | 'merger' | 'sow'
@@ -268,16 +268,14 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
   return dir % 2 === 0 ? [l, w] : [w, l]
 }
 /**
- * The market (the author, 18.10.2026: «пусть рынок будет как основная точка куда игрок приносит товар», then «поменяй
- * местами дорогу с лавками … лавок где-то 4, и не как один объект, а 4 разных»): the row beside the field takes goods
- * in — a belt brought to any of its cells hands them over, and they ride its chute to a stall. Past the chute, `rows`
- * deep, stand four stalls (their left columns), each a bay where one truck parks and is loaded, and the trading post
- * at the west end, where the player buys; the road runs past them along the island's edge. A good no truck takes waits
- * in the stock (the author: «ждёт машину») while it holds fewer than `keep` of it — past that the market sells it for a
- * quarter, so a farm is never left without coins before trade opens. A parked truck takes its good from the stock at
- * `loadRate` a second.
+ * The market (the author, 21.10.2026: «большой рынок куда будут идти все товары», «в центре»): one building of
+ * `size`×`size` cells with its top-left cell at (x, y), in the middle of the land the game starts on, like the tower of
+ * Tower Factory. A belt brought to any of its sides, or a machine's way out facing it, hands it its goods; they go into
+ * the stock, where the clients take them (CLIENT). The stock keeps up to `keep` of each good that comes by belt — past
+ * that the market sells it at once for a quarter, so no line ever jams, and no farm can pile up one good and turn its
+ * line to another: the clients must be fed all the time.
  */
-export const MARKET = { row: GRID.roadY, rows: 2, stalls: [8, 14, 20, 26], stallW: 3, buyX: 2, buyW: 3, loadRate: 6, keep: 40 } as const
+export const MARKET = { x: 12, y: 10, size: 8, keep: 10 } as const
 
 /** Hotbar order; only unlocked tools are shown. */
 export const TOOL_ORDER: readonly BuildingId[] = [
@@ -301,19 +299,6 @@ export const TOOL_ORDER: readonly BuildingId[] = [
 export const PRODUCERS: readonly BuildingId[] = ['mower', 'berry']
 /** What a splitter's rule chip cycles through on click; the popup shows only goods the farm has met. */
 export const SPLIT_RULES = ['any', 'wool', 'cwool', 'thread', 'cthread', 'yarn', 'cyarn', 'sweater', 'csweater', 'felt', 'cfelt', 'dye', 'hay', 'sheep', 'off'] as const
-
-// ---------------------------------------------------------------- road (GDD 7)
-
-export const ROAD = {
-  /** The road's first row, past the stalls; lane centres (grid rows): trucks park on A, by the stalls, and drive on B, by the island's edge. */
-  row: MARKET.row + 1 + MARKET.rows,
-  laneA: MARKET.row + 1 + MARKET.rows + 0.5,
-  laneB: MARKET.row + 1 + MARKET.rows + 1.5,
-  gap: 1.6,
-  arriveSpeed: 4,
-  leaveSpeed: 5,
-  laneSpeed: 2,
-} as const
 
 // ---------------------------------------------------------------- camera and look (render only)
 
@@ -440,11 +425,6 @@ export const LOOK = {
   lip: '#8abe30',
   /** The cell grid, shown only while building. */
   grid: 'rgba(10, 40, 0, 0.7)',
-  road: '#9a97aa',
-  roadLine: '#fff6e0',
-  curb: '#ece6da',
-  dockRow: '#eee6d4',
-  dockTile: '#b9a585',
   meadow: '#b6dc6a',
   meadowBase: '#7db349',
   meadowEar: '#f4c84a',
@@ -471,8 +451,6 @@ export const LOOK = {
   reel: '#e5503f',
   /** Wing colours of the butterflies. */
   butterflies: ['#ffd54a', '#f37ab6', '#7fb8f5', '#ffffff', '#b884f0'],
-  /** Pastel paving of the dock row. */
-  paving: ['#ecdfc5', '#e2d2b2', '#f1e8d4'],
   rockDark: '#7f8a96',
   /** Water, as the references draw it: opaque candy blue, a pale edge of foam and shallows, darker where it is deep. */
   water: '#5bbffa',
@@ -521,6 +499,25 @@ export const LOOK = {
   /** A bought sheep's parachute (DROP): its red gores between white ones, and its cords. */
   chute: '#e8596f',
   chuteCord: '#f4ede4',
+  /**
+   * The market's hall (render/models.ts `marketHall`): its plinth and the pastel tiles round the hall, walls, the inside
+   * seen through a door, the striped awning all round (its two colours), the top roof and its eaves' band, the coin on
+   * top; the boards of the clients' signs.
+   */
+  marketStone: '#d9cfbf',
+  marketTiles: ['#ecdfc5', '#e2d2b2', '#f1e8d4'] as const,
+  marketWall: '#fff8ec',
+  marketInside: '#8a6450',
+  marketAwning: ['#f2877a', '#fff5e6'] as const,
+  marketRoof: '#7ccfc0',
+  marketRoofEave: '#58b3a4',
+  marketCoin: '#f5c542',
+  signBoard: '#fff8ea',
+  /** Each client's colour: its sign's frame, its row in the HUD. */
+  client: { post: '#5b8fd6', shop: '#e0607e', atelier: '#9b6fd6', cobbler: '#b0794a', school: '#f2b84b', fair: '#e2553f' } as Record<ClientId, string>,
+  /** The bar of a client's contentment, and its track. */
+  barFill: '#5cc76a',
+  barFull: '#3fbf5a',
   /** The spot on the grass where a bought sheep will land. */
   dropMark: '#2f5214',
   hay: '#e2c15e',
@@ -546,14 +543,12 @@ export const LOOK = {
   /** A sown cell while it grows: little shoots on dark soil. */
   sprout: '#8fd65a',
   sproutSoil: '#b48857',
-  truck: '#f1f4f8',
-  truckCab: '#dd4379',
 } as const
 
 // ---------------------------------------------------------------- the village (GDD 7–8)
 
 export type ClientId = 'post' | 'shop' | 'atelier' | 'cobbler' | 'school' | 'fair'
-/** The clients, each with its truck, in the order the village meets them. */
+/** The market's clients (GDD 7), in the order the game meets them; each has its sign on the market hall. */
 export const CLIENT_ORDER: readonly ClientId[] = ['post', 'shop', 'atelier', 'cobbler', 'school', 'fair']
 
 /** «Новое» cards: one per thing a level opens (its id), and a few hints; `shear` is the first level's, shearing by hand. */
@@ -564,131 +559,58 @@ export type OpenId = BuildingId | 'market' | 'shear'
 export const ONCE_CARDS: readonly CardId[] = ['land']
 
 /**
- * The village, level by level (docs/05-REWORK.md, section 6): what opens at its start — one thing, with its card — and
- * what the clients ask. A level is done when every ask is (the economy model showed why: by coins alone raw wool
- * would do). A client whose ask is done takes more of anything at the market's price.
+ * The levels (GDD 8): what opens at the start of each — one thing, with its card — and what the clients take from then
+ * on, in goods a minute (the author, 21.10.2026: постоянные клиенты). A client once come never leaves: each level lists
+ * every client's need, the old ones at their new rate. A level is done when every client is content at once (CLIENT).
  *
  * Every part of the game comes in its turn (the author, 17.10.2026): the first level teaches shearing by hand only —
  * the sheep roam, nothing to build (the author, 19.10.2026); then the pen they are carried into; then the shearer on
- * its way out, and once it stands the belt that brings the sheep back (`after`). Buying sheep comes apart, the
- * trading post later, and food only with the feeder: until then a shorn sheep grows its fleece by itself. The salon's
- * stations come one by one, each with a client for what it makes (the author's salon, 19.10.2026).
+ * its way out, and once it stands the belt that brings the sheep back (`after`). Buying sheep comes apart, trade
+ * later, and food only with the feeder: until then a shorn sheep grows its fleece by itself. The salon's stations
+ * come one by one, each with the client for what it makes (the author's salon, 19.10.2026).
  */
 export interface LevelDef {
   open: readonly OpenId[]
   /** One more thing within the level, once the player has placed the first (the belt, after the shearer). */
   after?: { placed: BuildingId; open: BuildingId }
-  asks: readonly (readonly [ClientId, ItemId, number])[]
+  /** Each client's good and how many it takes a minute. */
+  needs: readonly (readonly [ClientId, ItemId, number])[]
 }
+const POST = (n: number) => ['post', 'wool', n] as const,
+  SHOP = (n: number) => ['shop', 'thread', n] as const,
+  ATELIER = (n: number) => ['atelier', 'yarn', n] as const,
+  COBBLER = (n: number) => ['cobbler', 'felt', n] as const,
+  SCHOOL = (n: number) => ['school', 'cwool', n] as const,
+  FAIR = (n: number) => ['fair', 'sweater', n] as const
 export const LEVELS: readonly LevelDef[] = [
-  { open: ['shear'], asks: [['post', 'wool', 10]] },
-  { open: ['pen'], asks: [['post', 'wool', 20]] },
-  { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, asks: [['post', 'wool', 30]] },
-  { open: ['sheep'], asks: [['post', 'wool', 40]] },
-  {
-    open: ['comb'],
-    asks: [
-      ['post', 'wool', 40],
-      ['shop', 'thread', 12],
-    ],
-  },
-  {
-    open: ['market'],
-    asks: [
-      ['post', 'wool', 60],
-      ['shop', 'thread', 16],
-    ],
-  },
-  {
-    open: ['mower'],
-    asks: [
-      ['post', 'wool', 70],
-      ['shop', 'hay', 40],
-    ],
-  },
-  {
-    open: ['feeder'],
-    asks: [
-      ['post', 'wool', 80],
-      ['shop', 'thread', 20],
-    ],
-  },
-  {
-    open: ['splitter'],
-    asks: [
-      ['post', 'wool', 100],
-      ['shop', 'thread', 24],
-    ],
-  },
-  {
-    open: ['curl'],
-    asks: [
-      ['shop', 'thread', 30],
-      ['atelier', 'yarn', 16],
-    ],
-  },
-  {
-    open: ['merger'],
-    asks: [
-      ['post', 'wool', 150],
-      ['atelier', 'yarn', 24],
-    ],
-  },
-  {
-    open: ['bath'],
-    asks: [
-      ['shop', 'thread', 40],
-      ['cobbler', 'felt', 16],
-    ],
-  },
-  {
-    open: ['sow'],
-    asks: [
-      ['post', 'wool', 160],
-      ['atelier', 'yarn', 30],
-      ['cobbler', 'felt', 20],
-    ],
-  },
-  {
-    open: ['berry'],
-    asks: [
-      ['school', 'dye', 24],
-      ['shop', 'thread', 40],
-    ],
-  },
-  {
-    open: ['dyer'],
-    asks: [
-      ['school', 'cwool', 30],
-      ['atelier', 'yarn', 30],
-    ],
-  },
-  {
-    open: ['seeder'],
-    asks: [
-      ['school', 'cyarn', 12],
-      ['cobbler', 'felt', 16],
-      ['post', 'wool', 120],
-    ],
-  },
-  {
-    open: ['knit'],
-    asks: [
-      ['atelier', 'sweater', 8],
-      ['school', 'cyarn', 14],
-    ],
-  },
-  {
-    open: [],
-    asks: [
-      ['fair', 'csweater', 6],
-      ['cobbler', 'cfelt', 10],
-      ['post', 'wool', 200],
-    ],
-  },
+  { open: ['shear'], needs: [POST(6)] },
+  { open: ['pen'], needs: [POST(8)] },
+  { open: ['shearer'], after: { placed: 'shearer', open: 'belt' }, needs: [POST(12)] },
+  { open: ['sheep'], needs: [POST(14)] },
+  { open: ['comb'], needs: [POST(16), SHOP(6)] },
+  { open: ['market'], needs: [POST(20), SHOP(9)] },
+  { open: ['mower'], needs: [POST(22), SHOP(10)] },
+  { open: ['feeder'], needs: [POST(23), SHOP(11)] },
+  { open: ['splitter'], needs: [POST(25), SHOP(12)] },
+  { open: ['curl'], needs: [POST(25), SHOP(13), ATELIER(6)] },
+  { open: ['merger'], needs: [POST(26), SHOP(13), ATELIER(9)] },
+  { open: ['bath'], needs: [POST(26), SHOP(14), ATELIER(10), COBBLER(6)] },
+  { open: ['sow'], needs: [POST(27), SHOP(14), ATELIER(11), COBBLER(10)] },
+  { open: ['berry'], needs: [POST(27), SHOP(15), ATELIER(12), COBBLER(12)] },
+  { open: ['dyer'], needs: [POST(27), SHOP(15), ATELIER(12), COBBLER(12), SCHOOL(6)] },
+  { open: ['seeder'], needs: [POST(28), SHOP(15), ATELIER(12), COBBLER(13), SCHOOL(10)] },
+  { open: ['knit'], needs: [POST(28), SHOP(15), ATELIER(12), COBBLER(13), SCHOOL(11), FAIR(3)] },
+  { open: [], needs: [POST(28), SHOP(15), ATELIER(13), COBBLER(14), SCHOOL(13), FAIR(5)] },
 ]
-/** Chapter 1 ends with the last level of the table; after it the same clients ask again, `grow` times more each level. */
-export const AFTER = { grow: 1.3 } as const
+/**
+ * How content a client is (GDD 7): the share of its goods it has lately got, each one due either taken from the stock
+ * or missed — a running average over about `fillSec` seconds, whatever it takes a minute. It is content at `content`:
+ * fed all the time it gets there in about three times `fillSec`, fed less it never does, its bar stops at the share it
+ * gets. A level is done when every client is content at once.
+ */
+export const CLIENT = { fillSec: 30, content: 0.95 } as const
+/** Chapter 1 ends with the last level of the table; after it every client takes `grow` times more each level. */
+export const AFTER = { grow: 1.1 } as const
 
 // ---------------------------------------------------------------- the long game's map (GDD 2, 6.2)
 
@@ -699,7 +621,7 @@ export const AFTER = { grow: 1.3 } as const
 export const START = {
   coins: 80,
   sheep: 4,
-  pen: { x: 11, y: 11, dir: 0 as Dir },
+  pen: { x: 9, y: 17, dir: 3 as Dir },
   plots: [
     [1, 2],
     [2, 2],
@@ -712,57 +634,46 @@ export const START = {
 const RECTS = (...r: [number, number, number, number][]) => r.flatMap(([x0, y0, x1, y1]) => RECT(x0, y0, x1, y1))
 
 /**
- * The terrain, placed by hand so the farm has room to grow the way the bot builds it (game/plan.ts): a meadow by each
- * loop's mower, bushes by each dye station's berry picker, a pond by the felting loop's bath (and one in the middle, for
- * the player's), every outer plot with its own deposit so each one is worth buying (the author, 14.10.2026: «какой
- * смысл от остальных»), and a few trees. The east columns and the top row are the land that rises as the island grows
- * (ISLAND_GROW).
+ * The terrain, placed by hand so the farm has room to grow the way the bot builds it round the market (game/plan.ts):
+ * a meadow by each loop's mower, bushes by the dye station's berry picker, a pond by the felting loop's bath (and one in
+ * the west, for the player's), every plot but the four of the start with its own deposit so each one is worth buying
+ * (the author, 14.10.2026: «какой смысл от остальных»), meadow under the market for hay by hand, and a few trees and
+ * stones. The east columns and the top row are the land that rises as the island grows (ISLAND_GROW).
  */
 export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
   meadow: RECTS(
-    // the middle: by the first loop's mower
-    [17, 14, 20, 14],
-    [15, 13, 15, 13],
-    // north: by the west loop's mower, and beside its second pen
-    [10, 9, 11, 10],
-    [12, 9, 12, 9],
-    [17, 6, 19, 8],
-    // north-east, by the east loop's mower
-    [31, 6, 31, 9],
-    [29, 9, 30, 9],
-    // west and east
-    [0, 13, 1, 14],
-    [29, 11, 31, 13],
-    // south-west, south-east
-    [0, 16, 2, 18],
-    [29, 19, 31, 19],
-    // the east, under the sky until the island grows there: by each loop's mower, and a deposit in every plot
-    [32, 5, 32, 6],
-    [32, 17, 33, 18],
-    [38, 18, 39, 19],
-    [40, 6, 41, 8],
-    [45, 19, 46, 19],
-    // the far row, under the sky until the island grows
-    [1, 0, 4, 1],
-    [9, 0, 12, 1],
-    [17, 1, 21, 2],
-    [25, 1, 27, 2],
-    [33, 1, 36, 2],
-    [46, 0, 47, 2],
+    // by each loop's mower: A's north-west of the market, E's, W's, X's, S's, Y's
+    [8, 6, 10, 8],
+    [31, 11, 31, 13],
+    [33, 6, 34, 8],
+    [43, 12, 44, 14],
+    [34, 17, 35, 19],
+    [27, 2, 28, 4],
+    // under the market, on the land the game starts with: hay by hand
+    [13, 19, 16, 19],
+    // a deposit in every other plot
+    [2, 1, 4, 2],
+    [9, 1, 10, 2],
+    [34, 1, 36, 2],
+    [1, 11, 2, 12],
+    [17, 6, 18, 7],
+    [24, 8, 26, 8],
+    [42, 6, 44, 7],
+    [35, 13, 36, 13],
+    [43, 17, 45, 18],
   ),
-  bush: RECTS([12, 14, 13, 14], [5, 8, 6, 11], [32, 11, 33, 12], [40, 10, 41, 11], [30, 16, 31, 18], [6, 0, 7, 1], [28, 0, 31, 1], [41, 1, 43, 2]),
+  bush: RECTS([29, 18, 29, 19], [17, 3, 18, 3], [42, 1, 44, 2], [2, 6, 4, 7], [1, 17, 3, 18]),
   tree: [
-    [10, 14],
-    [23, 18],
-    [12, 16],
-    [3, 15],
-    [38, 17],
-    [40, 16],
+    [5, 8],
+    [0, 15],
+    [39, 18],
+    [46, 9],
+    [31, 3],
   ],
   rock: [
-    [10, 18],
-    [29, 15],
-    [47, 11],
+    [6, 19],
+    [47, 15],
+    [12, 4],
   ],
-  water: RECTS([21, 16, 22, 17], [33, 7, 34, 8]),
+  water: RECTS([35, 8, 36, 9], [3, 15, 4, 16]),
 }

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { START, TOOL_ORDER, type Dir } from './balance'
+import { TOOL_ORDER, type Dir } from './balance'
 import { anchorForInput, beltAutoDir, get, machineIns, outCells } from './grid'
 import { buySheep, place, remove, rotate } from './actions/build'
 import { pathDirs, routeCells } from './actions/path'
 import { stepSimulation } from './systems'
 import { penIn } from './systems/sheep'
+import { openField, putTerrain, TEST_PEN } from './testing'
 import { createGameWorld, Field, Flock, GameState, Unlocks, key, makePen, newItem, res, stockOf, type PastureT, type World } from './world'
 
 /**
@@ -21,7 +22,7 @@ afterEach(() => {
 })
 /** The first pen, where the sheep roam at the start, with all of them in it (as the game began before they roamed). */
 function penned(w: World) {
-  const p = makePen(w, START.pen.x, START.pen.y, START.pen.dir)
+  const p = makePen(openField(w), TEST_PEN.x, TEST_PEN.y, TEST_PEN.dir)
   res(w, Flock).pastures.push(p)
   for (const s of res(w, Flock).sheep) penIn(w, s, p)
   return w
@@ -76,7 +77,8 @@ describe('connections, in any order', () => {
   })
   it('an output belt laid after a good has piled takes the next goods; a machine turned while a good waits sends it the new way', () => {
     const w = world()
-    // a mower facing east at (16, 16), the meadow of row 14 in its reach
+    // a mower facing east at (16, 16), a meadow along row 14 in its reach
+    putTerrain(w, 'meadow', [16, 14, 19, 14])
     place(w, 'mower', 16, 16, 0)
     const m = get(w, 16, 16)!
     // the first hay drops onto a pile on the output cell (18, 16); a belt laid there takes the pile to the stock and the next hay

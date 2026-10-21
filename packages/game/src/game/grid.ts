@@ -39,7 +39,6 @@ export function anchorAt(type: BuildingId, dir: Dir, wx: number, wy: number): [n
 export const terr = (w: World, x: number, y: number): TerrainId | '' => res(w, Field).terrain.get(key(x, y)) ?? ''
 export const plotOf = (x: number, y: number): [number, number] => [Math.floor(x / GRID.plotW), Math.floor(y / GRID.plotH)]
 export const owned = (w: World, x: number, y: number) => res(w, Field).plots.has(key(...plotOf(x, y)))
-export const isRoad = (_x: number, y: number) => y === GRID.roadY
 export const isBeltLike = (b: Building | null | undefined): boolean => !!b && (b.type === 'belt' || b.type === 'splitter' || b.type === 'merger')
 export const isMachine = (b: Building | null | undefined): boolean => !!b && !isBeltLike(b)
 export const step = (x: number, y: number, d: number): [number, number] => [x + DIRS[d]![0], y + DIRS[d]![1]]
@@ -56,7 +55,7 @@ export function pastureAt(w: World, x: number, y: number): PastureT | null {
 
 /** An owned, empty, buildable cell. */
 export function freeCell(w: World, x: number, y: number) {
-  return onIsland(w, x, y) && owned(w, x, y) && !pastureAt(w, x, y) && !isRoad(x, y) && !BLOCKING.includes(terr(w, x, y) as TerrainId) && !get(w, x, y)
+  return onIsland(w, x, y) && owned(w, x, y) && !pastureAt(w, x, y) && !BLOCKING.includes(terr(w, x, y) as TerrainId) && !get(w, x, y)
 }
 
 export interface ReachCell {
@@ -102,7 +101,7 @@ export const sowable = (w: World, b: Pick<Building, 'x' | 'y' | 'w' | 'h'>) => c
 export const waterNear = (w: World, x: number, y: number, bw: number, bh: number) => circle(x, y, bw, bh).some((c) => terr(w, c.x, c.y) === 'water')
 
 /** Why a building may not stand here — a key into WHY_TEXT, or '' when it may. */
-export type WhyNot = '' | 'edge' | 'buyPlot' | 'road' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull'
+export type WhyNot = '' | 'edge' | 'buyPlot' | 'pasture' | 'onWater' | 'rock' | 'tree' | 'bush' | 'meadow' | 'sprout' | 'taken' | 'needBush' | 'needWater' | 'foreignRes' | 'penFull'
 export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Dir = 0): WhyNot {
   // a sheep comes down into a pen with room, or onto free own grass, where a roaming sheep may stand
   if (type === 'sheep') {
@@ -110,7 +109,6 @@ export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Di
     if (p) return residents(w, p) >= p.cap ? 'penFull' : ''
     if (!onIsland(w, x, y)) return 'edge'
     if (!owned(w, x, y)) return 'buyPlot'
-    if (isRoad(x, y)) return 'road'
     const t = terr(w, x, y)
     if (t === 'water') return 'onWater'
     if (t === 'rock' || t === 'tree' || t === 'bush') return t
@@ -123,7 +121,6 @@ export function whyNot(w: World, type: BuildingId, x: number, y: number, dir: Di
   for (const [cx, cy] of footprint(x, y, bw, bh)) {
     if (!onIsland(w, cx, cy)) return 'edge'
     if (!owned(w, cx, cy)) return 'buyPlot'
-    if (isRoad(cx, cy)) return 'road'
     if (pastureAt(w, cx, cy)) return 'pasture'
     const t = terr(w, cx, cy)
     if (t === 'water') return 'onWater'
@@ -234,7 +231,7 @@ export function machineIns(b: Pick<Building, 'type' | 'x' | 'y' | 'w' | 'h' | 'd
 /**
  * Every way a building takes something in — what the in arrows show, the same for every building (the author: «чтобы
  * у всего был один принцип»): a machine's ways in; a splitter from behind; a merger from behind and both sides; a belt
- * from the side it takes from; a dock from every side that a belt can reach (not the dock row itself).
+ * from the side it takes from; the market from every side.
  */
 export function inCells(w: World, b: Building): InCell[] {
   const from = (sx: number, sy: number, d: Dir): InCell => ({ x: sx - DIRS[d]![0], y: sy - DIRS[d]![1], sx, sy, d })
@@ -247,7 +244,7 @@ export function inCells(w: World, b: Building): InCell[] {
       for (const d of [0, 1, 2, 3] as Dir[]) {
         const c = from(cx, cy, d)
         const own = c.x >= b.x && c.x < b.x + b.w && c.y >= b.y && c.y < b.y + b.h
-        if (!own && inGrid(c.x, c.y) && !isRoad(c.x, c.y) && c.y < GRID.roadY) out.push(c)
+        if (!own && inGrid(c.x, c.y)) out.push(c)
       }
     return out
   }

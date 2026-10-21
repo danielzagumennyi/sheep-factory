@@ -1,6 +1,6 @@
-import { BUILDINGS, ITEMS, LEVELS, MARKET, dimsOf, type BuildingId, type CardId, type ItemId, type ResId, type TerrainId } from './balance'
+import { BUILDINGS, GRID, ITEMS, LEVELS, MARKET, dimsOf, type BuildingId, type CardId, type ClientId, type ItemId, type ResId, type TerrainId } from './balance'
 import { sendHome } from './systems/sheep'
-import { openLevel, stallX } from './systems/village'
+import { openLevel } from './systems/village'
 import {
   Field,
   Flock,
@@ -18,13 +18,12 @@ import {
   key,
   penOf,
   res,
-  type AskT,
   type Building,
   type Item,
   type PastureT,
   type ResCell,
+  type NeedT,
   type SheepT,
-  type TruckT,
   type World,
   type WorldOptions,
   noMarks,
@@ -40,27 +39,40 @@ import {
  */
 
 /** The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. */
-export const SAVE_VERSION = 5
+export const SAVE_VERSION = 6
 /** The level the market starts trading at (a version-1 save knew no `trade`). */
 const TRADE_LEVEL = LEVELS.findIndex((L) => L.open.includes('market'))
+/** The market as saved before the clients (versions 1–5): asks with trucks at four stalls past a row by the road. */
+interface OldMarket {
+  asks: { id: number; client: ClientId; kind: ItemId; total: number; have: number; stall: number }[]
+  trucks: { ask: number; x: number; tx: number; state: string; lane: number; load?: number }[]
+  askUid: number
+}
+type OldSave = Omit<GameSave, 'market'> & { market: OldMarket }
+/** Where the old stalls stood, and the middle of one, where its truck parked. */
+const OLD_STALLS = [8, 14, 20, 26],
+  oldStallX = (i: number) => OLD_STALLS[i]! + 1.5
+/** Is cell (x, y) under the market? */
+const underMarket = (x: number, y: number) => x >= MARKET.x && x < MARKET.x + MARKET.size && y >= MARKET.y && y < MARKET.y + MARKET.size
+
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
 const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
   // 2: one market along the road instead of a dock per client and a market stall (18.10.2026); trading is a flag
   1: (g) => {
-    const s = g as GameSave
+    const s = g as OldSave
     s.plant = s.plant.filter((b) => b.type !== 'dock')
     s.gs = { ...s.gs, trade: s.gs.level >= TRADE_LEVEL }
     return s
   },
   // 3: four stalls past the row and the road along the island's edge (18.10.2026); each ask has the stall its truck parks at
   2: (g) => {
-    const s = g as GameSave
+    const s = g as OldSave
     s.plant = s.plant.filter((b) => b.type !== 'dock')
-    s.market.asks.forEach((a, i) => (a.stall = i % MARKET.stalls.length))
+    s.market.asks.forEach((a, i) => (a.stall = i % OLD_STALLS.length))
     for (const t of s.market.trucks) {
       const a = s.market.asks.find((q) => q.id === t.ask)
       if (!a) continue
-      t.tx = stallX(a.stall) - 0.5
+      t.tx = oldStallX(a.stall) - 0.5
       if (t.state !== 'arrive' && t.state !== 'leave') t.x = t.tx
     }
     return s
@@ -69,7 +81,7 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
   // shearer's, so a level is now one later — the shearer's (then first) is now third; what the levels up to it open is
   // open. A sheep that waited beside a station roams
   3: (g) => {
-    const s = g as GameSave
+    const s = g as OldSave
     const old = s.gs.level
     s.gs = { ...s.gs, level: old === 0 ? 2 : old === 1 ? 1 : old + 1 }
     for (const L of LEVELS.slice(0, s.gs.level + 1))
@@ -88,7 +100,7 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
   // level went with them, so a level past it is one earlier. Pink goods are the coloured ones, roving is thread, felt
   // boots are sold. A level whose asks were for goods that are gone is opened anew.
   4: (g) => {
-    const s = g as GameSave & { unlocks: { recipes?: string[] }; ui: { recipe?: string } }
+    const s = g as OldSave & { unlocks: { recipes?: string[] }; ui: { recipe?: string } }
     const RENAME: Record<string, string> = { carder: 'comb', spinner: 'curl', felter: 'bath', workshop: 'knit' }
     const GOOD: Record<string, ItemId | null> = { pwool: 'cwool', roving: 'thread', proving: 'cthread', pyarn: 'cyarn', valenki: null }
     const good = (k: string) => (k in GOOD ? GOOD[k]! : (k as ItemId))
@@ -141,8 +153,39 @@ const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {
     }
     return s
   },
+  // 6: the market in the middle (21.10.2026): one building of 8×8 on the starting land, its clients taking their goods
+  // for good; no row by the road, no stalls, no trucks, no road — the field ends at row 20. What stood where the market
+  // now stands goes, its coins back and what it held to the stock; a sheep in it roams once the world is up. The
+  // clients come as the level has them (opened anew), every bar empty.
+  5: (g) => {
+    const s = g as OldSave
+    const stock = s.stock
+    const add = (k: ItemId, n: number) => (stock[k] = (stock[k] ?? 0) + n)
+    const under = (b: BuildingSave) => {
+      for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (underMarket(b.x + dx, b.y + dy) || b.y + dy >= GRID.rows) return true
+      return false
+    }
+    s.plant = s.plant.filter((b) => {
+      if (b.type === 'dock') return false
+      if (!under(b)) return true
+      s.gs.coins += b.paid
+      for (const [k, n] of Object.entries(b.inv)) add(k as ItemId, n ?? 0)
+      for (const q of [b.item, ...b.buf, ...b.pile, ...b.outs.map((o) => o.item)]) if (q && q.sheep === undefined && q.kind !== 'sheep') add(q.kind, 1)
+      return false
+    })
+    s.flock.pastures = s.flock.pastures.filter((p) => {
+      for (let dy = 0; dy < p.h; dy++) for (let dx = 0; dx < p.w; dx++) if (underMarket(p.x + dx, p.y + dy)) return ((s.gs.coins += p.paid), false)
+      return true
+    })
+    const keep = ([k]: [string, unknown]) => !underMarket(...(k.split(',').map(Number) as [number, number]))
+    s.field = { ...s.field, terrain: s.field.terrain.filter(keep), res: s.field.res.filter(keep), sprouts: s.field.sprouts.filter(keep) }
+    const out = s as unknown as GameSave
+    out.market = { needs: [] }
+    reopen.add(out)
+    return out
+  },
 }
-/** Saves whose level has to be opened anew once loaded: its asks were for goods that are gone. */
+/** Saves whose level has to be opened anew once loaded: what it asked for is no more (its clients come as it has them). */
 const reopen = new WeakSet<object>()
 
 /** A good as saved: the sheep it carries by its id. */
@@ -170,7 +213,7 @@ export interface GameSave {
   }
   plant: BuildingSave[]
   flock: { sheep: SheepT[]; pastures: PastureT[]; penUid: number }
-  market: { asks: AskT[]; trucks: TruckT[]; askUid: number }
+  market: { needs: NeedT[] }
   stock: Partial<Record<ItemId, number>>
   unlocks: { unlocked: BuildingId[]; fresh: BuildingId[]; cardQ: CardId[]; seen: CardId[]; events: string[]; shownEver: CardId[] }
   /** The player's last pick: what the hand sows. */
@@ -246,7 +289,7 @@ export function saveGame(w: World): SaveData {
       },
       plant,
       flock: { sheep: copy(flock.sheep), pastures: copy(flock.pastures), penUid: flock.penUid },
-      market: { asks: copy(market.asks), trucks: copy(market.trucks), askUid: market.askUid },
+      market: { needs: copy(market.needs) },
       stock: { ...res(w, Stock).n },
       unlocks: { unlocked: [...un.unlocked], fresh: [...un.fresh], cardQ: [...un.cardQ], seen: [...un.seen], events: [...un.events], shownEver: [...un.shownEver] },
       ui: { seed: ui.seed },
@@ -340,12 +383,9 @@ function fill(w: World, g: GameSave) {
     plant.b.set(key(b.x, b.y), b)
     for (let dy = 0; dy < b.h; dy++) for (let dx = 0; dx < b.w; dx++) if (dx || dy) plant.occ.set(key(b.x + dx, b.y + dy), key(b.x, b.y))
   }
-  // the market's parts, the row as wide as the island (a save from before them had none)
+  // the market (a save from before it had none)
   addMarket(w)
-  const market = res(w, Market)
-  market.asks = g.market.asks
-  market.trucks = g.market.trucks
-  market.askUid = g.market.askUid
+  res(w, Market).needs = g.market.needs
   res(w, Stock).n = { ...g.stock }
   const un = res(w, Unlocks)
   un.unlocked = new Set(g.unlocks.unlocked)
@@ -357,8 +397,14 @@ function fill(w: World, g: GameSave) {
   Object.assign(res(w, Ui), { seed: g.ui.seed })
   Object.assign(res(w, Stats), g.stats)
   res(w, Rng).next.state = g.rng
-  // a sheep that was in the hand walks home; one in a pen that is gone roams
-  for (const s of flock.sheep) if (s.state === 'held' || (s.state === 'pasture' && !penOf(w, s.home))) sendHome(w, s)
-  // a level whose asks were for goods that are gone is opened anew: its asks and trucks (its cards are seen)
+  // a sheep that was in the hand walks home; one in a pen that is gone roams, and so does one on a belt or in a station
+  // that is gone, or standing where the market now stands
+  const carried = new Set<number>()
+  for (const b of plant.b.values()) for (const q of [b.item, ...b.buf, ...b.outs.map((o) => o.item), b.slot]) if (q?.sheep) carried.add(q.sheep.id)
+  for (const s of flock.sheep) {
+    const lost = (s.state === 'belt' || s.state === 'machine') && !carried.has(s.id)
+    if (s.state === 'held' || lost || (s.state === 'pasture' && !penOf(w, s.home)) || underMarket(Math.floor(s.px), Math.floor(s.py))) sendHome(w, s)
+  }
+  // a level whose asks are no more is opened anew: its clients (its cards are seen)
   if (reopen.has(g)) openLevel(w, gs.level)
 }

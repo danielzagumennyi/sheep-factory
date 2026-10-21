@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, Color, MeshToonMaterial } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { GRASS, GRID, ISLAND, LOOK, MARKET } from '@/game/balance'
+import { GRASS, GRID, ISLAND, LOOK } from '@/game/balance'
 import { useAppStore } from '@/app/store'
 import { useGame } from '@/game/GameContext'
 import { get, owned, pastureAt } from '@/game/grid'
@@ -86,7 +86,7 @@ const KINDS = 1
 
 /**
  * A lawn of broad soft grass over all the free land: dense tufts on every cell where nothing stands — not on
- * buildings, belts, water, meadows, the pen, the road or where goods lie. It sways in the wind. It writes no depth,
+ * buildings (the market is one), belts, water, meadows, the pen or where goods lie. It sways in the wind. It writes no depth,
  * so the contact shadows see the ground beneath, not a thousand blade edges; drawn after everything else and from the
  * far side to the near, it still lies in front of what it should. It stays up while building (the author: «убери
  * сжатие травы при строительстве»).
@@ -173,11 +173,9 @@ const _c = new Color()
 /**
  * Does the lawn grow on this cell? Everywhere the ground is free (the author: «должна занимать всё пространство что
  * есть свободное на земле») — round trees, rocks and bushes too, which stand in it — but not on water, meadows,
- * buildings and belts, the pen, the road, or where goods lie.
+ * buildings and belts, the pen, or where goods lie.
  */
 function grows(w: World, x: number, y: number, bare: Set<string>) {
-  // the road row, the road and the market past it stay clear
-  if (y >= GRID.roadY && y <= GRID.roadY + 2 + MARKET.rows) return false
   const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
   if (!inside) return true
   const t = res(w, Field).terrain.get(key(x, y))

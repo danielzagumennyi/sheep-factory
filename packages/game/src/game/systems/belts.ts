@@ -51,7 +51,7 @@ export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boole
     t.item = it
     return true
   }
-  if (t.type === 'dock') return dockAccept(w, t, it, tx)
+  if (t.type === 'dock') return dockAccept(w, t, it, tx, ty, d)
   const way = entersAt(t, tx, ty, d)
   if (!way) return false
   return machineAccept(w, t, it, way === true ? undefined : way.takes)

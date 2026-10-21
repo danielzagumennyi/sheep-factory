@@ -20,8 +20,8 @@ export const UI = {
   newTag: { ru: 'Новое', en: 'New' },
   // ---- hud ----
   paused: { ru: '❚❚ пауза · пробел', en: '❚❚ paused · space' },
-  each: { ru: '{n} за штуку', en: '{n} each' },
-  asks: { ru: 'Просьбы деревни', en: 'The village asks' },
+  clients: { ru: 'Клиенты рынка', en: 'The market’s clients' },
+  perMin: { ru: '{n}/мин', en: '{n}/min' },
   erase: { ru: 'снос', en: 'clear' },
   eraseTip: { ru: 'тяни по постройкам — монеты вернутся', en: 'drag over buildings — coins come back' },
   rotateTip: { ru: '· R — повернуть', en: '· R — rotate' },
@@ -40,9 +40,7 @@ export const UI = {
   loopGoal: { ru: 'Лента от стрижки во вход', en: 'A belt from the shearing back in' },
   woolGoal: { ru: 'Шерсть — лентой к рынку', en: 'Belt the wool to the market' },
   // ---- popups ----
-  stall: { ru: 'Лавка', en: 'Stall' },
-  noTruck: { ru: 'Машины нет', en: 'No truck' },
-  tradePost: { ru: 'Закупка', en: 'Trading post' },
+  market: { ru: 'Рынок', en: 'Market' },
   sell: { ru: 'Продать', en: 'Sell' },
   plot: { ru: 'Участок', en: 'Plot' },
   buy: { ru: 'Купить', en: 'Buy' },

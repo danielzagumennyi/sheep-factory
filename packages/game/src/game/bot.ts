@@ -2,11 +2,11 @@ import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type ItemId } f
 import { get, isBeltLike, owned, plotAdjacent, reachCells, residents, roomFor, sowable, targetOk } from './grid'
 import { buyPlot, buySheep, place } from './actions/build'
 import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from './actions/hand'
-import { DYE_GATES, PLAN, applyStep, landReady, pieceCost, pieces, plotsToBuy } from './plan'
+import { PLAN, applyStep, landReady, pieceCost, pieces, plotsToBuy } from './plan'
 import { FIXED_DT, stepSimulation } from './systems'
 import { hungry, loopHasFeeder } from './systems/sheep'
-import { buy, openAsks, sell } from './systems/village'
-import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, stockOf, toStock, unkey, type World } from './world'
+import { buy, sell } from './systems/village'
+import { Field, Flock, GameState, Market, Plant, Stats, Ui, Unlocks, res, stockOf, toStock, unkey, type World } from './world'
 
 /**
  * The balance bot (TDD 5): plays the long game like a player with quick hands. It builds the farm of game/plan.ts job
@@ -15,7 +15,7 @@ import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, stockOf, toSto
  * docks, sell what nothing asks for, sow when the meadows run low. Machines get their goods only by belt. It is a
  * measure, not a model of the best play: `pnpm simulate` prints the time of every level.
  */
-export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) {
+export function createBot(w: World) {
   const gs = () => res(w, GameState)
   const un = () => res(w, Unlocks)
   const has = (id: BuildingId) => un().unlocked.has(id)
@@ -58,7 +58,7 @@ export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) 
   }
 
   // ---------------------------------------------------------------- the hand
-  const asked = () => new Set(openAsks(w).map((a) => a.kind))
+  const asked = () => new Set(res(w, Market).needs.map((n) => n.kind))
   function gatherOwn(t: 'meadow' | 'bush', n: number) {
     let left = n
     for (const [k, r] of res(w, Field).res) {
@@ -100,20 +100,20 @@ export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) 
         b.item = null
       }
     }
-    // dye for a dye ask from the bushes; a good an ask wants and no line brings, picked off a belt by hand
+    // dye a client takes from the bushes; a good a client takes and the stock is short of, picked off a belt by hand
     if (asked().has('dye') && stockOf(w, 'dye') < 4) gatherOwn('bush', 4)
-    for (const a of openAsks(w)) {
+    for (const q of res(w, Market).needs) {
       let n = 0
       for (const b of res(w, Plant).b.values()) {
-        if (n >= 4) break
-        if (b.type === 'belt' && b.item && b.item.kind === a.kind) {
+        if (n >= 4 || stockOf(w, q.kind) >= 4) break
+        if (b.type === 'belt' && b.item && b.item.kind === q.kind) {
           toStock(w, b.item)
           b.item = null
           n++
         }
       }
     }
-    // what nothing asks for goes to the market (hay and dye are kept for feeding and sowing)
+    // what no client takes goes to the market (hay and dye are kept for feeding and sowing)
     const want = asked()
     for (const k of Object.keys(ITEMS) as ItemId[]) {
       const keep = k === 'hay' ? 30 : k === 'dye' ? 20 : 0
@@ -141,19 +141,6 @@ export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) 
     }
   }
 
-  /**
-   * The dye set to what the village asks now, as a player would: a dye station gets its dye only while a client asks for
-   * the coloured good its loop gives, so the rest of the time its sheep pass it white — or always (`colour`), on the
-   * main menu's farm, which is only to look at.
-   */
-  function adapt() {
-    const want = asked()
-    for (const g of DYE_GATES) {
-      const b = get(w, g.at[0], g.at[1])
-      if (b?.type === 'splitter' && b.rules) b.rules.f = opts.colour === 'always' || want.has(g.good) ? 'any' : 'off'
-    }
-  }
-
   /** Sheep for every pen with room, once sheep are for sale, keeping a little for the next building. Returns how many. */
   function sheep() {
     if (!has('sheep')) return 0
@@ -172,7 +159,6 @@ export function createBot(w: World, opts: { colour?: 'asked' | 'always' } = {}) 
     un().cardQ.length = 0
     hand()
     const built = build()
-    adapt()
     sowing()
     const buys = built + sheep()
     return { buys, state: buys ? 'buy' : next() || penRoom() ? 'save' : 'idle' }

@@ -7,14 +7,14 @@ import type { Selection, Tool } from '@/game/world'
  * components subscribe to the slices they draw. Clicks in the HUD act on the world directly and the next refresh
  * shows the result.
  */
-export interface AskHud {
-  id: number
+/** A client's need (GDD 7): its good, how many a minute, how content it is (0…1), what one pays, how many the stock holds. */
+export interface NeedHud {
   client: ClientId
   kind: ItemId
-  have: number
-  total: number
-  /** What one pays. */
+  rate: number
+  fill: number
   price: number
+  stock: number
 }
 export interface ToolHud {
   id: BuildingId
@@ -36,7 +36,7 @@ export interface HudState {
   level: number
   speed: number
   goal: GoalHud
-  asks: AskHud[]
+  needs: NeedHud[]
   /** The quick bar's ten slots (an empty slot is null). */
   tools: (ToolHud | null)[]
   tool: Tool
@@ -62,7 +62,7 @@ export const useHudStore = create<HudState>((set) => ({
   level: 1,
   speed: 1,
   goal: null,
-  asks: [],
+  needs: [],
   tools: [],
   tool: 'hand',
   seed: 'meadow',

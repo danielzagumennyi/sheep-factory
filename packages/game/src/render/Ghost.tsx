@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Sprite, Vector2, Vector3, type Group, type Mesh } from 'three'
-import { BUILDINGS, DIRS, GRID, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
+import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { anchorAt, buildPrice, footprint, get, inCells, inGood, inGrid, onIsland, outCells, outGood, pastureAt, reachCells, whyNot } from '@/game/grid'
 import { pathDirs, routeCells } from '@/game/actions/path'
@@ -290,10 +290,17 @@ export function Ghost() {
         const hb = hovered
         if (hb) {
           if (hb.type !== 'dock' && BUILDINGS[hb.type].near) lab = showReach(hb.type, hb.x, hb.y, hb.w, hb.h)
-          // every building the same: its ways in and out, above the belts that may run up to it; the market's row
-          // (one dock along the whole field) only the way in where the pointer is, its stalls and trading post nothing
-          if (hb.part === 'row') arrow(h.x + 0.5, GRID.roadY, 1, true, 0.3)
-          else if (hb.type !== 'dock') showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
+          // every building the same: its ways in and out, above the belts that may run up to it; the market (it takes
+          // from every side) only its way in on the side nearest the pointer
+          if (hb.type === 'dock') {
+            const e = hb.x + hb.w - 1,
+              s = hb.y + hb.h - 1
+            const near = Math.min(h.x - hb.x, e - h.x, h.y - hb.y, s - h.y)
+            if (near === h.x - hb.x) arrow(hb.x, h.y + 0.5, 0, true, 0.3)
+            else if (near === e - h.x) arrow(e + 1, h.y + 0.5, 2, true, 0.3)
+            else if (near === h.y - hb.y) arrow(h.x + 0.5, hb.y, 1, true, 0.3)
+            else arrow(h.x + 0.5, s + 1, 3, true, 0.3)
+          } else showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
         }
         // a pasture shows its way out and its way in the same way
         const pa = hb ? null : pastureAt(world, h.x, h.y)

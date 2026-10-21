@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BATH_YIELD, BELT, BUILDINGS, ITEMS, MARKET, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { BATH_YIELD, BELT, BUILDINGS, ITEMS, LOOK, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
 import { buyPlot, cycleRule, liftUp, remove, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
-import { askAt, buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
+import { buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
 import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type Building, type SplitRules, type World } from '@/game/world'
 import { useAppStore } from '@/app/store'
 import { NewGame } from './Title'
@@ -81,7 +81,7 @@ export function Hud() {
       <TopLeft />
       <TopCenter />
       <TopRight />
-      <Asks />
+      <Clients />
       <Bottom />
       <BottomRight />
       <StockPanel />
@@ -129,14 +129,11 @@ function TopCenter() {
   const nudge = useHudStore((s) => s.pauseNudge)
   let text: ReactNode = null
   if (goal) {
-    if (goal.text === 'order') {
+    if (goal.text === 'need') {
       const p = goal.params!
       text = (
         <>
-          {t(ITEM_NAMES[p.kind as ItemId])}{' '}
-          <b>
-            {p.have}/{p.total}
-          </b>
+          {t(ITEM_NAMES[p.kind as ItemId])} <b>{t(UI.perMin, { n: p.rate! })}</b>
         </>
       )
     } else text = t(UI[goal.text as keyof typeof UI])
@@ -187,30 +184,33 @@ function TopRight() {
   )
 }
 
-/** The village's asks for this level: the good, how many of how many, what one pays. All done — the next level opens. */
-function Asks() {
+/**
+ * The market's clients (GDD 7): each one's good, how many it takes a minute, what one pays, and the bar of how content
+ * it is. Every bar full at once — the next level opens.
+ */
+function Clients() {
   const { t } = useT()
-  const asks = useHudStore((s) => s.asks)
+  const needs = useHudStore((s) => s.needs)
   return (
-    <div className="ov ov-orders" title={t(UI.asks)}>
-      {asks.map((a) => {
-        const done = a.have >= a.total
+    <div className="ov ov-orders" title={t(UI.clients)}>
+      {needs.map((n) => {
+        const done = n.fill >= 1
         return (
-          <div key={a.id} className={'panel order' + (done ? ' order--done' : '')}>
-            <span className="order__who">
-              {t(CLIENT_NAMES[a.client])}
+          <div key={n.client + n.kind} className={'panel order' + (done ? ' order--done' : '')}>
+            <span className="order__who" style={{ color: LOOK.client[n.client] }}>
+              {t(CLIENT_NAMES[n.client])}
               {done ? ' ✓' : ''}
             </span>
             <span className="order__rw">
               +<Icon kind="coin" size={14} />
-              {a.price}
+              {n.price}
             </span>
             <span className="order__need">
-              <Icon kind={a.kind} size={22} />
-              {a.have} / {a.total}
+              <Icon kind={n.kind} size={22} />
+              {t(UI.perMin, { n: n.rate })}
             </span>
             <span className="order__bar">
-              <i style={{ width: (Math.min(1, a.have / a.total) * 100).toFixed(1) + '%' }} />
+              <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
             </span>
           </div>
         )
@@ -395,7 +395,7 @@ function marketGoods(w: World, met: readonly ItemId[]): ItemId[] {
   return STOCK_ORDER.filter((k) => met.includes(k) || stockOf(w, k) > 0)
 }
 
-/** The trading post (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
+/** Trade in the market's window (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
 function MarketBody({ refresh }: { refresh: () => void }) {
   const { world } = useGame()
   const { t } = useT()
@@ -509,9 +509,17 @@ function Popup() {
   const sel = useHudStore((s) => s.sel)
   const at = useHudStore((s) => s.popAt)
   const met = useHudStore((s) => s.met)
-  const asksHud = useHudStore((s) => s.asks)
+  const needs = useHudStore((s) => s.needs)
   useHudStore((s) => s.tick)
   const el = useRef<HTMLDivElement>(null)
+  // beside what it is for, kept on the screen by its size as drawn, before the frame shows (the market's window is
+  // wider than a building's)
+  useLayoutEffect(() => {
+    const e = el.current
+    if (!e || !at) return
+    e.style.left = Math.max(8, Math.min(window.innerWidth - e.offsetWidth - 16, at.x + 8)) + 'px'
+    e.style.top = Math.max(58, Math.min(window.innerHeight - e.offsetHeight - 90, at.y)) + 'px'
+  })
   if (!sel || !at) return null
   const gs = res(world, GameState)
   const refresh = () => useHudStore.getState().set({ tick: useHudStore.getState().tick + 1, sel: res(world, Ui).sel })
@@ -519,48 +527,31 @@ function Popup() {
   if (sel.kind === 'b') {
     const b = res(world, Plant).b.get(sel.key)
     if (!b) return null
-    if (b.part === 'buy') {
-      // the trading post: buying into the stock and selling from it
+    if (b.type === 'dock') {
+      // the market: every client with its good, how many a minute, how many the stock holds and its bar; trade under them
       body = (
         <>
           <h3>
             <Icon kind="coin" size={20} />
-            {t(UI.tradePost)}
-          </h3>
-          <MarketBody refresh={refresh} />
-        </>
-      )
-    } else if (b.type === 'dock') {
-      // a stall: the ask whose truck is loaded there, with how many of its good wait in the stock
-      const a = askAt(world, MARKET.stalls.indexOf(b.x as (typeof MARKET.stalls)[number]))
-      body = a ? (
-        <>
-          <h3>
-            <Icon kind={a.kind} size={20} />
-            {t(CLIENT_NAMES[a.client])}
+            {t(UI.market)}
           </h3>
           <div className="pop__rows">
-            <div>
-              <Icon kind={a.kind} size={20} /> {a.have} / {a.total}
-            </div>
-            <div>
-              <Icon kind="coin" size={16} />
-              {t(UI.each, { n: asksHud.find((q) => q.id === a.id)?.price ?? 0 })}
-            </div>
-            {stockOf(world, a.kind) > 0 && (
-              <div title={t(UI.stock)}>
-                <Icon kind="stock" size={16} /> {stockOf(world, a.kind)}
+            {needs.map((n) => (
+              <div key={n.client + n.kind} className="pop__need" title={t(CLIENT_NAMES[n.client])}>
+                <i className="pop__dot" style={{ background: LOOK.client[n.client] }} />
+                <Icon kind={n.kind} size={20} />
+                {t(UI.perMin, { n: n.rate })}
+                <span className="pop__stock" title={t(UI.stock)}>
+                  <Icon kind="stock" size={14} />
+                  {n.stock}
+                </span>
+                <span className="order__bar">
+                  <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
+                </span>
               </div>
-            )}
+            ))}
           </div>
-        </>
-      ) : (
-        <>
-          <h3>
-            <Icon kind="coin" size={20} />
-            {t(UI.stall)}
-          </h3>
-          <div className="pop__st pop__st--plain">{t(UI.noTruck)}</div>
+          {gs.trade && <MarketBody refresh={refresh} />}
         </>
       )
     } else {
@@ -701,12 +692,8 @@ function Popup() {
     )
   }
 
-  const pw = el.current?.offsetWidth ?? 200,
-    ph = el.current?.offsetHeight ?? 140
-  const left = Math.max(8, Math.min(window.innerWidth - pw - 16, at.x + 8)),
-    top = Math.max(58, Math.min(window.innerHeight - ph - 90, at.y))
   return (
-    <div ref={el} className="panel pop" style={{ left, top }}>
+    <div ref={el} className="panel pop">
       {body}
     </div>
   )

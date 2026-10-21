@@ -1,17 +1,17 @@
-import { GRID, PEN, TOOL_ORDER } from './balance'
+import { GRID, LEVELS, PEN, TOOL_ORDER } from './balance'
 import { createBot } from './bot'
 import { PLAN, applyJob } from './plan'
 import { stepSimulation } from './systems'
 import { roomFor } from './grid'
 import { penIn } from './systems/sheep'
-import { Field, Flock, GameState, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
+import { Field, Flock, GameState, Market, Unlocks, addMarket, key, makeSheep, res, type World } from './world'
 
 /**
  * The farm of chapter 1 built whole (game/plan.ts), for the main menu's background and for screenshots (dev console:
- * `__game.showcase()`): the five loops of the salon, every line, the market whole; the pens full of sheep, the deposits
- * kept full. Then it runs a while so goods are on the belts, with the bot's hand tending it as a player would — dead
- * ends emptied, the dye stations always given their dye, so the sheep come out coloured — and returns that hand, for
- * whoever shows the farm to keep tending it (`act` about every 0.7 s).
+ * `__game.showcase()`): the six loops round the market, every line; the pens full of sheep, the deposits kept full;
+ * the clients of the chapter's last level at the market, every one content (behind the menu their bars stay so).
+ * Then it runs a while so goods are on the belts, with the bot's hand tending it as a player would — dead ends
+ * emptied — and returns that hand, for whoever shows the farm to keep tending it (`act` about every 0.7 s).
  */
 export function buildShowcase(w: World, warmup = 90) {
   const un = res(w, Unlocks),
@@ -22,10 +22,13 @@ export function buildShowcase(w: World, warmup = 90) {
   gs.food = true
   f.top = 0
   f.right = GRID.cols
-  for (let py = 0; py * GRID.plotH < GRID.roadY; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
+  for (let py = 0; py * GRID.plotH < GRID.rows; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
   gs.fieldVersion++
   gs.trade = true
   addMarket(w)
+  gs.level = LEVELS.length - 1
+  gs.chapterDone = true
+  res(w, Market).needs = LEVELS.at(-1)!.needs.map(([client, kind, rate]) => ({ client, kind, rate, due: 0, fill: 1 }))
   for (const j of PLAN) applyJob(w, j, true)
   const flock = res(w, Flock)
   // the sheep that roamed at the start live in pens on a finished farm
@@ -36,7 +39,7 @@ export function buildShowcase(w: World, warmup = 90) {
   for (const p of flock.pastures) while (flock.sheep.filter((s) => s.home === p.id).length < PEN.cap) flock.sheep.push(makeSheep(w, p.id, true))
   keepFull(w)
   un.cardQ.length = 0
-  const hand = createBot(w, { colour: 'always' })
+  const hand = createBot(w)
   let a = 0
   for (let t = 0; t < warmup; t += 1 / 60) {
     stepSimulation(w)

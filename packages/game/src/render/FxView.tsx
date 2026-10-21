@@ -8,7 +8,7 @@ import { tx } from '@/i18n'
 import { FX_TEXT } from '@/i18n/content'
 import { GEO, mat } from './kit'
 import { Batch, useInstanced } from './instancing'
-import { startFlight } from './Market'
+import { startCoin, startFlight } from './Market'
 
 interface Puff {
   x: number
@@ -33,7 +33,7 @@ let floatId = 0
 
 /**
  * Drains the simulation's effect queue every frame: sounds go to the synth, numbers float up from the field, puffs of
- * wool and grass burst and fall, goods handed to the market start along its chute. Sounds stay quiet while the game is paused.
+ * wool and grass burst and fall, goods handed to the market hop in, a good a client takes pops up as a coin. Sounds stay quiet while the game is paused.
  */
 export function FxView() {
   const { world } = useGame()
@@ -49,8 +49,9 @@ export function FxView() {
       if (e.kind === 'sound') {
         if (speed > 0) playSound(e.id)
       } else if (e.kind === 'float') add.push({ id: ++floatId, x: e.x, z: e.y, text: FX_TEXT[e.text] ? tx(FX_TEXT[e.text]!) : e.text, tone: e.tone })
-      // a good handed to the market slides along the chute to a stall; one from the stock goes into a truck (Market.tsx)
-      else if (e.kind === 'deliver' || e.kind === 'load') startFlight(e)
+      // a good handed to the market hops onto its client's sign; one a client takes pops up off it as a coin (Market.tsx)
+      else if (e.kind === 'deliver') startFlight(e)
+      else if (e.kind === 'take') startCoin(e)
       else
         for (let i = 0; i < e.n; i++) {
           const a = Math.random() * Math.PI * 2,

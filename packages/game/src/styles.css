@@ -216,7 +216,7 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ===== right: the village's asks ===== */
+/* ===== right: the market's clients ===== */
 .ov-orders {
   right: 12px;
   top: 60px;
@@ -529,6 +529,23 @@ button:focus-visible {
   gap: 5px;
   font-variant-numeric: tabular-nums;
 }
+/* a client's row in the market's window: its colour, its good and rate, the stock, its bar */
+.pop__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.pop__stock {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.8;
+}
+.pop__need .order__bar {
+  flex: 0 0 52px;
+}
 .pop__acts {
   display: flex;
   gap: 5px;
@@ -738,9 +755,6 @@ button:focus-visible {
 .tag--on {
   color: #4a3428;
   border-color: #4a3428;
-}
-.tag--truck {
-  font-size: 11px;
 }
 .tag--plot {
   font-size: 13px;

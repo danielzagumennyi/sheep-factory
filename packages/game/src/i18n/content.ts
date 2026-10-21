@@ -4,8 +4,8 @@ import type { Text } from '.'
 
 /**
  * Names and one-line descriptions of everything in the game. Numbers never appear here: they live in balance.ts.
- * A sign over each client's bay at the market shows its name and the good it asks for (the author, 15.10.2026: «пиши
- * нормально, что нужно»).
+ * Each client's name stands over its bar in the HUD and the market's window (the author, 15.10.2026: «пиши нормально,
+ * что нужно»); on the market hall its sign shows its good.
  */
 
 export const ITEM_NAMES: Readonly<Record<ItemId | 'sheep', Text>> = {
@@ -65,7 +65,7 @@ export const RES_NAMES: Readonly<Record<ResId | 'sprout', Text>> = {
   sprout: { ru: 'всходы', en: 'sprouts' },
 }
 
-/** The village's clients: the stall's popup and sign, and the book. */
+/** The market's clients: their rows in the HUD and the market's window, and the book. */
 export const CLIENT_NAMES: Readonly<Record<ClientId, Text>> = {
   post: { ru: 'Почта', en: 'Post office' },
   shop: { ru: 'Магазин', en: 'Shop' },
@@ -94,17 +94,16 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
   dyer: { title: { ru: 'Покраска', en: 'Dyeing' }, text: { ru: 'Цветная овца — цветной товар', en: 'A coloured sheep, coloured goods' } },
   seeder: { title: { ru: 'Сеялка', en: 'Seeder' }, text: { ru: 'Сеет вокруг себя то, что привезла лента', en: 'Sows round itself what the belt brings' } },
   knit: { title: { ru: 'Вязка', en: 'Knitting' }, text: { ru: 'Три станции на петле — свитер', en: 'Three stations on a loop: a sweater' } },
-  market: { title: { ru: 'Закупка', en: 'Trading post' }, text: { ru: 'Покупай и продавай товар со склада', en: 'Buy and sell goods from the stock' } },
+  market: { title: { ru: 'Торговля', en: 'Trade' }, text: { ru: 'Покупай и продавай в окне рынка', en: 'Buy and sell at the market' } },
   land: { title: { ru: 'Участки', en: 'Land' }, text: { ru: 'Покос кончается? Купи соседний участок', en: 'Running out? Buy the next plot' } },
   island: { title: { ru: 'Остров растёт', en: 'The island grows' }, text: { ru: 'Новые участки на краю острова', en: 'New plots at the island’s edge' } },
-  chapter: { title: { ru: 'Глава 1', en: 'Chapter 1' }, text: { ru: 'Деревня довольна. Просьбы растут дальше', en: 'The village is happy. Asks grow on' } },
+  chapter: { title: { ru: 'Глава 1', en: 'Chapter 1' }, text: { ru: 'Все довольны. Спрос растёт дальше', en: 'Everyone’s content. Demand grows on' } },
 }
 
 /** Why a building may not stand here: the short label under the ghost. */
 export const WHY_TEXT: Readonly<Record<Exclude<WhyNot, ''>, Text>> = {
   edge: { ru: 'край', en: 'edge' },
   buyPlot: { ru: 'купи участок', en: 'buy the plot' },
-  road: { ru: 'дорога', en: 'road' },
   pasture: { ru: 'загон', en: 'pen' },
   onWater: { ru: 'на воде нельзя', en: 'not on water' },
   rock: { ru: 'мешает камень', en: 'a rock is here' },

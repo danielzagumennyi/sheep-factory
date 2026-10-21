@@ -16,12 +16,12 @@ import { Hover } from './Hover'
 import { PlotFence } from './PlotFence'
 import { Items } from './Items'
 import { Machines } from './Machines'
+import { Market } from './Market'
 import { Nature } from './Nature'
 import { Pastures } from './Pastures'
 import { PlotTags } from './PlotTags'
 import { Props } from './Props'
 import { Pointer } from './Pointer'
-import { Road } from './Road'
 import { Flock3D } from './SheepView'
 import { Terrain } from './Terrain'
 import { Water } from './Water'
@@ -83,7 +83,7 @@ export function Scene() {
       <Belts />
       <Machines />
       <Items />
-      <Road />
+      <Market />
       <Flock3D />
       {on('tags') && <PlotTags />}
       {on('ghost') && <Ghost />}

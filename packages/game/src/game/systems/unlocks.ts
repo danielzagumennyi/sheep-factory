@@ -1,6 +1,6 @@
 import { BUILDINGS, GRID, LEVELS, LOW_LAND, ONCE_CARDS, type BuildingId, type CardId, type OpenId } from '../balance'
 import { owned, plotOnIsland, plotRes } from '../grid'
-import { Field, Flock, GameState, Unlocks, addMarket, key, res, unkey, type World } from '../world'
+import { Field, Flock, GameState, Unlocks, key, res, unkey, type World } from '../world'
 
 /**
  * Growth one thing at a time (the author: «каждый продукт открывается и объясняется отдельно»). Each village level
@@ -27,7 +27,7 @@ export function queueCard(w: World, id: CardId, alsoUnlock = true) {
 }
 
 /**
- * Open a building or trade (the market's trading post), with its card. The feeder brings food into the game: from now
+ * Open a building or trade (in the market's window), with its card. The feeder brings food into the game: from now
  * on a shorn sheep has to eat before its fleece grows again.
  */
 export function unlock(w: World, id: OpenId) {
@@ -36,7 +36,6 @@ export function unlock(w: World, id: OpenId) {
   if (id === 'shear') return queueCard(w, 'shear', false)
   if (id === 'market') {
     res(w, GameState).trade = true
-    addMarket(w)
     queueCard(w, 'market', false)
     return
   }
@@ -70,7 +69,7 @@ export function lowLand(w: World) {
     let left = 0
     for (const [k, r] of f.res) if (r.t === t && owned(w, ...unkey(k))) left += r.left
     if (left > LOW_LAND) return false
-    for (let py = 0; py * GRID.plotH < GRID.roadY; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) if (plotOnIsland(w, px, py) && !f.plots.has(key(px, py)) && plotRes(w, px, py)[t]) return true
+    for (let py = 0; py * GRID.plotH < GRID.rows; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) if (plotOnIsland(w, px, py) && !f.plots.has(key(px, py)) && plotRes(w, px, py)[t]) return true
     return false
   })
 }

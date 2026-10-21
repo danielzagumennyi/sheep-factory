@@ -2,12 +2,11 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { Mesh } from 'three'
 import { useFrame } from '@react-three/fiber'
 import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, SRGBColorSpace } from 'three'
-import { CONTACT, GRID, ISLAND, LOOK, MARKET, ROAD } from '@/game/balance'
+import { CONTACT, GRID, ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
-import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { mat, softMat, toonBands } from './kit'
-import { rb } from './models'
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { softMat, toonBands } from './kit'
 import { withReach } from './reach'
 import { island } from './island'
 
@@ -23,8 +22,8 @@ const X1 = () => island.right + M
 
 /**
  * The board as a diorama island, like the author's reference scenes (15.10.2026): a grass top with a rounded lip over
- * thick soil sides, floating on the sky. The top is one flat mesh with a painted texture — one green with faint patches,
- * the dock row paved, the road in two lanes; the water lies on it as a surface of its own.
+ * thick soil sides, floating on the sky. The top is one flat mesh with a painted texture — one green with faint patches
+ * and the plots; the water lies on it as a surface of its own.
  * The cell grid is a second, transparent layer shown only while building. All of it is rebuilt only when the land
  * changes (`fieldVersion`).
  */
@@ -57,7 +56,6 @@ export function Ground() {
       </mesh>
       <mesh geometry={parts.lip} material={parts.lipMat} receiveShadow />
       <mesh geometry={parts.soil} material={parts.soilMat} receiveShadow />
-      <mesh geometry={parts.curbs} material={mat(LOOK.curb)} castShadow receiveShadow />
     </group>
   )
 }
@@ -167,12 +165,8 @@ function slab(depth: number, bevel: number, topY: number, inset: number, width =
 function islandBody() {
   const lip = slab(0.12, 0.14, -0.006, 0.02, 0.6)
   const soil = slab(ISLAND.soil, 0.3, -0.3, 0.2, 1.2)
-  // stone curbs along both sides of the road
-  const len = X1() - X0 - 0.5
-  const curb = (z: number) => rb(len, 0.07, 0.12, 0.03).translate((X0 + X1()) / 2, 0.035, z)
-  const curbs = mergeGeometries([curb(ROAD.row + 0.03), curb(ROAD.row + 1.97)])!
   // the rounded sides in bands blended smoothly, so the corners don't show as stripes
-  return { lip, soil, curbs, lipMat: softMat(LOOK.lip), soilMat: softMat(LOOK.soil) }
+  return { lip, soil, lipMat: softMat(LOOK.lip), soilMat: softMat(LOOK.soil) }
 }
 
 // ---------------------------------------------------------------- the painted top
@@ -242,28 +236,6 @@ function paint(world: World, c: HTMLCanvasElement) {
   }
   g.globalAlpha = 1
   g.filter = 'none'
-  // the market's row: grout under the pastel paving tiles (Props.tsx); the stalls' floor past it, from edge to edge;
-  // then the road in two lanes along the island's edge
-  const rowY = wz(GRID.roadY),
-    roadY = wz(ROAD.row)
-  g.fillStyle = LOOK.dockTile
-  g.fillRect(wx(X0 + 0.2), rowY, (X1() - X0 - 0.4) * PX, PX)
-  g.fillStyle = LOOK.dockRow
-  g.fillRect(wx(X0 + 0.2), rowY + PX, (X1() - X0 - 0.4) * PX, MARKET.rows * PX)
-  g.fillStyle = LOOK.road
-  g.fillRect(wx(X0), roadY, (X1() - X0) * PX, 2 * PX)
-  g.strokeStyle = LOOK.roadLine
-  g.lineWidth = 3
-  g.setLineDash([16, 14])
-  g.beginPath()
-  g.moveTo(wx(X0), roadY + PX)
-  g.lineTo(wx(X1()), roadY + PX)
-  g.stroke()
-  g.setLineDash([])
-  // a parking bay in front of each stall, on the lane by the stalls
-  g.strokeStyle = 'rgba(255,255,255,0.75)'
-  g.lineWidth = 2
-  for (const x of MARKET.stalls) g.strokeRect(wx(x + MARKET.stallW / 2 - 0.8) + 4, roadY + 5, 1.6 * PX - 8, PX - 10)
   // meadows: tilled soil with two furrows under the sheaves — on the island only: one still under the sky (it grows
   // later) left a bare patch on the rim's grass
   for (const [k, t] of res(world, Field).terrain) {
@@ -293,7 +265,7 @@ function paintGrid(world: World, c: HTMLCanvasElement) {
   g.strokeStyle = LOOK.grid
   g.lineWidth = 1
   g.beginPath()
-  for (let py = 0; py * GRID.plotH < GRID.roadY; py++)
+  for (let py = 0; py * GRID.plotH < GRID.rows; py++)
     for (let px = 0; px * GRID.plotW < island.right; px++) {
       if (!plots.has(key(px, py))) continue
       const x = wx(px * GRID.plotW),

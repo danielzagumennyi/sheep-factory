@@ -9,7 +9,7 @@ import { vmat } from './kit'
 import { fencePost, fenceSpan } from './models'
 import { island } from './island'
 
-const fieldCell = (x: number, y: number) => x >= 0 && y >= island.top && x < island.right && y < GRID.roadY
+const fieldCell = (x: number, y: number) => x >= 0 && y >= island.top && x < island.right && y < GRID.rows
 const wet = (w: World, x: number, y: number) => {
   const t = res(w, Field).terrain.get(key(x, y))
   return t === 'water'
@@ -37,7 +37,7 @@ export function PlotFence() {
     // the ends of the spans, and the ends that already have a post
     const ends = new Set<string>(),
       posted = new Set<string>()
-    for (let y = 0; y < GRID.roadY; y++)
+    for (let y = 0; y < GRID.rows; y++)
       for (let x = 0; x < GRID.cols; x++) {
         const mine = owned(world, x, y)
         // the edge east of this cell: a span along z, its post at the south end

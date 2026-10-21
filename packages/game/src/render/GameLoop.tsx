@@ -10,10 +10,10 @@ import { createBot, runBot } from '@/game/bot'
 import { buildShowcase } from '@/game/showcase'
 import { buildStress, feedStress } from '@/game/stress'
 import { FIXED_DT, isFrozen, stepSimulation } from '@/game/systems'
-import { openAsks } from '@/game/systems/village'
 import { hungry, loopHasFeeder } from '@/game/systems/sheep'
+import { contentBar } from '@/game/systems/village'
 import { startWorld } from '@/game/start'
-import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, type World } from '@/game/world'
+import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, stockOf, type World } from '@/game/world'
 import { BINDINGS, type Action } from '@/input/bindings'
 import { SLOTS, barOf, useAppStore } from '@/app/store'
 import { renderIcons } from './iconRender'
@@ -322,15 +322,16 @@ function goalOf(world: World): GoalHud {
     return !!c && !get(world, c.x, c.y)
   })
   if (gs.level === SHEARER_LEVEL && woolPiles) return { tone: 'plain', icon: 'wool', text: 'woolGoal' }
-  const a = openAsks(world).sort((p, q) => p.have / p.total - q.have / q.total)[0]
-  return a ? { tone: 'plain', icon: a.kind, text: 'order', params: { have: a.have, total: a.total, kind: a.kind } } : null
+  // the client least content: its good, so many a minute
+  const n = [...res(world, Market).needs].sort((p, q) => p.fill - q.fill)[0]
+  return n && contentBar(n) < 1 ? { tone: 'plain', icon: n.kind, text: 'need', params: { rate: n.rate, kind: n.kind } } : null
 }
 
-/** Goods the farm has met: what the stock holds, what its buildings make, what the village asks. */
+/** Goods the farm has met: what the stock holds, what its buildings make, what the clients take. */
 function metGoods(world: World): ItemId[] {
   const met = new Set<ItemId>(['wool', 'hay'])
   for (const [k, n] of Object.entries(res(world, Stock).n)) if (n) met.add(k as ItemId)
-  for (const a of res(world, Market).asks) met.add(a.kind)
+  for (const n of res(world, Market).needs) met.add(n.kind)
   // what the salon's stations open: a step up for each, felt from the bath, every one coloured from the dye station
   const un = res(world, Unlocks)
   const steps = (['comb', 'curl', 'knit'] as const).filter((t) => un.unlocked.has(t)).length
@@ -375,7 +376,7 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
     level: gs.level + 1,
     speed: gs.speed,
     goal: goalOf(world),
-    asks: res(world, Market).asks.map((a) => ({ id: a.id, client: a.client, kind: a.kind, have: a.have, total: a.total, price: ITEMS[a.kind].price })),
+    needs: res(world, Market).needs.map((n) => ({ client: n.client, kind: n.kind, rate: n.rate, fill: contentBar(n), price: ITEMS[n.kind].price, stock: stockOf(world, n.kind) })),
     tools: barOf(useAppStore.getState().bar, un.unlocked).map((t) => (t ? { id: t, price: buildPrice(world, t), short: gs.coins < buildPrice(world, t), fresh: un.fresh.has(t) } : null)),
     tool: ui.tool,
     seed: ui.seed,

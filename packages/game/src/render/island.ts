@@ -15,11 +15,11 @@ const hash = (x: number, y: number, k: number) => {
  * A tree of the rim on cell (x, y), or null. The island is the field and one cell more all round (ISLAND.margin; the
  * author, 20.10.2026: «размер карты + 1 клетка на которой декоративные деревья»): the trees stand on that ring, one to a
  * cell and in its middle like everything else on the map — along the far row and down both sides beside the field, never
- * on a corner (the island is rounded there) nor in front of the road and the market. Decor keeps off their cells.
+ * on a corner (the island is rounded there) nor along the near edge, in front of the camera. Decor keeps off their cells.
  */
 export function rimTree(x: number, y: number): { fir: boolean; yaw: number; size: number } | null {
   const far = y === island.top - 1 && x >= 0 && x < island.right
-  const side = (x === -1 || x === island.right) && y >= island.top && y < GRID.roadY - 1
+  const side = (x === -1 || x === island.right) && y >= island.top && y < GRID.rows
   if (!(far || side) || hash(x, y, 1) > RIM.trees) return null
   return { fir: hash(x, y, 2) < 0.5, yaw: hash(x, y, 3) * Math.PI * 2, size: RIM.size[0] + hash(x, y, 4) * (RIM.size[1] - RIM.size[0]) }
 }

@@ -1,4 +1,4 @@
-import { GRID, HAND, LOOK, SHEEP } from '../balance'
+import { HAND, LOOK, SHEEP } from '../balance'
 import { get, inGrid, isBeltLike, isStation, owned, pastureAt, plotOf, plotPrice, roomFor, terr } from '../grid'
 import { Field, Flock, GameState, Plant, Stats, Ui, float, key, newItem, puff, res, stockAdd, stockTake, toStock, type Building, type SheepT, type World } from '../world'
 import { enterBelt, machineAccept } from '../systems/belts'
@@ -10,7 +10,7 @@ import { pileHere } from './build'
  * The hand (GDD 3), which is the stock (the author: «этот склад и рука одно и тоже»): one click gathers one item from
  * own land, a fluffy sheep is shorn in three clicks, a hungry one is fed one hay from the stock, a pile or a good on a
  * belt is picked up — all into the stock, with no limit. Machines take only from belts (docs/05-REWORK.md): a click on
- * one selects it; a click on a market stall, the trading post or a pen opens its popup: the stall's ask, trade, sheep.
+ * one selects it; a click on the market or a pen opens its popup: the clients and trade, the sheep.
  */
 
 /** The sheep under a ground point (cells), if any: fluffy sheep are bigger targets. */
@@ -116,7 +116,7 @@ export function handClick(w: World, px: number, py: number) {
     if (still) return pausedNudge(w)
     if (gather(w, x, y)) return
   }
-  if (!owned(w, x, y) && y < GRID.roadY) {
+  if (!owned(w, x, y)) {
     const [qx, qy] = plotOf(x, y)
     if (plotPrice(w, qx, qy)) ui.sel = ui.sel?.kind === 'plot' && ui.sel.px === qx && ui.sel.py === qy ? null : { kind: 'plot', px: qx, py: qy }
     return
@@ -138,10 +138,6 @@ export function clickBuilding(w: World, b: Building) {
   if (isBeltLike(b) && b.item && !b.item.sheep && !handStill(w)) {
     toStock(w, b.item)
     b.item = null
-    return
-  }
-  if (b.part === 'row') {
-    ui.sel = null
     return
   }
   ui.sel = ui.sel?.kind === 'b' && ui.sel.key === key(b.x, b.y) ? null : { kind: 'b', key: key(b.x, b.y) }

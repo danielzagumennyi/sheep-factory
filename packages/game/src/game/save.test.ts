@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { liftUp } from './actions/build'
 import { pickSheep } from './actions/hand'
-import { LEVELS, MARKET } from './balance'
+import { GRID, LEVELS, MARKET } from './balance'
 import { runBot } from './bot'
 import { SAVE_VERSION, loadGame, saveGame, saveInfo, type SaveData } from './save'
 import { startWorld } from './start'
 import { stepSimulation } from './systems'
-import { stallX } from './systems/village'
-import { Field, Flock, GameState, Market, Plant, key, res, type World } from './world'
+import { get } from './grid'
+import { levelDef } from './systems/village'
+import { Flock, GameState, Market, Plant, Stock, key, res, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
@@ -21,6 +22,20 @@ const keep = (w: World | null) => {
 }
 /** A save as it comes back from storage: through JSON text. */
 const stored = (d: SaveData) => JSON.parse(JSON.stringify(d)) as unknown
+/**
+ * A save made now turned into one of version v, before the market in the middle: the village's asks with their
+ * trucks, a dock along the road and a stall past it instead of the market.
+ */
+function asBefore(d: SaveData, v: number) {
+  const dock = d.game.plant.find((q) => q.type === 'dock')!
+  const old = { ...d, v } as SaveData
+  old.game.plant = d.game.plant.filter((q) => q.type !== 'dock')
+  old.game.plant.push({ ...dock, x: 0, y: GRID.rows, w: 32, h: 1 }, { ...dock, x: 8, y: GRID.rows + 1, w: 3, h: 2 })
+  Object.assign(old.game, {
+    market: { asks: [{ id: 1, client: 'post', kind: 'wool', total: 10, have: 3, stall: 0 }], trucks: [{ ask: 1, x: 9, tx: 9, state: 'park', lane: 0 }], askUid: 2 },
+  })
+  return old
+}
 /** The game in a save, without the time it was written. */
 const state = (w: World) => JSON.stringify(saveGame(w).game)
 
@@ -53,47 +68,50 @@ describe('saves (TDD 3.5)', () => {
     expect(res(l, Plant).b.get(key(m.x, m.y))?.type).toBe('shearer')
   })
 
-  it('a save from before the one market loads with it: the old docks go, trading as its level says', () => {
+  it('a save from before the market in the middle loads with it: what stood there goes, its coins back; the clients come as the level has them', () => {
     const w = keep(startWorld({ seed: 5 }))
     runBot(w, 9 * 60)
-    const old = stored(saveGame(w)) as SaveData
-    old.v = 1
-    delete (old.game.gs as Partial<SaveData['game']['gs']>).trade
-    for (const a of old.game.market.asks) delete (a as Partial<typeof a>).stall
-    // the client docks and the market stall of version 1
-    const dock = old.game.plant.find((q) => q.type === 'dock')!
-    old.game.plant = old.game.plant.filter((q) => q.type !== 'dock')
-    old.game.plant.push(Object.assign({}, dock, { client: 'post', x: 13, w: 2, part: undefined }), Object.assign({}, dock, { client: 'market', x: 9, y: 19, w: 2, h: 2, part: undefined }))
+    const old = asBefore(stored(saveGame(w)) as SaveData, 5)
+    // a feeder holding hay where the market now stands
+    const feeder = { ...old.game.plant.find((q) => q.type === 'shearer')!, type: 'feeder' as const, x: MARKET.x + 2, y: MARKET.y + 3, paid: 50, inv: { hay: 3 } }
+    old.game.plant.push(feeder)
+    // and a pen of two sheep, its id the next one
+    const pen0 = old.game.flock.pastures[0]!,
+      id = ++old.game.flock.penUid
+    old.game.flock.pastures.push({ ...pen0, id, x: MARKET.x + 4, y: MARKET.y + 4, paid: 40 })
+    const top = Math.max(...old.game.flock.sheep.map((q) => q.id))
+    for (const k of [1, 2]) {
+      const px = MARKET.x + 5 + k * 0.3,
+        py = MARKET.y + 5.5
+      old.game.flock.sheep.push({ ...old.game.flock.sheep[0]!, id: top + k, home: id, state: 'pasture', px, py, tx: px, ty: py })
+    }
+    const sheep = old.game.flock.sheep.length
+    const coins = old.game.gs.coins,
+      hay = old.game.stock.hay ?? 0
     const l = keep(loadGame(old))
     const docks = [...res(l, Plant).b.values()].filter((q) => q.type === 'dock')
-    expect(docks.filter((q) => q.part === 'row').map((q) => [q.x, q.w])).toEqual([[0, res(l, Field).right]])
-    expect(docks.filter((q) => q.part === 'stall').length).toBe(MARKET.stalls.length)
-    expect(res(l, Plant).occ.has(key(10, 19))).toBe(false)
-    expect(res(l, GameState).trade).toBe(res(w, GameState).level >= LEVELS.findIndex((L) => L.open.includes('market')))
-    for (const a of res(l, Market).asks) expect(a.stall).toBeGreaterThanOrEqual(0)
+    expect(docks.map((q) => [q.x, q.y, q.w, q.h])).toEqual([[MARKET.x, MARKET.y, MARKET.size, MARKET.size]])
+    expect(res(l, GameState).coins).toBe(coins + 50 + 40)
+    expect(res(l, Flock).pastures.some((p) => p.id === id)).toBe(false)
+    // its sheep are kept: they roam outside the market
+    expect(res(l, Flock).sheep.length).toBe(sheep)
+    expect(res(l, Stock).n.hay ?? 0).toBe(hay + 3)
+    const gs = res(l, GameState)
+    expect(res(l, Market).needs.map((n) => [n.client, n.kind, n.rate])).toEqual(levelDef(gs.level).needs.map((q) => [...q]))
+    expect(res(l, Market).needs.every((n) => n.fill === 0)).toBe(true)
+    expect(gs.trade).toBe(gs.level >= LEVELS.findIndex((L) => L.open.includes('market')))
+    // no sheep stands in the market
+    for (const q of res(l, Flock).sheep) expect(get(l, Math.floor(q.px), Math.floor(q.py))?.type, `sheep ${q.id}`).not.toBe('dock')
   })
 
-  it('a save from before the stalls loads with them: each ask gets a stall, its truck parks there', () => {
+  it('a save of the first version, a dock for each client, loads all the way to the market in the middle', () => {
     const w = keep(startWorld({ seed: 5 }))
     runBot(w, 9 * 60)
-    const old = stored(saveGame(w)) as SaveData
-    old.v = 2
-    // version 2: one dock along the road, the trucks at the clients' bays, no stalls
-    const dock = old.game.plant.find((q) => q.part === 'row')!
-    old.game.plant = old.game.plant.filter((q) => q.type !== 'dock')
-    old.game.plant.push(Object.assign({}, dock, { client: 'market', part: undefined }))
-    for (const a of old.game.market.asks) delete (a as Partial<typeof a>).stall
-    for (const t of old.game.market.trucks) Object.assign(t, { tx: 10, x: t.state === 'park' ? 10 : t.x })
+    const old = asBefore(stored(saveGame(w)) as SaveData, 1)
+    delete (old.game.gs as Partial<SaveData['game']['gs']>).trade
     const l = keep(loadGame(old))
-    const m = res(l, Market)
-    expect(new Set(m.asks.map((a) => a.stall)).size).toBe(m.asks.length)
-    for (const t of m.trucks) {
-      const a = m.asks.find((q) => q.id === t.ask)
-      if (!a) continue
-      expect(t.tx).toBe(stallX(a.stall) - 0.5)
-      if (t.state === 'park') expect(t.x).toBe(t.tx)
-    }
-    expect([...res(l, Plant).b.values()].filter((q) => q.part === 'row').length).toBe(1)
+    expect([...res(l, Plant).b.values()].filter((q) => q.type === 'dock').length).toBe(1)
+    expect(res(l, Market).needs.length).toBe(levelDef(res(l, GameState).level).needs.length)
   })
 
   it('the endless mode is kept as the endless mode', () => {
