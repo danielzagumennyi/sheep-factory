@@ -50,9 +50,9 @@ export function Scene() {
   // when there is room — drei's PerformanceMonitor, from 1 to the screen's own density in tenths
   const [dpr, setDpr] = useState(MAX_DPR)
   return (
-    <Canvas className="field" shadows="soft" flat dpr={dpr} camera={{ fov: CAMERA.fov, near: 0.5, far: 300, position: [16, 22, 30] }} gl={{ antialias: true, powerPreference: 'high-performance' }} onCreated={({ gl }) => gl.setClearColor(LOOK.sky)}>
+    <Canvas className="field" shadows="soft" flat dpr={dpr} camera={{ fov: CAMERA.fov, near: 0.5, far: CAMERA.fog[1], position: [16, 22, 30] }} gl={{ antialias: true, powerPreference: 'high-performance' }} onCreated={({ gl }) => gl.setClearColor(LOOK.sky)}>
       <color attach="background" args={[LOOK.sky]} />
-      <fog attach="fog" args={[LOOK.sky, 110, 230]} />
+      <fog attach="fog" args={[LOOK.sky, ...CAMERA.fog]} />
       <GameLoop />
       <PerformanceMonitor factor={1} step={0.1} bounds={(hz) => (hz > 100 ? [80, 110] : [50, 58])} onChange={({ factor }) => setDpr(Math.round(Math.min(MAX_DPR, 1 + factor) * 10) / 10)} />
       {/* the frame rate (the author: «выведи счетчик фпс»): three's own stats.js panel */}
@@ -67,10 +67,10 @@ export function Scene() {
         intensity={LIGHT.sun}
         castShadow
         shadow-mapSize={[SHADOW.map, SHADOW.map]}
-        shadow-camera-left={-30}
-        shadow-camera-right={30}
-        shadow-camera-top={30}
-        shadow-camera-bottom={-30}
+        shadow-camera-left={-SHADOW.half}
+        shadow-camera-right={SHADOW.half}
+        shadow-camera-top={SHADOW.half}
+        shadow-camera-bottom={-SHADOW.half}
         shadow-camera-near={1}
         shadow-camera-far={100}
         shadow-bias={-0.0005}

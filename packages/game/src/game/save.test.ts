@@ -43,21 +43,21 @@ describe('saves (TDD 3.5)', () => {
     runBot(w, 3 * 60)
     const s = res(w, Flock).sheep.find((q) => q.state === 'pasture')!
     pickSheep(w, s)
-    s.px = 10.5
-    s.py = 18.5
+    s.px = 18.5
+    s.py = 26.5
     const m = [...res(w, Plant).b.values()].find((q) => q.type === 'shearer')!
     liftUp(w, m)
     expect(res(w, Plant).b.has(key(m.x, m.y))).toBe(false)
-    Object.assign(res(w, Ui), { carry: [newItem('wool'), newItem('hay')], carryFrom: { x: 9, y: 22 } })
+    Object.assign(res(w, Ui), { carry: [newItem('wool'), newItem('hay')], carryFrom: { x: 17, y: 30 } })
     const l = keep(loadGame(stored(saveGame(w))))
     const ls = res(l, Flock).sheep.find((q) => q.id === s.id)!
-    expect([ls.state, Math.floor(ls.px), Math.floor(ls.py)]).toEqual(['roam', 10, 18])
+    expect([ls.state, Math.floor(ls.px), Math.floor(ls.py)]).toEqual(['roam', 18, 26])
     expect(res(l, Plant).b.get(key(m.x, m.y))?.type).toBe('shearer')
     expect(res(l, Ui).carry.map((q) => q.kind)).toEqual(['wool', 'hay'])
-    expect(res(l, Ui).carryFrom).toEqual({ x: 9, y: 22 })
+    expect(res(l, Ui).carryFrom).toEqual({ x: 17, y: 30 })
   })
 
-  it('a save from before the square map is not loaded: its cells are not this map’s', () => {
+  it('a save from before the bigger map is not loaded: its cells are not this map’s', () => {
     const w = keep(startWorld({ seed: 5 }))
     runBot(w, 3 * 60)
     for (const v of [1, 5, SAVE_VERSION - 1]) {

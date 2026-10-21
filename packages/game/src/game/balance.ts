@@ -8,11 +8,12 @@ import { RECT, type Spot } from './land'
 // ---------------------------------------------------------------- world (GDD 2)
 
 /**
- * The field: 40×40 cells, square (the author, 21.10.2026: «карту сделай квадратной»), cut into 5×5 plots of 8×8, with
- * the market on the middle plot (MARKET). Only part of it is the island at the start (ISLAND_START): the rest is under
- * the sky until the island grows (ISLAND_GROW).
+ * The field: 56×56 cells, square (the author, 21.10.2026: «карту сделай квадратной», then «сделай карту в два раза
+ * больше» — twice the land of the 40×40 one, a ring of plots more round it), cut into 7×7 plots of 8×8, with the market
+ * on the middle plot (MARKET). Only part of it is the island at the start (ISLAND_START): the rest is under the sky
+ * until the island grows (ISLAND_GROW).
  */
-export const GRID = { cols: 40, rows: 40, plotW: 8, plotH: 8 } as const
+export const GRID = { cols: 56, rows: 56, plotW: 8, plotH: 8 } as const
 /** The island's edges, cells: from `left` to before `right`, from `top` to before `bottom`. */
 export interface IslandEdges {
   left: number
@@ -21,20 +22,23 @@ export interface IslandEdges {
   bottom: number
 }
 /** The island at the start: the middle 3×3 plots, the market's and the ring round it. */
-export const ISLAND_START: IslandEdges = { left: GRID.plotW, top: GRID.plotH, right: 4 * GRID.plotW, bottom: 4 * GRID.plotH }
+export const ISLAND_START: IslandEdges = { left: 2 * GRID.plotW, top: 2 * GRID.plotH, right: 5 * GRID.plotW, bottom: 5 * GRID.plotH }
 /** One growth of the island: its new edges. */
 export interface GrowDef extends Partial<IslandEdges> {
   level: number
 }
 /**
- * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), ring by ring round the market,
- * at these levels: the column of plots in the east, then the row in the south, then the rest — the west and the north.
- * The new plots hold fresh deposits, for sale.
+ * The island grows five times (the author, 17.10.2026: «остров растёт несколько раз»), ring by ring round the market,
+ * at these levels. The first ring: the column of plots in the east, then the row in the south, then the rest — the west
+ * and the north. The outer ring: the east and the south, then the west and the north. The new plots hold fresh
+ * deposits, for sale.
  */
 export const ISLAND_GROW: readonly GrowDef[] = [
-  { level: 7, right: GRID.cols },
-  { level: 12, bottom: GRID.rows },
-  { level: 14, left: 0, top: 0 },
+  { level: 7, right: 6 * GRID.plotW },
+  { level: 12, bottom: 6 * GRID.plotH },
+  { level: 14, left: GRID.plotW, top: GRID.plotH },
+  { level: 16, right: GRID.cols, bottom: GRID.rows },
+  { level: 18, left: 0, top: 0 },
 ]
 /**
  * Hills (the author, 21.10.2026: «добавь ещё ландшафт, 2–3 уровень высоты, на нём строить нельзя»): the ground is the
@@ -311,7 +315,7 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
  * that the market sells it at once for a quarter, so no line ever jams, and no farm can pile up one good and turn its
  * line to another: the clients must be fed all the time.
  */
-export const MARKET = { x: 16, y: 16, size: 8, ports: [2, 5], keep: 10 } as const
+export const MARKET = { x: 24, y: 24, size: 8, ports: [2, 5], keep: 10 } as const
 
 /** Hotbar order; only unlocked tools are shown. */
 export const TOOL_ORDER: readonly BuildingId[] = ['shearer', 'belt', 'pen', 'sheep', 'comb', 'mower', 'feeder', 'splitter', 'curl', 'merger', 'bath', 'sow', 'berry', 'dyer', 'seeder', 'knit']
@@ -330,7 +334,10 @@ export const CAMERA = {
   fov: 20,
   distance: 49,
   minDistance: 17,
-  maxDistance: 86,
+  /** Out as far as the whole island fits on the screen. */
+  maxDistance: 118,
+  /** The haze, cells from the camera: it starts past the island's far edge seen from furthest out, and hides all by the far plane. */
+  fog: [150, 300],
   panSpeed: 14,
   /** Turning round (Option- or right-drag, Q/E, a sideways two-finger swipe): the speeds. */
   turnPerPixel: 0.006,
@@ -369,12 +376,16 @@ export const RIM = { trees: 0.6, size: [0.75, 0.85] } as const
 
 /**
  * The lawn (Grass.tsx): leaves per tuft, a leaf's size, tufts per cell side (a jittered grid, so no bald patches: the
- * author, «не должно быть проплешин»), how low it bows while building, how far it shortens by what stands there.
+ * author, «не должно быть проплешин»), how many tufts at most — the whole island risen and bare takes some 104 000 —
+ * and how far it shortens by what stands there.
  */
-export const GRASS = { leaves: 8, height: 0.14, width: 0.12, grid: 6, cap: 48000, inset: 0.5 } as const
+export const GRASS = { leaves: 8, height: 0.14, width: 0.12, grid: 6, cap: 110000, inset: 0.5 } as const
 
-/** The sun's shadow map, texels a side: 2048 over the 60-cell frustum round the square island is ~0.03 of a cell, soft and cheap. */
-export const SHADOW = { map: 2048 } as const
+/**
+ * The sun's shadow: its frustum reaches `half` cells each way from the middle of the field, enough for the whole island
+ * as the sun sees it; its map, texels a side — 3072 over 84 cells is ~0.03 of a cell, soft and cheap.
+ */
+export const SHADOW = { map: 3072, half: 42 } as const
 /** The soft dark halo painted into the ground round whatever stands on it, in place of screen-space AO. */
 export const CONTACT = { building: 0.32, belt: 0.16, blur: 6 } as const
 
@@ -639,11 +650,11 @@ export const AFTER = { grow: 1.1 } as const
 export const START = {
   coins: 80,
   sheep: 4,
-  pen: { x: 13, y: 23, dir: 3 as Dir },
+  pen: { x: 21, y: 31, dir: 3 as Dir },
   plots: [
-    [2, 2],
-    [1, 2],
-    [1, 3],
+    [3, 3],
+    [2, 3],
+    [2, 4],
   ] as readonly Spot[],
 } as const
 
@@ -655,71 +666,137 @@ const RECTS = (...r: [number, number, number, number][]) => r.flatMap(([x0, y0, 
  * a meadow by each loop's mower, bushes by the dye station's berry picker, a pond by the felting loop's bath (and one in
  * the west, for the player's), every plot but those of the start with its own deposit so each one is worth buying (the
  * author, 14.10.2026: «какой смысл от остальных»), a meadow on the start's land for hay by hand, and a few trees and
- * stones. The ring round the start's 3×3 plots is the land that rises as the island grows (ISLAND_GROW).
+ * stones. The two rings round the start's 3×3 plots are the land that rises as the island grows (ISLAND_GROW).
  */
 export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
   meadow: RECTS(
     // by each loop's mower: A's, W's, S's, E's, X's, Y's
-    [12, 12, 14, 14],
-    [29, 13, 31, 15],
-    [37, 21, 39, 22],
-    [26, 30, 28, 31],
-    [37, 30, 39, 31],
-    [33, 34, 35, 36],
+    [20, 20, 22, 22],
+    [37, 21, 39, 23],
+    [45, 29, 47, 30],
+    [34, 38, 36, 39],
+    [45, 38, 47, 39],
+    [41, 42, 43, 44],
     // on the land the game starts with: hay by hand
-    [9, 27, 11, 28],
+    [17, 35, 19, 36],
     // a deposit in every other plot
-    [18, 8, 20, 9],
-    [19, 30, 21, 31],
-    [20, 37, 22, 38],
-    [26, 37, 28, 38],
-    [5, 5, 6, 6],
-    [17, 6, 19, 7],
-    [26, 2, 28, 3],
+    [26, 16, 28, 17],
+    [27, 38, 29, 39],
+    [28, 45, 30, 46],
+    [34, 45, 36, 46],
+    [13, 13, 14, 14],
+    [25, 14, 27, 15],
+    [34, 10, 36, 11],
+    [10, 18, 12, 20],
+    [10, 33, 12, 35],
+    [13, 41, 14, 42],
+    [18, 42, 20, 43],
+    // the outer ring: a deposit in every plot of it, a meadow or bushes
+    [10, 2, 12, 4],
+    [18, 3, 20, 4],
+    [25, 5, 27, 6],
+    [41, 2, 43, 4],
+    [53, 4, 54, 6],
     [2, 10, 4, 12],
-    [2, 25, 4, 27],
-    [5, 33, 6, 34],
-    [10, 34, 12, 35],
+    [2, 26, 4, 28],
+    [1, 37, 3, 38],
+    [50, 18, 52, 20],
+    [49, 29, 51, 30],
+    [49, 34, 50, 36],
+    [50, 42, 52, 44],
+    [1, 50, 3, 52],
+    [18, 51, 20, 53],
+    [28, 50, 30, 51],
+    [42, 51, 44, 53],
   ),
-  bush: RECTS([31, 21, 33, 22], [10, 2, 12, 3], [33, 6, 35, 7], [6, 22, 7, 23], [36, 10, 37, 12]),
+  bush: RECTS(
+    [39, 29, 41, 30],
+    [18, 10, 20, 11],
+    [41, 14, 43, 15],
+    [14, 30, 15, 31],
+    [44, 18, 45, 20],
+    // the outer ring's
+    [2, 2, 3, 4],
+    [34, 2, 36, 3],
+    [2, 18, 3, 20],
+    [2, 42, 4, 43],
+    [50, 10, 52, 11],
+    [10, 50, 12, 51],
+    [37, 50, 38, 52],
+    [50, 50, 51, 52],
+  ),
   tree: [
-    [6, 14],
-    [25, 9],
-    [14, 38],
-    [36, 23],
-    [22, 1],
+    [14, 22],
+    [33, 17],
+    [22, 46],
+    [44, 31],
+    [30, 9],
+    [1, 6],
+    [14, 6],
+    [49, 6],
+    [5, 25],
+    [6, 30],
+    [53, 14],
+    [14, 53],
+    [41, 49],
+    [54, 46],
   ],
   rock: [
-    [8, 31],
-    [30, 38],
-    [3, 7],
+    [16, 39],
+    [38, 46],
+    [11, 15],
+    [22, 1],
+    [46, 6],
+    [6, 14],
+    [54, 17],
+    [5, 46],
+    [17, 49],
   ],
-  water: RECTS([32, 23, 34, 24], [2, 30, 3, 31]),
+  // ponds: the felting loop's, the west one, and three in the outer ring — north, east and south of the market
+  water: RECTS([40, 31, 42, 32], [10, 38, 11, 39], [26, 2, 28, 3], [50, 26, 52, 27], [25, 52, 27, 53]),
 }
 
 /**
  * The hills (HILL), as inclusive rectangles of the second level and of the third on top of them: some on the start's
- * land, the rest in the ring that rises, where the bot's farm does not go.
+ * land, the rest in the rings that rise, where the bot's farm does not go.
  */
 export const MAP_HILLS: readonly (readonly [level: 2 | 3, x0: number, y0: number, x1: number, y1: number])[] = [
   // on the start's island: a knoll south of the first pen, a mound north-east of the market, one north-west of it
-  [2, 12, 28, 14, 30],
-  [3, 13, 29, 13, 29],
-  [2, 29, 9, 30, 10],
-  [2, 9, 9, 11, 10],
+  [2, 20, 36, 22, 38],
+  [3, 21, 37, 21, 37],
+  [2, 37, 17, 38, 18],
+  [2, 17, 17, 19, 18],
   // the ring
-  [2, 1, 1, 4, 3],
-  [3, 2, 2, 3, 2],
-  [2, 33, 1, 37, 4],
-  [3, 34, 2, 36, 3],
-  [2, 2, 34, 4, 38],
-  [3, 3, 35, 3, 37],
-  [2, 17, 2, 21, 4],
-  [3, 18, 3, 20, 3],
-  [2, 2, 17, 5, 20],
-  [3, 3, 18, 4, 19],
-  [2, 36, 36, 38, 38],
-  [3, 37, 37, 37, 37],
+  [2, 9, 9, 12, 11],
+  [3, 10, 10, 11, 10],
+  [2, 41, 9, 45, 12],
+  [3, 42, 10, 44, 11],
+  [2, 10, 42, 12, 46],
+  [3, 11, 43, 11, 45],
+  [2, 25, 10, 29, 12],
+  [3, 26, 11, 28, 11],
+  [2, 10, 25, 13, 28],
+  [3, 11, 26, 12, 27],
+  [2, 44, 44, 46, 46],
+  [3, 45, 45, 45, 45],
+  // the outer ring
+  [2, 4, 3, 6, 6],
+  [3, 5, 4, 5, 5],
+  [2, 33, 5, 38, 6],
+  [2, 49, 1, 52, 4],
+  [3, 50, 2, 51, 3],
+  [2, 4, 17, 6, 21],
+  [3, 5, 18, 5, 20],
+  [2, 3, 33, 6, 35],
+  [3, 4, 34, 5, 34],
+  [2, 52, 33, 54, 37],
+  [3, 53, 34, 53, 36],
+  [2, 4, 51, 6, 54],
+  [3, 5, 52, 5, 53],
+  [2, 33, 50, 36, 53],
+  [3, 34, 51, 35, 52],
+  [2, 52, 51, 54, 54],
+  [3, 53, 52, 53, 53],
 ]
 /** The level of each hill's cell, 2 or 3 (the ground's is 1, and not here). */
 export const HILLS: ReadonlyMap<string, number> = new Map(MAP_HILLS.flatMap(([l, x0, y0, x1, y1]) => RECT(x0, y0, x1, y1).map(([x, y]) => [x + ',' + y, l] as const)).sort((a, b) => a[1] - b[1]))

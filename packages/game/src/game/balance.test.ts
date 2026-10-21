@@ -42,9 +42,20 @@ describe('the map (GDD 2)', () => {
   it('is square: the market on the middle plot, the island at the start the 3×3 plots round it', () => {
     expect(GRID.cols).toBe(GRID.rows)
     expect(GRID.plotW).toBe(GRID.plotH)
-    expect([MARKET.x, MARKET.y, MARKET.size]).toEqual([2 * GRID.plotW, 2 * GRID.plotH, GRID.plotW])
-    expect(ISLAND_START).toEqual({ left: GRID.plotW, top: GRID.plotH, right: 4 * GRID.plotW, bottom: 4 * GRID.plotH })
-    for (const [px, py] of START.plots) expect(Math.max(Math.abs(px - 2), Math.abs(py - 2)), `${px},${py}`).toBeLessThanOrEqual(1)
+    const mid = (GRID.cols / GRID.plotW - 1) / 2
+    expect(Number.isInteger(mid)).toBe(true)
+    expect([MARKET.x, MARKET.y, MARKET.size]).toEqual([mid * GRID.plotW, mid * GRID.plotH, GRID.plotW])
+    expect(ISLAND_START).toEqual({ left: (mid - 1) * GRID.plotW, top: (mid - 1) * GRID.plotH, right: (mid + 2) * GRID.plotW, bottom: (mid + 2) * GRID.plotH })
+    for (const [px, py] of START.plots) expect(Math.max(Math.abs(px - mid), Math.abs(py - mid)), `${px},${py}`).toBeLessThanOrEqual(1)
+  })
+  it('every plot off the start holds a deposit, so each one is worth buying', () => {
+    const start = new Set(START.plots.map(([px, py]) => px + ',' + py))
+    const held = new Set(['meadow', 'bush'].flatMap((t) => MAP_TERRAIN[t as 'meadow' | 'bush']!.map(([x, y]) => Math.floor(x / GRID.plotW) + ',' + Math.floor(y / GRID.plotH))))
+    for (let py = 0; py * GRID.plotH < GRID.rows; py++)
+      for (let px = 0; px * GRID.plotW < GRID.cols; px++) {
+        const k = px + ',' + py
+        if (!start.has(k) && k !== Math.floor(MARKET.x / GRID.plotW) + ',' + Math.floor(MARKET.y / GRID.plotH)) expect(held.has(k), k).toBe(true)
+      }
   })
   it('every hill lies inside one plot off its edge rows and columns, under no deposit and no part of the bot’s farm; its third level stands on its second', () => {
     const terrain = new Set(Object.values(MAP_TERRAIN).flatMap((c) => c.map(([x, y]) => x + ',' + y)))

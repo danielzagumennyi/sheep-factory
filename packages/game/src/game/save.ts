@@ -38,10 +38,10 @@ import {
 
 /**
  * The format's version. When the shape changes it goes up by one, and MIGRATE gets the step from the one before. Saves
- * before 7 were made on the map before the square one (21.10.2026): their cells are not this map's, so they are not
- * loaded — nothing is left to step them from.
+ * before 8 were made on a smaller map — before the square one, or on the square 40×40 one before it grew to 56×56
+ * (21.10.2026): their cells are not this map's, so they are not loaded — nothing is left to step them from.
  */
-export const SAVE_VERSION = 7
+export const SAVE_VERSION = 8
 
 /** Steps from each older version to the next: `MIGRATE[n]` turns a version-n save into a version n+1 one. */
 const MIGRATE: Readonly<Record<number, (g: unknown) => unknown>> = {}

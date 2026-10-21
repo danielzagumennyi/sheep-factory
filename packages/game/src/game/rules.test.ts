@@ -153,31 +153,35 @@ describe('resources and land (GDD 6)', () => {
   })
   it('the hand gathers one item a click, and only on own land', () => {
     const w = world({ all: false })
-    putTerrain(w, 'meadow', [10, 18, 10, 18], [19, 10, 19, 10])
+    putTerrain(w, 'meadow', [18, 26, 18, 26], [27, 18, 27, 18])
     // the hand picks the hay, nothing goes to the stock by itself; clicks on the same meadow gather on while it has room
-    expect(gather(w, 10, 18)).toBe(true)
+    expect(gather(w, 18, 26)).toBe(true)
     expect(res(w, Ui).carry.map((q) => q.kind)).toEqual(['hay'])
     expect(stockOf(w, 'hay')).toBe(0)
-    for (let i = 1; i < PILE.max; i++) handClick(w, 10.5, 18.5)
+    for (let i = 1; i < PILE.max; i++) handClick(w, 18.5, 26.5)
     expect(res(w, Ui).carry.length).toBe(PILE.max)
     // with the hand full, a gathered one falls beside it
-    expect(gather(w, 10, 18)).toBe(true)
+    expect(gather(w, 18, 26)).toBe(true)
     expect(lying(w)).toEqual(['hay'])
     // the plot north of the market isn't bought yet
-    expect(gather(w, 19, 10)).toBe(false)
+    expect(gather(w, 27, 18)).toBe(false)
   })
   it('a plot with nothing on it is not for sale; a richer one costs more and each purchase raises prices', () => {
     const w = world({ all: false })
-    const p11 = plotPrice(w, 1, 1)
-    expect(p11).toBeGreaterThan(0)
-    expect(buyPlot(w, 1, 1)).toBe(true)
-    expect(plotPrice(w, 2, 1)).toBeGreaterThan(0)
-    // the ring round the start is under the sky until the island grows
-    expect(plotPrice(w, 1, 0)).toBe(0)
-    expect(plotPrice(w, 4, 2)).toBe(0)
+    // the island as the game starts it
+    Object.assign(res(w, Field), ISLAND_START)
+    const p22 = plotPrice(w, 2, 2)
+    expect(p22).toBeGreaterThan(0)
+    expect(buyPlot(w, 2, 2)).toBe(true)
+    expect(plotPrice(w, 3, 2)).toBeGreaterThan(0)
+    // the rings round the start are under the sky until the island grows
+    expect(plotPrice(w, 2, 1)).toBe(0)
+    expect(plotPrice(w, 5, 3)).toBe(0)
+    expect(plotPrice(w, 0, 0)).toBe(0)
     Object.assign(res(w, Field), { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
-    expect(plotPrice(w, 1, 0)).toBeGreaterThan(0)
-    expect(plotPrice(w, 4, 2)).toBeGreaterThan(0)
+    expect(plotPrice(w, 2, 1)).toBeGreaterThan(0)
+    expect(plotPrice(w, 5, 3)).toBeGreaterThan(0)
+    expect(plotPrice(w, 0, 0)).toBeGreaterThan(0)
   })
 })
 
@@ -246,7 +250,7 @@ describe('pens and sheep (GDD 5)', () => {
     const w = world()
     // free own grass, roaming; not off the island, not on a building
     expect(whyNot(w, 'sheep', 18, 14)).toBe('')
-    expect(whyNot(w, 'sheep', 18, 2)).toBe('edge')
+    expect(whyNot(w, 'sheep', 18, -1)).toBe('edge')
     expect(place(w, 'belt', 16, 16, 0)).toBe(true)
     expect(whyNot(w, 'sheep', 16, 16)).toBe('taken')
     const c0 = res(w, GameState).coins
@@ -669,24 +673,24 @@ describe('the salon (GDD 5)', () => {
     expect(stockOf(w, 'wool')).toBe(3)
     // onto the ground: a pile of up to PILE.max; then picked up again, the whole of it
     inHand(w, ...Array.from({ length: PILE.max }, () => 'hay' as const))
-    expect(dropCarry(w, 10.5, 18.5)).toBe(PILE.max)
-    expect(pileAt(w, 10, 18)!.length).toBe(PILE.max)
+    expect(dropCarry(w, 18.5, 26.5)).toBe(PILE.max)
+    expect(pileAt(w, 18, 26)!.length).toBe(PILE.max)
     inHand(w, 'hay')
-    expect(dropCarry(w, 10.5, 18.5)).toBe(0)
+    expect(dropCarry(w, 18.5, 26.5)).toBe(0)
     expect(res(w, Ui).carry.length).toBe(1)
     res(w, Ui).carry = []
-    expect(pickUp(w, 10, 18)).toBe(true)
+    expect(pickUp(w, 18, 26)).toBe(true)
     expect(res(w, Ui).carry.length).toBe(PILE.max)
-    expect(pileAt(w, 10, 18)).toBeUndefined()
+    expect(pileAt(w, 18, 26)).toBeUndefined()
     // one onto an empty belt, the rest stays in the hand
     res(w, Unlocks).unlocked.add('belt')
-    place(w, 'belt', 10, 20, 0, true)
-    expect(dropCarry(w, 10.5, 20.5)).toBe(1)
-    expect(get(w, 10, 20)!.item?.kind).toBe('hay')
+    place(w, 'belt', 18, 28, 0, true)
+    expect(dropCarry(w, 18.5, 28.5)).toBe(1)
+    expect(get(w, 18, 28)!.item?.kind).toBe('hay')
     expect(res(w, Ui).carry.length).toBe(PILE.max - 1)
     // put down when cancelled: on the ground, as near as there is room; never lost — far over the sky, on the nearest
     // own land; never on land for sale
-    putDownCarry(w, 11.5, 18.5)
+    putDownCarry(w, 19.5, 26.5)
     expect(res(w, Ui).carry).toEqual([])
     expect(lying(w).length).toBe(PILE.max - 1)
     inHand(w, 'wool', 'wool')
@@ -775,7 +779,7 @@ describe('the market and its clients (GDD 7–8)', () => {
     expect(whyNot(w, 'belt', MARKET.x + 2, MARKET.y + 2, 0)).toBe('taken')
     // a belt at each way in hands its goods in (the plots round it bought first); one beside a way in does not
     res(w, Unlocks).unlocked.add('belt')
-    res(w, Field).plots.add(key(2, 1)).add(key(3, 2)).add(key(2, 3))
+    res(w, Field).plots.add(key(3, 2)).add(key(4, 3)).add(key(3, 4))
     const [a, b] = MARKET.ports
     const sides: [number, number, Dir][] = [
       [MARKET.x - 1, MARKET.y + a, 0],
@@ -946,17 +950,17 @@ describe('systems (TDD 3)', () => {
     expect(res(w, Fx).q.map((e) => e.kind)).toEqual(['puff'])
     // the farm still works: a good rides its belt; with the belts off it stands
     res(w, Unlocks).unlocked.add('belt')
-    place(w, 'belt', 9, 17, 0, true)
-    place(w, 'belt', 10, 17, 0, true)
-    const b = get(w, 9, 17)!
+    place(w, 'belt', 17, 25, 0, true)
+    place(w, 'belt', 18, 25, 0, true)
+    const b = get(w, 17, 25)!
     b.item = newItem('wool')
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 10, 17)!.item?.kind).toBe('wool')
+    expect(get(w, 18, 25)!.item?.kind).toBe('wool')
     res(w, Systems).on.delete('belts')
-    const it = get(w, 10, 17)!.item!
+    const it = get(w, 18, 25)!.item!
     const p = it.p
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 10, 17)!.item).toBe(it)
+    expect(get(w, 18, 25)!.item).toBe(it)
     expect(it.p).toBe(p)
   })
 })

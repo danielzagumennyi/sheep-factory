@@ -1,10 +1,10 @@
-import { MARKET, RES, type Dir, type TerrainId } from './balance'
+import { GRID, MARKET, RES, type Dir, type TerrainId } from './balance'
 import { Field, Plant, key, res, type World } from './world'
 
 /**
- * For the tests of the rules that have nothing to do with the market or the map: the field with the market taken off
- * and bare of terrain and hills, so the land in the middle is open. Their first pen stands at (11, 11) facing east
- * (`TEST_PEN`). The market's own tests keep it.
+ * For the tests of the rules that have nothing to do with the market or the map: the field with the market taken off,
+ * bare of terrain and hills, and the island risen whole, so any land the test buys is open. Their first pen stands at
+ * (11, 11) facing east (`TEST_PEN`). The market's own tests keep it.
  */
 export const TEST_PEN = { x: 11, y: 11, dir: 0 as Dir }
 export function openField(w: World) {
@@ -17,6 +17,7 @@ export function openField(w: World) {
   f.terrain.clear()
   f.res.clear()
   f.hills.clear()
+  Object.assign(f, { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
   return w
 }
 
