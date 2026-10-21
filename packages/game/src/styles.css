@@ -401,6 +401,17 @@ button:focus-visible {
   left: 12px;
   bottom: 70px;
 }
+/* what the hand carries, beside the stock */
+.ov-hand {
+  left: 84px;
+  bottom: 70px;
+}
+.hand {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 8px;
+}
 .stock {
   display: flex;
   flex-direction: column;
@@ -1329,4 +1340,78 @@ button:focus-visible {
 }
 .up {
   font-variant-numeric: tabular-nums;
+}
+
+/* ===== the scissors that follow the hand over a fluffy sheep (ShearCursor.tsx) ===== */
+body.is-shearing canvas {
+  cursor: none;
+}
+.shear {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+/* the blades' tips on the pointer, tilted like an arrow */
+.shear__svg {
+  position: absolute;
+  left: -24px;
+  top: -5px;
+  transform: rotate(-28deg);
+  transform-origin: 24px 5px;
+  filter: drop-shadow(0 2px 0 rgba(58, 53, 80, 0.25));
+}
+.shear__a,
+.shear__b {
+  transform-box: view-box;
+  transform-origin: 24px 31px;
+}
+.shear__a {
+  transform: rotate(-16deg);
+}
+.shear__b {
+  transform: rotate(16deg);
+}
+.shear--snip .shear__a {
+  animation: snip-a 0.18s ease-in-out;
+}
+.shear--snip .shear__b {
+  animation: snip-b 0.18s ease-in-out;
+}
+.shear--snip .shear__svg {
+  animation: snip-nudge 0.18s ease-out;
+}
+@keyframes snip-a {
+  45% {
+    transform: rotate(-1deg);
+  }
+}
+@keyframes snip-b {
+  45% {
+    transform: rotate(1deg);
+  }
+}
+@keyframes snip-nudge {
+  40% {
+    transform: rotate(-22deg) scale(0.92);
+  }
+}
+/* how many clicks of the three are done */
+.shear__dots {
+  position: absolute;
+  left: 14px;
+  top: 56px;
+  display: flex;
+  gap: 4px;
+}
+.shear__dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 1.5px #3a3550;
+}
+.shear__dots i.on {
+  background: #e0607e;
 }

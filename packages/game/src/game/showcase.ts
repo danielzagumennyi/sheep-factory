@@ -20,8 +20,7 @@ export function buildShowcase(w: World, warmup = 90) {
   for (const t of TOOL_ORDER) un.unlocked.add(t)
   gs.coins += 50_000
   gs.food = true
-  f.top = 0
-  f.right = GRID.cols
+  Object.assign(f, { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
   for (let py = 0; py * GRID.plotH < GRID.rows; py++) for (let px = 0; px * GRID.plotW < GRID.cols; px++) f.plots.add(key(px, py))
   gs.fieldVersion++
   gs.trade = true

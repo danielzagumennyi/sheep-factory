@@ -1,7 +1,8 @@
-import { BATH_YIELD, BELT, BUILDINGS, COLORED, LOOK, PRODUCERS, SEED, SHEAR_YIELD, SHEEP, SOW, STEPS, type BuildingId, type Dir, type ItemId, type ResId, type StationId } from '../balance'
-import { freeCell, get, inGrid, isMachine, outCells, pastureAt, reachOf, sowable } from '../grid'
+import { BATH_YIELD, BUILDINGS, COLORED, LOOK, PRODUCERS, SEED, SHEAR_YIELD, SHEEP, SOW, STEPS, type BuildingId, type Dir, type ItemId, type ResId, type StationId } from '../balance'
+import { freeCell, get, inGrid, isMachine, outCells, pastureAt, pileAt, pileOk, reachOf, sowable } from '../grid'
 import { Field, GameState, Plant, key, newItem, noMarks, puff, res, unkey, type Building, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
+import { putPile } from './ground'
 import { toRoam } from './sheep'
 
 /**
@@ -116,7 +117,8 @@ function finishMachine(w: World, m: Building) {
 
 /**
  * One finished output tries to leave. It goes to whatever takes it on an output cell (a belt, a pen, a dock, a
- * machine); a full receiver makes it wait. With nothing there it drops onto a small pile on a free output cell. A sheep
+ * machine); a full receiver makes it wait. With nothing there it drops onto a pile on the ground by an output cell
+ * (PILE), the same pile while it has room; a full one makes it wait. A sheep
  * with nowhere to go roams off over the own land (the author, 19.10.2026: «просто дальше бегают по всей территории»).
  */
 function pushOut(w: World, m: Building, o: Building['outs'][number]) {
@@ -146,12 +148,10 @@ function pushOut(w: World, m: Building, o: Building['outs'][number]) {
     m.status = 'jam'
     return false
   }
-  // no belt: a pile on one output cell (the same cell while the pile lasts)
-  const spot = m.pile.length ? cells.find((c) => c.x === m.pileX && c.y === m.pileY) : cells.find((c) => freeCell(w, c.x, c.y))
-  if (spot && m.pile.length < BELT.pileMax && freeCell(w, spot.x, spot.y)) {
-    m.pile.push(o.item)
-    m.pileX = spot.x
-    m.pileY = spot.y
+  // no belt: onto the pile already lying by an output cell, else a new one on the first that may hold one
+  const spot = cells.find((c) => pileAt(w, c.x, c.y)) ?? cells.find((c) => pileOk(w, c.x, c.y))
+  // it slides out of the machine's way out onto the pile
+  if (spot && putPile(w, spot.x, spot.y, [o.item], { x: spot.sx + 0.5, y: spot.sy + 0.5, h: 0.4 }).length) {
     m.status = ''
     return true
   }

@@ -1,7 +1,8 @@
 import { DIRS, type ItemId } from '@/game/balance'
 import { beltInDir, feeds, get, inCell, isBeltLike, isStation, outCells, targetOk } from '@/game/grid'
-import { Flock, Plant, res, type SheepT, type World } from '@/game/world'
+import { Field, Flock, Fx, Plant, Ui, res, unkey, type SheepT, type World } from '@/game/world'
 import { beltPoint } from './kit'
+import { HEAP, startFall, stepFalls } from './falls'
 
 /**
  * What the views draw this frame, gathered once by GameLoop right after the simulation steps: where every good on a
@@ -24,6 +25,8 @@ export const frame = {
   /** How far that clock moved this frame. */
   dt: 0,
   goods: [] as GoodSpot[],
+  /** The goods in the hand: a little stack under the pointer, drawn over everything (Items.tsx). */
+  carry: [] as GoodSpot[],
   /** Each sheep drawn: where, facing, inside a machine, and `lift` — a roaming one stepping over a belt walks on it. */
   sheep: new Map<SheepT, { x: number; z: number; yaw: number; inMachine: boolean; lift?: number }>(),
   /** Belt cells with their input side, for the belt view. */
@@ -35,10 +38,41 @@ const yawOfDir = (d: number) => -d * (Math.PI / 2)
 const BELT_LIFT = 0.2,
   PLINTH_LIFT = 0.14
 
-export function collectFrame(world: World) {
+/** How high over the ground the stack in the hand is held: the pointer's ray is met there (GameLoop.tsx). */
+export const CARRY_Y = 1.2
+
+export function collectFrame(world: World, carryAt: { x: number; z: number } | null = null) {
   frame.goods.length = 0
+  frame.carry.length = 0
   frame.sheep.clear()
   frame.belts.length = 0
+  // the goods on the ground, a heap on each cell (PILE) — those still falling there in the air (falls.ts), their places
+  // in the heap empty till they land
+  const piles = res(world, Field).piles
+  // the falls just set off (by this frame's steps, or a click since the last frame) start here, not in FxView, which
+  // runs after this: else their goods would show in their places for a frame before they fly
+  const q = res(world, Fx).q
+  let j = 0
+  for (const e of q)
+    if (e.kind === 'fall') startFall(e)
+    else q[j++] = e
+  q.length = j
+  const falling = stepFalls(
+    frame.dt,
+    (cell) => piles.get(cell)?.length ?? 0,
+    (kind, x, y, z) => frame.goods.push({ kind, x, z, y }),
+  )
+  for (const [k, items] of piles) {
+    const [x, y] = unkey(k)
+    items.forEach((it, i) => {
+      if (falling.has(k + ':' + i)) return
+      const [dx, dz, dy] = HEAP[i % HEAP.length]!
+      frame.goods.push({ kind: it.kind as ItemId, x: x + 0.5 + dx, z: y + 0.5 + dz, y: dy })
+    })
+  }
+  // what the hand carries, a little stack where the pointer's ray meets CARRY_Y
+  const ui = res(world, Ui)
+  if (ui.carry.length && carryAt) ui.carry.forEach((it, i) => frame.carry.push({ kind: it.kind as ItemId, x: carryAt.x + (i % 2 ? 0.08 : -0.08), z: carryAt.z, y: CARRY_Y + i * 0.13 }))
   const plant = res(world, Plant)
   for (const b of plant.b.values()) {
     if (isBeltLike(b)) {
@@ -55,14 +89,8 @@ export function collectFrame(world: World) {
           // the hand picks sheep by position: keep a riding sheep's position current
           it.sheep.px = px
           it.sheep.py = py
-        }
-        else frame.goods.push({ kind: it.kind as ItemId, x: px, z: py, y: 0.255 })
+        } else frame.goods.push({ kind: it.kind as ItemId, x: px, z: py, y: 0.255 })
       }
-    }
-    if (b.pile.length) {
-      const px = b.pileX + 0.5,
-        pz = b.pileY + 0.5
-      b.pile.forEach((it, i) => frame.goods.push({ kind: it.kind as ItemId, x: px - 0.18 + i * 0.18, z: pz + 0.1 - i * 0.08, y: 0.1 + i * 0.05 }))
     }
     // a station's sheep walks its lane under the arch while it is worked on, from the way in to the way out, and waits at
     // the way out for room: so what the salon did to it shows as it goes (the author, 19.10.2026)

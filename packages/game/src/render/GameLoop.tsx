@@ -1,16 +1,17 @@
 import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Vector3 } from 'three'
+import { Plane, Raycaster, Vector3 } from 'three'
 import { KeyInput } from '@kit/input'
 import { CAMERA, COLORED, GRID, ITEMS, LEVELS, TOOL_ORDER, type ItemId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { buildPrice, get, outCells, residents } from '@/game/grid'
+import { buildPrice, get, outCells, pilesBy, residents } from '@/game/grid'
 import { remove, rotate } from '@/game/actions/build'
 import { createBot, runBot } from '@/game/bot'
 import { buildShowcase } from '@/game/showcase'
 import { buildStress, feedStress } from '@/game/stress'
 import { FIXED_DT, isFrozen, stepSimulation } from '@/game/systems'
 import { hungry, loopHasFeeder } from '@/game/systems/sheep'
+import { putDownCarry } from '@/game/actions/hand'
 import { contentBar } from '@/game/systems/village'
 import { startWorld } from '@/game/start'
 import { Field, Flock, GameState, Market, Plant, Stock, Time, Ui, Unlocks, isOn, penOf, res, stockOf, type World } from '@/game/world'
@@ -21,7 +22,8 @@ import { renderSheepSheet } from './sheepSheet'
 import { useHudStore, type GoalHud } from '@/ui/hudStore'
 import { setTool } from '@/ui/actions'
 import { cam, clampCam, fitOwned, turnCam } from './camera'
-import { collectFrame, frame } from './frame'
+import { CARRY_Y, collectFrame, frame } from './frame'
+import { pointer } from './pick'
 
 /** At most this many fixed steps per frame (×4 speed at 60 fps needs four). */
 const MAX_STEPS = 8
@@ -71,13 +73,16 @@ export function GameLoop() {
           else gs().speed = gs().speed === 0 ? 1 : 0
         }),
       ),
-      // Esc steps back one thing at a time: a card, the book, the menu, the tool or selection — and then opens the menu
+      // Esc steps back one thing at a time: a card, the book, the menu, the goods in the hand (put down under it), the
+      // tool or selection — and then opens the menu
       k.on('cancel', () => {
         const app = useAppStore.getState()
         if (res(world, Unlocks).cardQ.length) return void res(world, Unlocks).cardQ.shift()
         if (app.book) return app.setBook(false)
         if (app.screen !== 'run') return
         if (app.menuOver) return app.closeMenu()
+        const h = ui().hover
+        if (ui().carry.length && h) return putDownCarry(world, h.wx, h.wy)
         if (ui().tool !== 'hand' || ui().sel || ui().pending) {
           setTool(world, 'hand')
           ui().sel = null
@@ -283,7 +288,13 @@ export function GameLoop() {
       if (k.held('turnRight')) turnCam(CAMERA.turnKeys * delta)
       clampCam()
     }
-    collectFrame(world)
+    // the goods in the hand ride under the pointer, held up at CARRY_Y
+    let carryAt: { x: number; z: number } | null = null
+    if (res(world, Ui).carry.length && pointer.inside) {
+      carryRay.setFromCamera(pointer.ndc, camera)
+      if (carryRay.ray.intersectPlane(carryPlane, _hit)) carryAt = { x: _hit.x, z: _hit.z }
+    }
+    collectFrame(world, carryAt)
     if (isOn(world, 'hud') && ++hudN.current >= HUD_EVERY) {
       hudN.current = 0
       pushHud(world, camera, size)
@@ -292,7 +303,10 @@ export function GameLoop() {
   return null
 }
 
-const _v = new Vector3()
+const _v = new Vector3(),
+  _hit = new Vector3()
+const carryRay = new Raycaster(),
+  carryPlane = new Plane(new Vector3(0, 1, 0), -CARRY_Y)
 let autoTimer = 0
 let stressTimer = 0
 
@@ -311,13 +325,16 @@ function goalOf(world: World): GoalHud {
   const plant = [...res(world, Plant).b.values()]
   const roaming = flock.sheep.filter((s) => s.state === 'roam')
   if (gs.level === 0 && roaming.some((s) => s.wool >= 1)) return { tone: 'plain', icon: 'shear', text: 'shearGoal' }
+  // what the hand shore lies beside the sheep: to the market by hand, before there is a belt (PILE)
+  const woolAbout = [...res(world, Field).piles.values(), res(world, Ui).carry].some((p) => p.some((q) => q.kind === 'wool'))
+  if (gs.level <= SHEARER_LEVEL && !un.unlocked.has('belt') && woolAbout) return { tone: 'plain', icon: 'wool', text: 'carryGoal' }
   if (un.unlocked.has('pen') && !flock.pastures.length) return { tone: 'plain', icon: 'pen', text: 'penGoal' }
   if (gs.level <= SHEARER_LEVEL && un.unlocked.has('shearer') && !plant.some((b) => b.type === 'shearer')) return { tone: 'plain', icon: 'shearer', text: 'shearerGoal' }
   if (un.unlocked.has('belt') && !plant.some((b) => b.type === 'belt')) return { tone: 'plain', icon: 'belt', text: 'loopGoal' }
   if (roaming.length && flock.pastures.some((p) => residents(world, p) < p.cap)) return { tone: 'plain', icon: 'sheep', text: 'waitingGoal' }
   // the shearer's wool piling up beside it with nothing on its wool side: a belt takes it to the post
   const woolPiles = plant.some((b) => {
-    if (b.type !== 'shearer' || !b.pile.length) return false
+    if (b.type !== 'shearer' || !pilesBy(world, b).length) return false
     const c = outCells(b).find((o) => o.d === (b.dir + 1) % 4)
     return !!c && !get(world, c.x, c.y)
   })
@@ -355,7 +372,7 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
       const b = res(world, Plant).b.get(sel.key)
       if (b) _v.set(b.x + b.w, 0.6, b.y + 0.2)
       else ui.sel = null
-    } else if (sel.kind === 'plot') _v.set((sel.px + 0.5) * GRID.plotW, 0.3, sel.py * GRID.plotH + 1)
+    } else if (sel.kind === 'plot') _v.set((sel.px + 0.5) * GRID.plotW, 0.3, (sel.py + 0.5) * GRID.plotH)
     else {
       const p = penOf(world, sel.id)
       if (p) _v.set(p.x + p.w, 0.3, p.y)
@@ -372,6 +389,7 @@ function pushHud(world: World, camera: Parameters<typeof _v.project>[0], size: {
     noMoney: gs.noMoney,
     pauseNudge: gs.pauseNudge,
     stock: { ...res(world, Stock).n },
+    hand: res(world, Ui).carry.map((q) => q.kind as ItemId),
     clock: gs.clock,
     level: gs.level + 1,
     speed: gs.speed,

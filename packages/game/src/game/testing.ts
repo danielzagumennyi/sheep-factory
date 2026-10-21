@@ -2,9 +2,9 @@ import { MARKET, RES, type Dir, type TerrainId } from './balance'
 import { Field, Plant, key, res, type World } from './world'
 
 /**
- * For the tests of the rules that have nothing to do with the market: the field with the market taken off, so the land
- * in the middle of the start is open, as it was before the market stood there (21.10.2026). Their first pen stands
- * where the first pen stood then, at (11, 11) facing east (`TEST_PEN`). The market's own tests keep it.
+ * For the tests of the rules that have nothing to do with the market or the map: the field with the market taken off
+ * and bare of terrain and hills, so the land in the middle is open. Their first pen stands at (11, 11) facing east
+ * (`TEST_PEN`). The market's own tests keep it.
  */
 export const TEST_PEN = { x: 11, y: 11, dir: 0 as Dir }
 export function openField(w: World) {
@@ -12,6 +12,11 @@ export function openField(w: World) {
     at = key(MARKET.x, MARKET.y)
   plant.b.delete(at)
   for (const [k, v] of [...plant.occ]) if (v === at) plant.occ.delete(k)
+  // nor the map's terrain and hills: each test lays what it needs (putTerrain)
+  const f = res(w, Field)
+  f.terrain.clear()
+  f.res.clear()
+  f.hills.clear()
   return w
 }
 

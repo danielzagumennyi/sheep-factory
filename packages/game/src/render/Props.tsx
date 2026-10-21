@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { GRID } from '@/game/balance'
 import { key } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
@@ -26,18 +25,16 @@ export function Props() {
     // the rim fence along the field's own edge, a cell in from the island's, all round. A span carries its post at one end
     // (the west one along x, the south one along z); a post closes every other end, so none stops in mid-air (the
     // author, 20.10.2026)
-    const x1 = island.right,
-      z0 = island.top,
-      z1 = GRID.rows
+    const { left: x0, top: z0, right: x1, bottom: z1 } = island
     const ends = new Set<string>(),
       posted = new Set<string>()
     for (const fz of [z0, z1])
-      for (let x = 0; x < x1; x++) {
+      for (let x = x0; x < x1; x++) {
         b.fence.put(x + 0.5, 0, fz, 0)
         ends.add(key(x, fz)).add(key(x + 1, fz))
         posted.add(key(x, fz))
       }
-    for (const fx of [0, x1])
+    for (const fx of [x0, x1])
       for (let z = z0; z < z1; z++) {
         b.fence.put(fx, 0, z + 0.5, Math.PI / 2)
         ends.add(key(fx, z)).add(key(fx, z + 1))
@@ -50,7 +47,7 @@ export function Props() {
       }
     // the rim's trees, each in the middle of its cell of the ring round the field
     for (let y = z0 - 1; y < z1; y++)
-      for (let x = -1; x <= x1; x++) {
+      for (let x = x0 - 1; x <= x1; x++) {
         const t = rimTree(x, y)
         if (t) (t.fir ? b.trees : b.pines).put(x + 0.5, 0, y + 0.5, t.yaw, t.size)
       }

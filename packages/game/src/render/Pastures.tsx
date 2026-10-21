@@ -17,7 +17,7 @@ import type { Group } from 'three'
  * leave and where they come back (the author: «калитки, которые открыты в определённую сторону»). Its model is the one
  * it has in hand when it is placed (machineModels.ts), and its tag says how many of its four places are taken. When its hungry
  * sheep have no feeder with hay on their loop, one hay bubble over the pen says so (not one per sheep: the author) —
- * a click on a sheep feeds it from the stock.
+ * a click on a sheep with hay in the hand feeds it.
  */
 export function Pastures() {
   const { world } = useGame()

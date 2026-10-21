@@ -8,28 +8,40 @@ import { RECT, type Spot } from './land'
 // ---------------------------------------------------------------- world (GDD 2)
 
 /**
- * The field: 48×20 cells, cut into 8×5 plots, with the market in the middle of the land the game starts on (MARKET).
- * Only part of it is the island at the start (ISLAND_START): the rest is under the sky until the island grows
- * (ISLAND_GROW).
+ * The field: 40×40 cells, square (the author, 21.10.2026: «карту сделай квадратной»), cut into 5×5 plots of 8×8, with
+ * the market on the middle plot (MARKET). Only part of it is the island at the start (ISLAND_START): the rest is under
+ * the sky until the island grows (ISLAND_GROW).
  */
-export const GRID = { cols: 48, rows: 20, plotW: 8, plotH: 5 } as const
-/** The island at the start: the rows from `top` down, the columns left of `right`. */
-export const ISLAND_START = { top: GRID.plotH, right: 32 } as const
-/** One growth of the island: its new edge. */
-export interface GrowDef {
+export const GRID = { cols: 40, rows: 40, plotW: 8, plotH: 8 } as const
+/** The island's edges, cells: from `left` to before `right`, from `top` to before `bottom`. */
+export interface IslandEdges {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+/** The island at the start: the middle 3×3 plots, the market's and the ring round it. */
+export const ISLAND_START: IslandEdges = { left: GRID.plotW, top: GRID.plotH, right: 4 * GRID.plotW, bottom: 4 * GRID.plotH }
+/** One growth of the island: its new edges. */
+export interface GrowDef extends Partial<IslandEdges> {
   level: number
-  top?: number
-  right?: number
 }
 /**
- * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), at these levels: twice a
- * column of plots rises in the east, then the far row. The new plots hold fresh deposits, for sale.
+ * The island grows three times (the author, 17.10.2026: «остров растёт несколько раз»), ring by ring round the market,
+ * at these levels: the column of plots in the east, then the row in the south, then the rest — the west and the north.
+ * The new plots hold fresh deposits, for sale.
  */
 export const ISLAND_GROW: readonly GrowDef[] = [
-  { level: 7, right: 40 },
-  { level: 12, right: 48 },
-  { level: 14, top: 0 },
+  { level: 7, right: GRID.cols },
+  { level: 12, bottom: GRID.rows },
+  { level: 14, left: 0, top: 0 },
 ]
+/**
+ * Hills (the author, 21.10.2026: «добавь ещё ландшафт, 2–3 уровень высоты, на нём строить нельзя»): the ground is the
+ * first level, a hill rises to the second or the third — `tier` cells a step. Nothing stands on a hill: no building,
+ * pen, sheep or deposit. Each lies inside one plot, off its edge rows and columns (MAP_HILLS).
+ */
+export const HILL = { tier: 0.55 } as const
 
 /** The long game is kept as it goes (app/saves.ts): every this many seconds, besides when the page is hidden or left. */
 export const SAVE = { everySec: 5 } as const
@@ -46,9 +58,24 @@ export type Dir = 0 | 1 | 2 | 3
 // ---------------------------------------------------------------- hands, belts, machines (GDD 3–4)
 
 export const HAND = {
-  /** A fluffy sheep is shorn by hand in this many clicks; every other gathering is one click, one item (into the stock). */
+  /** A fluffy sheep is shorn by hand in this many clicks; what it gives falls beside it. Gathering is one click, one item into the hand. */
   shearClicks: 3,
+  /** Heights goods fall from: a shorn sheep's back, the hand (as its stack is held, render/frame.ts CARRY_Y). */
+  fallFrom: 0.6,
+  carryAt: 1.2,
 } as const
+/**
+ * Goods on the ground (GDD 3; the author, 21.10.2026: «смысл конвейером, двигать без конвейера игрок может двигать
+ * сам»): nothing counts or moves by itself — what the hand shears or gathers, what a machine with no belt gives out,
+ * what was in a building taken off lies in a pile on its cell (or the nearest of own land) until the hand carries it. A pile
+ * holds up to `max`, and the hand carries one pile's worth.
+ */
+export const PILE = { max: 6 } as const
+/**
+ * The balance bot's hand (game/bot.ts): one hand, as the player's — a pick, a drop or a click takes `act` seconds, and
+ * it moves `speed` cells a second between them, as a pointer drags across the field.
+ */
+export const BOT = { hand: { act: 0.5, speed: 14 } } as const
 
 export const BELT = {
   /**
@@ -58,11 +85,9 @@ export const BELT = {
   speed: 80 / 60,
   /** A machine holds this many of each input; more waits on the belt. */
   bufMax: 4,
-  /** A machine with no belt at its output drops up to this many items beside itself. */
-  pileMax: 3,
   /** A merger buffers this many items. */
   mergerBuf: 2,
-  /** A good stuck in front of the sheep's lane for this long jumps into the stock, so the loop never stops (GDD 4.4). */
+  /** A good stuck in front of the sheep's lane for this long falls off the belt beside it, so the loop never stops (GDD 4.4). */
   strayAfter: 1.2,
 } as const
 
@@ -99,6 +124,13 @@ export const SHEEP = {
  * it will land from the moment it is bought, growing as it comes down (radius in cells, how dark).
  */
 export const DROP = { fall: 1.9, land: 0.6, height: 6, mark: { from: 0.12, to: 0.35, opacity: 0.28 } } as const
+
+/**
+ * A good falling onto a pile (render/falls.ts; the author, 21.10.2026: шерсть должна «падать», а не просто мгновенно
+ * появляться рядом): `base` seconds and `perCell` more for each cell it flies, an arc `arc` high, each of one fall
+ * `stagger` seconds after the one before; on the ground it hops `hop` high for `bounce` seconds, a little dust going up.
+ */
+export const FALL = { base: 0.32, perCell: 0.12, arc: 0.45, stagger: 0.09, bounce: 0.22, hop: 0.13 } as const
 
 /**
  * A sheep with no pen roams the own land (the author, 19.10.2026: «овцы вообще просто бегают по всей территории»): to a
@@ -258,7 +290,7 @@ export const BUILDINGS: Readonly<Record<BuildingId, BuildingDef>> = {
   seeder: { cost: 200, time: 3, sows: true, size: [2, 1] },
   splitter: { cost: 30, onBelt: true },
   merger: { cost: 20, onBelt: true },
-  /** Sowing by hand: a click on an empty own cell puts a seed there from the stock (no coins). */
+  /** Sowing by hand: a click on an empty own cell puts a seed there from the hand (no coins). */
   sow: { cost: 0 },
 }
 
@@ -270,12 +302,13 @@ export function dimsOf(type: BuildingId, dir: Dir): [number, number] {
 /**
  * The market (the author, 21.10.2026: «большой рынок куда будут идти все товары», «в центре»): one building of
  * `size`×`size` cells with its top-left cell at (x, y), in the middle of the land the game starts on, like the tower of
- * Tower Factory. A belt brought to any of its sides, or a machine's way out facing it, hands it its goods; they go into
- * the stock, where the clients take them (CLIENT). The stock keeps up to `keep` of each good that comes by belt — past
+ * Tower Factory. Its ways in are fixed, like the tower's (the author, 21.10.2026: «понятные точки подключения как это
+ * сделано в tower factory»): two on each side, `ports` cells along it from its corner. A belt brought to one, or a
+ * machine's way out facing it, hands it its goods; they go into the stock, where the clients take them (CLIENT); so does what the hand brings. The stock keeps up to `keep` of each good — past
  * that the market sells it at once for a quarter, so no line ever jams, and no farm can pile up one good and turn its
  * line to another: the clients must be fed all the time.
  */
-export const MARKET = { x: 12, y: 10, size: 8, keep: 10 } as const
+export const MARKET = { x: 16, y: 16, size: 8, ports: [2, 5], keep: 10 } as const
 
 /** Hotbar order; only unlocked tools are shown. */
 export const TOOL_ORDER: readonly BuildingId[] = [
@@ -354,7 +387,7 @@ export const RIM = { trees: 0.6, size: [0.75, 0.85] } as const
  */
 export const GRASS = { leaves: 8, height: 0.14, width: 0.12, grid: 6, cap: 48000, inset: 0.5 } as const
 
-/** The sun's shadow map, texels a side: 2048 over the 48-cell frustum is ~0.02 of a cell, soft and cheap. */
+/** The sun's shadow map, texels a side: 2048 over the 60-cell frustum round the square island is ~0.03 of a cell, soft and cheap. */
 export const SHADOW = { map: 2048 } as const
 /** The soft dark halo painted into the ground round whatever stands on it, in place of screen-space AO. */
 export const CONTACT = { building: 0.32, belt: 0.16, blur: 6 } as const
@@ -423,6 +456,8 @@ export const LOOK = {
   contact: '#2f4a12',
   soil: '#a8724a',
   lip: '#8abe30',
+  /** The hills (render/Hills.tsx): the grass of their tops (the third level's a touch lighter) and the soil of their steps. */
+  hill: { top: '#8cc131', high: '#9bcf45', side: '#b07a4e' },
   /** The cell grid, shown only while building. */
   grid: 'rgba(10, 40, 0, 0.7)',
   meadow: '#b6dc6a',
@@ -501,8 +536,8 @@ export const LOOK = {
   chuteCord: '#f4ede4',
   /**
    * The market's hall (render/models.ts `marketHall`): its plinth and the pastel tiles round the hall, walls, the inside
-   * seen through a door, the striped awning all round (its two colours), the top roof and its eaves' band, the coin on
-   * top; the boards of the clients' signs.
+   * seen through a door, the striped awning all round (its coral also its ways in's rails and its windows' shutters,
+   * its cream their chevrons), the top roof and its eaves' band, the coin on top.
    */
   marketStone: '#d9cfbf',
   marketTiles: ['#ecdfc5', '#e2d2b2', '#f1e8d4'] as const,
@@ -512,12 +547,8 @@ export const LOOK = {
   marketRoof: '#7ccfc0',
   marketRoofEave: '#58b3a4',
   marketCoin: '#f5c542',
-  signBoard: '#fff8ea',
-  /** Each client's colour: its sign's frame, its row in the HUD. */
+  /** Each client's colour: its name in the HUD, its dot in the market's window. */
   client: { post: '#5b8fd6', shop: '#e0607e', atelier: '#9b6fd6', cobbler: '#b0794a', school: '#f2b84b', fair: '#e2553f' } as Record<ClientId, string>,
-  /** The bar of a client's contentment, and its track. */
-  barFill: '#5cc76a',
-  barFull: '#3fbf5a',
   /** The spot on the grass where a bought sheep will land. */
   dropMark: '#2f5214',
   hay: '#e2c15e',
@@ -616,17 +647,17 @@ export const AFTER = { grow: 1.1 } as const
 
 /**
  * How the game starts: coins for the first pen, the shearer and the belt loop that brings its sheep back; four fluffy
- * sheep roaming round where the first pen will stand (`pen`, the bot's), and the four central plots.
+ * sheep roaming round where the first pen will stand (`pen`, the bot's, west of the market), the market's plot and the
+ * two west and south-west of it.
  */
 export const START = {
   coins: 80,
   sheep: 4,
-  pen: { x: 9, y: 17, dir: 3 as Dir },
+  pen: { x: 13, y: 23, dir: 3 as Dir },
   plots: [
-    [1, 2],
     [2, 2],
+    [1, 2],
     [1, 3],
-    [2, 3],
   ] as readonly Spot[],
 } as const
 
@@ -636,44 +667,73 @@ const RECTS = (...r: [number, number, number, number][]) => r.flatMap(([x0, y0, 
 /**
  * The terrain, placed by hand so the farm has room to grow the way the bot builds it round the market (game/plan.ts):
  * a meadow by each loop's mower, bushes by the dye station's berry picker, a pond by the felting loop's bath (and one in
- * the west, for the player's), every plot but the four of the start with its own deposit so each one is worth buying
- * (the author, 14.10.2026: «какой смысл от остальных»), meadow under the market for hay by hand, and a few trees and
- * stones. The east columns and the top row are the land that rises as the island grows (ISLAND_GROW).
+ * the west, for the player's), every plot but those of the start with its own deposit so each one is worth buying (the
+ * author, 14.10.2026: «какой смысл от остальных»), a meadow on the start's land for hay by hand, and a few trees and
+ * stones. The ring round the start's 3×3 plots is the land that rises as the island grows (ISLAND_GROW).
  */
 export const MAP_TERRAIN: Partial<Record<TerrainId, Spot[]>> = {
   meadow: RECTS(
-    // by each loop's mower: A's north-west of the market, E's, W's, X's, S's, Y's
-    [8, 6, 10, 8],
-    [31, 11, 31, 13],
-    [33, 6, 34, 8],
-    [43, 12, 44, 14],
-    [34, 17, 35, 19],
-    [27, 2, 28, 4],
-    // under the market, on the land the game starts with: hay by hand
-    [13, 19, 16, 19],
+    // by each loop's mower: A's, W's, S's, E's, X's, Y's
+    [12, 12, 14, 14],
+    [29, 13, 31, 15],
+    [37, 21, 39, 22],
+    [26, 30, 28, 31],
+    [37, 30, 39, 31],
+    [33, 34, 35, 36],
+    // on the land the game starts with: hay by hand
+    [9, 27, 11, 28],
     // a deposit in every other plot
-    [2, 1, 4, 2],
-    [9, 1, 10, 2],
-    [34, 1, 36, 2],
-    [1, 11, 2, 12],
-    [17, 6, 18, 7],
-    [24, 8, 26, 8],
-    [42, 6, 44, 7],
-    [35, 13, 36, 13],
-    [43, 17, 45, 18],
+    [18, 8, 20, 9],
+    [19, 30, 21, 31],
+    [20, 37, 22, 38],
+    [26, 37, 28, 38],
+    [5, 5, 6, 6],
+    [17, 6, 19, 7],
+    [26, 2, 28, 3],
+    [2, 10, 4, 12],
+    [2, 25, 4, 27],
+    [5, 33, 6, 34],
+    [10, 34, 12, 35],
   ),
-  bush: RECTS([29, 18, 29, 19], [17, 3, 18, 3], [42, 1, 44, 2], [2, 6, 4, 7], [1, 17, 3, 18]),
+  bush: RECTS([31, 21, 33, 22], [10, 2, 12, 3], [33, 6, 35, 7], [6, 22, 7, 23], [36, 10, 37, 12]),
   tree: [
-    [5, 8],
-    [0, 15],
-    [39, 18],
-    [46, 9],
-    [31, 3],
+    [6, 14],
+    [25, 9],
+    [14, 38],
+    [36, 23],
+    [22, 1],
   ],
   rock: [
-    [6, 19],
-    [47, 15],
-    [12, 4],
+    [8, 31],
+    [30, 38],
+    [3, 7],
   ],
-  water: RECTS([35, 8, 36, 9], [3, 15, 4, 16]),
+  water: RECTS([32, 23, 34, 24], [2, 30, 3, 31]),
 }
+
+/**
+ * The hills (HILL), as inclusive rectangles of the second level and of the third on top of them: some on the start's
+ * land, the rest in the ring that rises, where the bot's farm does not go.
+ */
+export const MAP_HILLS: readonly (readonly [level: 2 | 3, x0: number, y0: number, x1: number, y1: number])[] = [
+  // on the start's island: a knoll south of the first pen, a mound north-east of the market, one north-west of it
+  [2, 12, 28, 14, 30],
+  [3, 13, 29, 13, 29],
+  [2, 29, 9, 30, 10],
+  [2, 9, 9, 11, 10],
+  // the ring
+  [2, 1, 1, 4, 3],
+  [3, 2, 2, 3, 2],
+  [2, 33, 1, 37, 4],
+  [3, 34, 2, 36, 3],
+  [2, 2, 34, 4, 38],
+  [3, 3, 35, 3, 37],
+  [2, 17, 2, 21, 4],
+  [3, 18, 3, 20, 3],
+  [2, 2, 17, 5, 20],
+  [3, 3, 18, 4, 19],
+  [2, 36, 36, 38, 38],
+  [3, 37, 37, 37, 37],
+]
+/** The level of each hill's cell, 2 or 3 (the ground's is 1, and not here). */
+export const HILLS: ReadonlyMap<string, number> = new Map(MAP_HILLS.flatMap(([l, x0, y0, x1, y1]) => RECT(x0, y0, x1, y1).map(([x, y]) => [x + ',' + y, l] as const)).sort((a, b) => a[1] - b[1]))

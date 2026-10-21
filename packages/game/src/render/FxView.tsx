@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { playSound } from '@/audio'
@@ -9,6 +9,7 @@ import { FX_TEXT } from '@/i18n/content'
 import { GEO, mat } from './kit'
 import { Batch, useInstanced } from './instancing'
 import { startCoin, startFlight } from './Market'
+import { clearFalls } from './falls'
 
 interface Puff {
   x: number
@@ -30,17 +31,32 @@ interface Float {
   tone: string
 }
 let floatId = 0
+/** The puffs in the air: from the simulation's events, and from the views (a good landing on a pile, falls.ts). */
+const puffs: Puff[] = []
+/** A few puffs of `color` bursting from the ground at (x, z). */
+export function puffAt(x: number, z: number, color: string, n: number, y = 0.15) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2,
+      v = 0.3 + Math.random() * 0.4
+    puffs.push({ x, y, z, vx: Math.cos(a) * v, vy: 0.4 + Math.random() * 0.4, vz: Math.sin(a) * v, t: 0, life: 0.4, r: 0.05 + Math.random() * 0.04, color })
+  }
+}
 
 /**
  * Drains the simulation's effect queue every frame: sounds go to the synth, numbers float up from the field, puffs of
- * wool and grass burst and fall, goods handed to the market hop in, a good a client takes pops up as a coin. Sounds stay quiet while the game is paused.
+ * wool and grass burst and fall, goods handed to the market hop in, a good a client takes pops up as a coin, goods put on
+ * the ground fall onto their piles. Sounds stay quiet while the game is paused.
  */
 export function FxView() {
   const { world } = useGame()
   const [floats, setFloats] = useState<Float[]>([])
-  const puffs = useMemo<Puff[]>(() => [], [])
   const mesh = useInstanced(GEO.sphere(), mat('#ffffff'), 256, 'puffs', false)
   const batch = useMemo(() => new Batch(mesh), [mesh])
+  // a new world starts with nothing in the air
+  useEffect(() => {
+    clearFalls()
+    puffs.length = 0
+  }, [world])
   useFrame((_, dt) => {
     const q = res(world, Fx).q
     const speed = res(world, GameState).speed
@@ -52,6 +68,8 @@ export function FxView() {
       // a good handed to the market hops onto its client's sign; one a client takes pops up off it as a coin (Market.tsx)
       else if (e.kind === 'deliver') startFlight(e)
       else if (e.kind === 'take') startCoin(e)
+      // a good falling onto a pile is frame.ts's: it set it off before the piles were drawn
+      else if (e.kind === 'fall') continue
       else
         for (let i = 0; i < e.n; i++) {
           const a = Math.random() * Math.PI * 2,

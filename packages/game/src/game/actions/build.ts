@@ -1,8 +1,9 @@
-import { BUILDINGS, DROP, LOOK, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
+import { BUILDINGS, DROP, LOOK, PEN, SEED, SHEEP, SPLIT_RULES, type BuildingId, type Dir, type ItemId, type ResId, dimsOf } from '../balance'
 import { beltInDir, buildPrice, footprint, get, plotAdjacent, plotPrice, residents, whyNot, cellsOf, pastureAt } from '../grid'
-import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, stockTake, toStock, type Building, type Item, type PastureT, type SheepT, type SplitRules, type World } from '../world'
+import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, blankBuilding, float, key, makePen, makeSheep, newItem, puff, res, sound, type Building, type Item, type PastureT, type SheepT, type SplitRules, type World } from '../world'
+import { dropNear, shiftPile } from '../systems/ground'
 import { sowAt } from '../systems/machines'
-import { sendHome } from '../systems/sheep'
+import { toRoam } from '../systems/sheep'
 import { fireEvent } from '../systems/unlocks'
 
 /**
@@ -21,17 +22,11 @@ function spend(w: World, n: number) {
   res(w, Stats).spent += n
 }
 
-/** A machine whose output pile lies on this cell. */
-export function pileHere(w: World, x: number, y: number): Building | null {
-  for (const m of res(w, Plant).b.values()) if (m.pile.length && m.pileX === x && m.pileY === y) return m
-  return null
-}
-
 /**
  * Build `type` with its top-left cell at (x, y), facing `dir` (its footprint is `dimsOf(type, dir)`; `anchorAt` finds
  * that cell for a pointer). A splitter or merger replaces the belt it is placed on and keeps its item; a pen is a
  * building of its own kind (GDD 5); a sheep is bought where it is put, into a pen or onto the grass (GDD 5); the sowing tool puts a seed
- * from the stock on the cell (GDD 6.1).
+ * from the hand on the cell (GDD 6.1).
  */
 export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir, free = false): boolean {
   if (!res(w, Unlocks).unlocked.has(type)) return false
@@ -46,6 +41,8 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
     }
     spend(w, price)
     res(w, Flock).pastures.push(makePen(w, x, y, dir, price))
+    // goods lying where it stands move aside
+    for (const [cx, cy] of footprint(x, y, PEN.size, PEN.size)) shiftPile(w, cx, cy)
     res(w, GameState).fieldVersion++
     sound(w, 'place')
     puff(w, x + 1.5, y + 1.5, LOOK.dust, 12)
@@ -80,47 +77,40 @@ export function place(w: World, type: BuildingId, x: number, y: number, dir: Dir
   return true
 }
 
-/** Sow one cell by hand: a seed from the stock (the author: «дать игроку возможность сеять»). */
+/** Sow one cell by hand (the author: «дать игроку возможность сеять»): a seed from the goods in the hand (PILE). */
 function sowByHand(w: World, x: number, y: number) {
-  const t = res(w, Ui).seed
-  const seed = SEED[t]
-  if (!stockTake(w, seed, 1)) {
+  const ui = res(w, Ui),
+    t = ui.seed
+  const i = ui.carry.findIndex((q) => q.kind === SEED[t])
+  if (i < 0) {
     float(w, x + 0.5, y, 'noSeed', 'bad')
     return false
   }
-  if (!sowAt(w, x, y, t)) {
-    toStock(w, newItem(seed))
-    return false
-  }
+  if (!sowAt(w, x, y, t)) return false
+  ui.carry.splice(i, 1)
+  if (!ui.carry.length) ui.carryFrom = null
   res(w, Stats).handSow++
   return true
 }
 
-/** Put a building onto its cells; another machine's pile lying there goes to the stock, a little dust goes up. */
+/** Put a building onto its cells; goods lying there move to the nearest cell with room, a little dust goes up. */
 function stand(w: World, b: Building, cells: [number, number][]) {
   const plant = res(w, Plant)
   res(w, GameState).plantVersion++
   plant.b.set(key(b.x, b.y), b)
   for (const [cx, cy] of cells.slice(1)) plant.occ.set(key(cx, cy), key(b.x, b.y))
-  for (const [cx, cy] of cells) {
-    const pm = pileHere(w, cx, cy)
-    if (!pm) continue
-    for (const q of pm.pile) toStock(w, q)
-    pm.pile = []
-  }
+  for (const [cx, cy] of cells) shiftPile(w, cx, cy)
   sound(w, 'place')
   // a little dust as it comes down onto its place
   if (b.type !== 'belt') puff(w, b.x + b.w / 2, b.y + b.h / 2, LOOK.dust, 10)
 }
 
-/** Take a building off the field, everything in it kept; its pile goes to the stock. */
+/** Take a building off the field, everything in it kept. */
 function takeOff(w: World, b: Building) {
   const plant = res(w, Plant)
   res(w, GameState).plantVersion++
   plant.b.delete(key(b.x, b.y))
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
-  for (const q of b.pile) toStock(w, q)
-  b.pile = []
 }
 
 /**
@@ -156,14 +146,15 @@ export function putDown(w: World, x: number, y: number, dir: Dir): boolean {
   const ex = get(w, x, y)
   if (ex && ex.type === 'belt' && BUILDINGS[type].onBelt) {
     res(w, GameState).coins += ex.paid
-    if (ex.item && !b.item && b.type === 'splitter') b.item = ex.item
-    else if (ex.item?.sheep) sendHome(w, ex.item.sheep)
-    else if (ex.item) toStock(w, ex.item)
     res(w, Plant).b.delete(key(x, y))
+    // its good stays on a splitter; else it falls beside it, and a sheep on it steps off and roams
+    if (ex.item && !b.item && b.type === 'splitter') b.item = ex.item
+    else if (ex.item?.sheep) toRoam(w, ex.item.sheep, x + 0.5, y + 0.5)
+    else if (ex.item) dropNear(w, x, y, [ex.item], { x: x + 0.5, y: y + 0.5, h: 0.25 })
   }
   // goods waiting to leave by a side that has turned keep their way out
   for (const o of b.outs) o.dir = ((o.dir + dir - b.dir + 4) % 4) as Dir
-  Object.assign(b, { x, y, dir, w: bw, h: bh, pileX: x, pileY: y })
+  Object.assign(b, { x, y, dir, w: bw, h: bh })
   stand(w, b, cells)
   ui.moving = null
   return true
@@ -184,8 +175,8 @@ export function putBack(w: World) {
 }
 
 /**
- * Remove a building (by any of its cells): coins come back in full, and nothing it held is lost — goods go to the
- * stock, sheep home. A pen goes only when no sheep lives in it.
+ * Remove a building (by any of its cells): coins come back in full, and nothing it held is lost — its goods fall in a
+ * pile where it stood, a sheep in it steps off and roams from there (PILE). A pen goes only when no sheep lives in it.
  */
 export function remove(w: World, x: number, y: number): boolean {
   const b = get(w, x, y)
@@ -197,17 +188,21 @@ export function remove(w: World, x: number, y: number): boolean {
   x = b.x
   y = b.y
   res(w, GameState).coins += b.paid
-  const lose: Item[] = [b.item, ...b.buf, ...b.pile, ...b.outs.map((o) => o.item)].filter((q): q is Item => !!q)
+  const lose: Item[] = [b.item, ...b.buf, ...b.outs.map((o) => o.item)].filter((q): q is Item => !!q)
   if (b.slot?.sheep) lose.push({ kind: 'sheep', sheep: b.slot.sheep, p: 0, ed: 0, strayT: 0 })
   for (const [k, n] of Object.entries(b.inv) as [Item['kind'], number][]) for (let i = 0; i < n; i++) lose.push({ kind: k, p: 0, ed: 0, strayT: 0 })
-  for (const it of lose) {
-    if (it.sheep) sendHome(w, it.sheep)
-    else toStock(w, it)
-  }
   const plant = res(w, Plant)
   res(w, GameState).plantVersion++
   plant.b.delete(key(x, y))
   for (const [cx, cy] of cellsOf(b).slice(1)) plant.occ.delete(key(cx, cy))
+  for (const it of lose) if (it.sheep) toRoam(w, it.sheep, it.sheep.px, it.sheep.py)
+  dropNear(
+    w,
+    x,
+    y,
+    lose.filter((it) => !it.sheep),
+    { x: x + b.w / 2, y: y + b.h / 2, h: 0.5 },
+  )
   const ui = res(w, Ui)
   if (ui.sel?.kind === 'b' && ui.sel.key === key(x, y)) ui.sel = null
   sound(w, 'remove')
@@ -232,8 +227,8 @@ function removePen(w: World, p: PastureT) {
 
 /**
  * Turn a building a quarter clockwise (R); docks are fixed. It is lifted off for a moment to ask whether it may stand
- * turned (a 2×1 swings round its top-left cell), so it turns only where it could be built. Goods waiting to leave turn with it, and its pile goes to the stock, as the pile
- * cell may no longer be an output cell.
+ * turned (a 2×1 swings round its top-left cell), so it turns only where it could be built. Goods waiting to leave turn
+ * with it; goods lying where it now stands move aside.
  */
 export function rotate(w: World, b: Building) {
   if (b.fixed || b.type === 'dock') return false
@@ -252,19 +247,24 @@ export function rotate(w: World, b: Building) {
   }
   const [nw, nh] = dimsOf(b.type, dir)
   for (const o of b.outs) o.dir = ((o.dir + 1) % 4) as Dir
-  for (const q of b.pile) toStock(w, q)
-  b.pile = []
-  Object.assign(b, { dir, w: nw, h: nh, pileX: b.x, pileY: b.y })
+  Object.assign(b, { dir, w: nw, h: nh })
   plant.b.set(me, b)
   for (const [cx, cy] of footprint(b.x, b.y, nw, nh).slice(1)) plant.occ.set(key(cx, cy), me)
+  for (const [cx, cy] of footprint(b.x, b.y, nw, nh)) shiftPile(w, cx, cy)
   res(w, GameState).plantVersion++
   return true
 }
 
-/** Set what a seeder sows; the seeds it held go back to the stock. */
+/** Set what a seeder sows; the seeds it held fall in a pile beside it. */
 export function setSeed(w: World, b: Building, t: ResId) {
   if (!BUILDINGS[b.type as BuildingId]?.sows || b.seed === t) return false
-  for (const [k, n] of Object.entries(b.inv) as [ItemId, number][]) for (let i = 0; i < n; i++) toStock(w, newItem(k))
+  dropNear(
+    w,
+    b.x,
+    b.y,
+    (Object.entries(b.inv) as [ItemId, number][]).flatMap(([k, n]) => Array.from({ length: n }, () => newItem(k))),
+    { x: b.x + b.w / 2, y: b.y + b.h / 2, h: 0.4 },
+  )
   b.inv = {}
   b.seed = t
   b.prog = 0

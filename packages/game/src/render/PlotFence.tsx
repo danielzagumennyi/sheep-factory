@@ -2,14 +2,13 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { GRID } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { owned } from '@/game/grid'
+import { get, owned } from '@/game/grid'
 import { Field, GameState, key, res, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
 import { fencePost, fenceSpan } from './models'
-import { island } from './island'
+import { inIsland } from './island'
 
-const fieldCell = (x: number, y: number) => x >= 0 && y >= island.top && x < island.right && y < GRID.rows
 const wet = (w: World, x: number, y: number) => {
   const t = res(w, Field).terrain.get(key(x, y))
   return t === 'water'
@@ -17,10 +16,11 @@ const wet = (w: World, x: number, y: number) => {
 
 /**
  * The fence round the farm's own land (the author: «просто сделай заборы вокруг зон, используй тот же забор что
- * вокруг карты»): the rim's fence, along every cell edge where owned land meets land for sale, open over water. It
- * moves out as plots are bought. Only between two cells of the field: where own land meets the sky (the far row before
- * it rises), the rim's own fence already stands, and a second one beside it looked odd (the author, 20.10.2026). A span
- * carries the post at its own start; a post closes every other end.
+ * вокруг карты»): the rim's fence, along every cell edge where owned land meets land for sale, open over water and
+ * along the market's paving, where its ways in are. It moves out as plots are bought. Only between two cells of the
+ * island: where own land meets the sky (the ring before it rises), the rim's own fence already stands, and a second one
+ * beside it looked odd (the author, 20.10.2026). A span carries the post at its own start; a post closes every other
+ * end.
  */
 export function PlotFence() {
   const { world } = useGame()
@@ -40,14 +40,16 @@ export function PlotFence() {
     for (let y = 0; y < GRID.rows; y++)
       for (let x = 0; x < GRID.cols; x++) {
         const mine = owned(world, x, y)
+        // the market's paving is its own edge, its ways in open on it: no fence along it
+        const market = (cx: number, cy: number) => get(world, cx, cy)?.type === 'dock'
         // the edge east of this cell: a span along z, its post at the south end
-        if (fieldCell(x, y) && fieldCell(x + 1, y) && owned(world, x + 1, y) !== mine && !wet(world, x, y) && !wet(world, x + 1, y)) {
+        if (inIsland(x, y) && inIsland(x + 1, y) && owned(world, x + 1, y) !== mine && !wet(world, x, y) && !wet(world, x + 1, y) && !market(x, y) && !market(x + 1, y)) {
           b.spans.put(x + 1, 0, y + 0.5, Math.PI / 2)
           ends.add(key(x + 1, y)).add(key(x + 1, y + 1))
           posted.add(key(x + 1, y + 1))
         }
         // the edge south of this cell: a span along x, its post at the west end
-        if (fieldCell(x, y) && fieldCell(x, y + 1) && owned(world, x, y + 1) !== mine && !wet(world, x, y) && !wet(world, x, y + 1)) {
+        if (inIsland(x, y) && inIsland(x, y + 1) && owned(world, x, y + 1) !== mine && !wet(world, x, y) && !wet(world, x, y + 1) && !market(x, y) && !market(x, y + 1)) {
           b.spans.put(x + 0.5, 0, y + 1, 0)
           ends.add(key(x, y + 1)).add(key(x + 1, y + 1))
           posted.add(key(x, y + 1))

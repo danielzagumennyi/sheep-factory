@@ -2,11 +2,11 @@ import { useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { BufferGeometry, Color, ExtrudeGeometry, Float32BufferAttribute, MeshBasicMaterial, MeshToonMaterial, RingGeometry, ShaderMaterial, Shape, Sprite, Vector2, Vector3, type Group, type Mesh } from 'three'
-import { BUILDINGS, DIRS, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
+import { BUILDINGS, DIRS, GRID, LIGHT, LOOK, REACH, SEED, type BuildingId, type Dir, dimsOf } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { anchorAt, buildPrice, footprint, get, inCells, inGood, inGrid, onIsland, outCells, outGood, pastureAt, reachCells, whyNot } from '@/game/grid'
+import { anchorAt, buildPrice, footprint, get, inCells, inGood, inGrid, onIsland, outCells, outGood, owned, pastureAt, plotAdjacent, plotOf, plotPrice, reachCells, whyNot } from '@/game/grid'
 import { pathDirs, routeCells } from '@/game/actions/path'
-import { Field, Flock, GameState, Plant, Ui, blankBuilding, entryOf, exitOf, isOn, key, res, stockOf, unkey } from '@/game/world'
+import { Field, Flock, GameState, Plant, Ui, blankBuilding, entryOf, exitOf, isOn, key, res, unkey } from '@/game/world'
 import { RING_IN, RING_OUT, badgeMaterial } from './iconSprite'
 import { useT } from '@/i18n'
 import { UI } from '@/i18n/ui'
@@ -18,6 +18,7 @@ import { machineBody, machineModel } from './machineModels'
 import { drawBelt, useBeltPieces } from './Belts'
 import { reach } from './reach'
 import { cam } from './camera'
+import { hillHeight } from './hillShape'
 import { markOutlined, unmarkOutlined } from '@kit/outline'
 
 /**
@@ -30,7 +31,7 @@ import { markOutlined, unmarkOutlined } from '@kit/outline'
  * it, the block and the outline go red, the model reddens a little, and the reason shows above it.
  */
 /** `chip`: the icon badge beside an arrow, its size and how far past the arrow it sits (cells). */
-const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45, chip: 0.42, chipGap: 0.4, chips: 48 } as const
+const PLACE = { lift: 0.24, sway: 0.008, arrowOut: 0.3, arrowFar: 0.45, chip: 0.42, chipGap: 0.4, chips: 48, plot: 0.1 } as const
 /**
  * What is held keeps its own colours, outside a producer's reach tint (a critic: the tint greyed the mower in hand);
  * where it can't stand, it only reddens a little: the red block and line say it.
@@ -188,7 +189,8 @@ export function Ghost() {
     reach.uReachOn.value = 0
     let held = false,
       beltHeld: '' | 'place' | 'blocked' = ''
-    const lift = PLACE.lift + Math.sin(time * 3) * PLACE.sway
+    // over a hill, over its top
+    const lift = PLACE.lift + Math.sin(time * 3) * PLACE.sway + (h ? hillHeight(h.x + 0.5, h.y + 0.5) : 0)
     // bubbles over sheep and machines step back while something is being built
     const nowBuilding = ui.tool !== 'hand'
     if (nowBuilding !== building.current) {
@@ -290,26 +292,23 @@ export function Ghost() {
         const hb = hovered
         if (hb) {
           if (hb.type !== 'dock' && BUILDINGS[hb.type].near) lab = showReach(hb.type, hb.x, hb.y, hb.w, hb.h)
-          // every building the same: its ways in and out, above the belts that may run up to it; the market (it takes
-          // from every side) only its way in on the side nearest the pointer
-          if (hb.type === 'dock') {
-            const e = hb.x + hb.w - 1,
-              s = hb.y + hb.h - 1
-            const near = Math.min(h.x - hb.x, e - h.x, h.y - hb.y, s - h.y)
-            if (near === h.x - hb.x) arrow(hb.x, h.y + 0.5, 0, true, 0.3)
-            else if (near === e - h.x) arrow(e + 1, h.y + 0.5, 2, true, 0.3)
-            else if (near === h.y - hb.y) arrow(h.x + 0.5, hb.y, 1, true, 0.3)
-            else arrow(h.x + 0.5, s + 1, 3, true, 0.3)
-          } else showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
+          // every building the same, the market too: its ways in and out, above the belts that may run up to it
+          showFlow(hb.type, hb.x, hb.y, hb.dir, 0.3, hb)
         }
         // a pasture shows its way out and its way in the same way
         const pa = hb ? null : pastureAt(world, h.x, h.y)
         if (pa) showPasture(pa, 0.3)
-        // a resource says what it is and how much is left in it (the author), on any land
-        const rc = hb || pa || h.sheep !== null || !onIsland(world, h.x, h.y) ? null : res(world, Field).res.get(key(h.x, h.y))
+        // a plot for sale under the pointer answers as a whole, nothing inside it does (the author: «наведение на весь
+        // участок в целом, без наведения на внутренние объекты»): all its cells lit as where a building goes, red while
+        // it can't be bought — not beside own land yet, or the coins short
+        const [qx, qy] = plotOf(h.x, h.y)
+        const price = hb || h.sheep !== null || ui.carry.length || !onIsland(world, h.x, h.y) || owned(world, h.x, h.y) ? 0 : plotPrice(world, qx, qy)
+        if (price) showBlock(footprint(qx * GRID.plotW, qy * GRID.plotH, GRID.plotW, GRID.plotH), PLACE.plot, !plotAdjacent(world, qx, qy) || res(world, GameState).coins < price)
+        // a resource says what it is and how much is left in it (the author), on own land
+        const rc = hb || pa || h.sheep !== null || !owned(world, h.x, h.y) ? null : res(world, Field).res.get(key(h.x, h.y))
         if (rc) lab = { x: h.x + 0.5, y: 0.95, z: h.y + 0.5, text: t(RES_NAMES[rc.t]) + ' · ' + rc.left + '/' + rc.max, tone: 'ink', icon: rc.t }
         // a seed says what it grows into and how long it still takes
-        const sp = hb || pa || rc || h.sheep !== null ? null : res(world, Field).sprouts.get(key(h.x, h.y))
+        const sp = hb || pa || rc || price || h.sheep !== null ? null : res(world, Field).sprouts.get(key(h.x, h.y))
         if (sp) lab = { x: h.x + 0.5, y: 0.6, z: h.y + 0.5, text: t(RES_NAMES.sprout) + ' · ' + Math.ceil(sp.left) + 's', tone: 'ink', icon: sp.t }
       } else if (tool === 'erase') {
         const hb = hovered ?? get(world, h.x, h.y)
@@ -370,11 +369,13 @@ export function Ghost() {
       } else if (tool === 'sow') {
         // a seed in hand: the cell it would go on, the seed and how many are in stock, or why not
         const why = whyNot(world, 'sow', h.x, h.y)
+        // the seeds are the hand's (GDD 6.1): how many of them it carries
         const seed = SEED[ui.seed]
-        showBlock([[h.x, h.y]], lift, !!why || !stockOf(world, seed))
+        const seeds = ui.carry.filter((q) => q.kind === seed).length
+        showBlock([[h.x, h.y]], lift, !!why || !seeds)
         lab = why
           ? { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: t(WHY_TEXT[why]), tone: 'bad' }
-          : { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: String(stockOf(world, seed)), tone: stockOf(world, seed) ? 'ink' : 'bad', icon: seed }
+          : { x: h.x + 0.5, y: lift + 0.6, z: h.y + 0.6, text: String(seeds), tone: seeds ? 'ink' : 'bad', icon: seed }
       } else {
         const type = tool as BuildingId
         // centred on the pointer and turned as the player chose (a 2×1 lies along its output)

@@ -1,19 +1,20 @@
-import { BUILDINGS, ITEMS, LEVELS, SEED, SHEEP, type BuildingId, type ItemId } from './balance'
-import { get, isBeltLike, owned, plotAdjacent, reachCells, residents, roomFor, sowable, targetOk } from './grid'
+import { BOT, BUILDINGS, LEVELS, MARKET, SEED, SHEEP, type BuildingId, type ItemId } from './balance'
+import { get, owned, plotAdjacent, reachCells, residents, roomFor, sowable, targetOk } from './grid'
 import { buyPlot, buySheep, place } from './actions/build'
-import { dropSheep, feedSheep, gather, pickSheep, shearClick, takePile } from './actions/hand'
+import { dropCarry, dropSheep, feedSheep, gather, pickFromBelt, pickSheep, pickUp, putDownCarry, shearClick } from './actions/hand'
 import { PLAN, applyStep, landReady, pieceCost, pieces, plotsToBuy } from './plan'
 import { FIXED_DT, stepSimulation } from './systems'
 import { hungry, loopHasFeeder } from './systems/sheep'
-import { buy, sell } from './systems/village'
-import { Field, Flock, GameState, Market, Plant, Stats, Ui, Unlocks, res, stockOf, toStock, unkey, type World } from './world'
+import { buy } from './systems/village'
+import { Field, Flock, GameState, Plant, Stats, Ui, Unlocks, res, unkey, type SheepT, type World } from './world'
 
 /**
  * The balance bot (TDD 5): plays the long game like a player with quick hands. It builds the farm of game/plan.ts job
- * by job, as levels open the buildings and coins allow, buys sheep for every pen with room, and does with the hand
- * what the hand may do — shear and feed sheep with no station for it, gather, pick up piles and dead ends, load the
- * docks, sell what nothing asks for, sow when the meadows run low. Machines get their goods only by belt. It is a
- * measure, not a model of the best play: `pnpm simulate` prints the time of every level.
+ * by job, as levels open the buildings and coins allow, buys sheep for every pen with room, and does with its one hand
+ * what a player's would, a trip at a time (BOT.hand) — carry roaming sheep into pens, piles and dead ends' goods to the
+ * market, hay to hungry sheep with no feeder, shear sheep with no station for it, sow when the meadows run low. It
+ * loads no machine by hand. It is a measure, not a model of the best play: `pnpm simulate` prints the time of every
+ * level.
  */
 export function createBot(w: World) {
   const gs = () => res(w, GameState)
@@ -58,72 +59,142 @@ export function createBot(w: World) {
   }
 
   // ---------------------------------------------------------------- the hand
-  const asked = () => new Set(res(w, Market).needs.map((n) => n.kind))
-  function gatherOwn(t: 'meadow' | 'bush', n: number) {
-    let left = n
-    for (const [k, r] of res(w, Field).res) {
-      if (left <= 0) break
-      if (r.t !== t) continue
+  // One hand, as the player's: it is somewhere on the field, and every trip to a pile, a sheep or the market takes time
+  // (BOT.hand) before it can do the next thing. Nothing reaches the market but in it or on a belt (PILE).
+  const ui = () => res(w, Ui)
+  let at = { x: MARKET.x + MARKET.size / 2, y: MARKET.y + MARKET.size / 2 }
+  let busy = 0
+  /** Where the goods in the hand are going: the market, or a hungry sheep. */
+  let to: { x: number; y: number; sheep?: SheepT } | null = null
+  /** A sheep in the hand and the pen it is carried to. */
+  let held: { s: SheepT; x: number; y: number } | null = null
+  /** Go to (x, y) and do something there (`acts` picks, drops or clicks): the hand is busy until that is done. */
+  const go = (x: number, y: number, acts = 1) => {
+    busy = gs().clock + BOT.hand.act * acts + Math.hypot(x + 0.5 - at.x, y + 0.5 - at.y) / BOT.hand.speed
+    at = { x: x + 0.5, y: y + 0.5 }
+  }
+  /** Is the hand at (x, y) already. */
+  const here = (x: number, y: number) => Math.hypot(x + 0.5 - at.x, y + 0.5 - at.y) < 0.01
+  const market = { x: MARKET.x + MARKET.size / 2, y: MARKET.y + MARKET.size / 2 }
+  /** A hungry sheep no feeder on its loop will feed, in a pen or roaming. */
+  const starving = () => res(w, Flock).sheep.find((s) => hungry(s) && (s.state === 'roam' || (s.state === 'pasture' && !loopHasFeeder(w, res(w, Flock).pastures.find((q) => q.id === s.home)!))))
+  /** The nearest pile on the ground holding goods of this kind, or any goods but hay and dye (kept for feeding and sowing). */
+  function pileOf(kind?: ItemId) {
+    let best: { x: number; y: number } | null = null,
+      bd = Infinity
+    for (const [k, items] of res(w, Field).piles) {
+      if (!items.some((it) => (kind ? it.kind === kind : it.kind !== 'hay' && it.kind !== 'dye'))) continue
       const [x, y] = unkey(k)
-      if (!owned(w, x, y)) continue
-      while (left > 0 && res(w, Field).res.has(k) && gather(w, x, y)) left--
+      const d = Math.hypot(x + 0.5 - at.x, y + 0.5 - at.y)
+      if (d < bd) {
+        bd = d
+        best = { x, y }
+      }
     }
-    return n - left
+    return best
   }
   function hand() {
-    const flock = res(w, Flock)
-    // shear by hand only a pen with nothing on its way out yet (no loop); feed where no feeder is on its loop
-    for (const s of flock.sheep) {
-      // a roaming sheep: carried into a pen with room; with none yet, shorn where it grazes
-      if (s.state === 'roam') {
-        const p = flock.pastures.find((q) => roomFor(w, q, s))
-        if (p) {
-          pickSheep(w, s)
-          dropSheep(w, s, p.x + 1.5, p.y + 1.5)
-        } else if (s.wool >= 1) for (let i = s.clicks; i < 3; i++) shearClick(w, s)
-        continue
-      }
-      if (s.state !== 'pasture') continue
-      const p = flock.pastures.find((q) => q.id === s.home)!
-      const ex = get(w, p.exit.x, p.exit.y)
-      if (s.wool >= 1 && !ex) for (let i = s.clicks; i < 3; i++) shearClick(w, s)
-      if (hungry(s) && !loopHasFeeder(w, p)) {
-        if (!stockOf(w, 'hay') && !gatherOwn('meadow', 4) && gs().coins > 20) buy(w, 'hay', 6)
-        feedSheep(w, s)
-      }
+    if (gs().clock < busy) return
+    // a sheep in the hand: carried to its pen first, then put down in it
+    if (held) {
+      if (!here(held.x, held.y)) return go(held.x, held.y)
+      dropSheep(w, held.s, held.x + 0.5, held.y + 0.5)
+      held = null
+      return
     }
-    // piles, and goods at the end of a belt that goes nowhere
-    for (const b of res(w, Plant).b.values()) {
-      if (b.pile.length) takePile(w, b)
-      if (isBeltLike(b) && b.item && !b.item.sheep && b.item.p >= 1 && b.type === 'belt' && !targetOk(w, b.x, b.y, b.dir)) {
-        toStock(w, b.item)
-        b.item = null
-      }
-    }
-    // dye a client takes from the bushes; a good a client takes and the stock is short of, picked off a belt by hand
-    if (asked().has('dye') && stockOf(w, 'dye') < 4) gatherOwn('bush', 4)
-    for (const q of res(w, Market).needs) {
-      let n = 0
-      for (const b of res(w, Plant).b.values()) {
-        if (n >= 4 || stockOf(w, q.kind) >= 4) break
-        if (b.type === 'belt' && b.item && b.item.kind === q.kind) {
-          toStock(w, b.item)
-          b.item = null
-          n++
+    // the goods in the hand: carried where they are going first, then put down there
+    if (ui().carry.length) {
+      if (to && !(to.sheep ? here(Math.floor(to.sheep.px), Math.floor(to.sheep.py)) : here(to.x, to.y))) return to.sheep ? go(Math.floor(to.sheep.px), Math.floor(to.sheep.py)) : go(to.x, to.y)
+      if (to?.sheep) {
+        if (hungry(to.sheep)) feedSheep(w, to.sheep)
+        // more hay: on to the next hungry sheep; anything else in the hand to the market
+        const next = ui().carry.some((q) => q.kind === 'hay') ? starving() : undefined
+        if (next) {
+          to = { x: Math.floor(next.px), y: Math.floor(next.py), sheep: next }
+          return go(to.x, to.y)
         }
+      } else if (to) dropCarry(w, to.x + 0.5, to.y + 0.5)
+      if (ui().carry.some((q) => q.kind !== 'hay' && q.kind !== 'dye')) {
+        to = { x: Math.floor(market.x), y: Math.floor(market.y) }
+        return go(to.x, to.y)
+      }
+      // hay and dye left over go down where the hand is
+      putDownCarry(w, at.x, at.y)
+      to = null
+      return
+    }
+    to = null
+    const flock = res(w, Flock)
+    // a roaming sheep into a pen with room: to it, picked up — then carried there (above)
+    for (const s of flock.sheep) {
+      if (s.state !== 'roam' || s.drop !== undefined) continue
+      const p = flock.pastures.find((q) => roomFor(w, q, s))
+      if (!p) break
+      go(Math.floor(s.px), Math.floor(s.py))
+      pickSheep(w, s)
+      held = { s, x: p.x + 1, y: p.y + 1 }
+      return
+    }
+    // goods lying on the ground to the market, before more are made
+    const pile = pileOf()
+    if (pile && pickUp(w, pile.x, pile.y)) {
+      to = { x: Math.floor(market.x), y: Math.floor(market.y) }
+      go(pile.x, pile.y)
+      return
+    }
+    // a hungry sheep with no feeder for it: hay in the hand to it — a pile of hay, else a meadow of own land gathered
+    // onto a pile, else hay bought at the market
+    const hungrySheep = starving()
+    if (hungrySheep) {
+      let hay = pileOf('hay')
+      if (!hay) {
+        // gathered straight into the hand; else bought, put out by the market
+        const m = gatherOne('meadow')
+        if (m) {
+          to = { x: Math.floor(hungrySheep.px), y: Math.floor(hungrySheep.py), sheep: hungrySheep }
+          return go(m.x, m.y)
+        }
+        if (gs().trade && gs().coins > 20 && buy(w, 'hay', 6)) hay = pileOf('hay')
+      }
+      if (ui().carry.some((q) => q.kind === 'hay') || (hay && pickUp(w, hay.x, hay.y))) {
+        to = { x: Math.floor(hungrySheep.px), y: Math.floor(hungrySheep.py), sheep: hungrySheep }
+        if (hay) go(hay.x, hay.y)
+        return
       }
     }
-    // what no client takes goes to the market (hay and dye are kept for feeding and sowing)
-    const want = asked()
-    for (const k of Object.keys(ITEMS) as ItemId[]) {
-      const keep = k === 'hay' ? 30 : k === 'dye' ? 20 : 0
-      if (!want.has(k) && stockOf(w, k) > keep + 4) sell(w, k, stockOf(w, k) - keep)
+    // a fluffy sheep with nothing to take it to a shearer: shorn by hand, its wool falls beside it
+    for (const s of flock.sheep) {
+      if (s.wool < 1 || (s.state !== 'roam' && s.state !== 'pasture') || s.drop !== undefined) continue
+      if (s.state === 'pasture') {
+        const p = flock.pastures.find((q) => q.id === s.home)!
+        if (get(w, p.exit.x, p.exit.y)) continue
+      }
+      go(Math.floor(s.px), Math.floor(s.py), 3 - s.clicks)
+      for (let i = s.clicks; i < 3; i++) shearClick(w, s)
+      return
     }
+    // a good at the end of a belt that goes nowhere
+    for (const b of res(w, Plant).b.values()) {
+      if (b.type === 'belt' && b.item && !b.item.sheep && b.item.p >= 1 && !targetOk(w, b.x, b.y, b.dir) && pickFromBelt(w, b)) {
+        to = { x: Math.floor(market.x), y: Math.floor(market.y) }
+        go(b.x, b.y)
+        return
+      }
+    }
+  }
+  /** One item gathered into the hand from a resource of own land: where it was, or null. */
+  function gatherOne(t: 'meadow' | 'bush') {
+    for (const [k, r] of res(w, Field).res) {
+      if (r.t !== t) continue
+      const [x, y] = unkey(k)
+      if (owned(w, x, y) && gather(w, x, y)) return { x, y }
+    }
+    return null
   }
 
   // ---------------------------------------------------------------- the land: sow round each producer whose ground runs low
   function sowing() {
-    if (!has('sow')) return
+    if (!has('sow') || gs().clock < busy || ui().carry.length) return
     for (const b of res(w, Plant).b.values()) {
       if (b.type !== 'mower' && b.type !== 'berry') continue
       const t = BUILDINGS[b.type].near!
@@ -131,19 +202,30 @@ export function createBot(w: World) {
       const sprouts = [...res(w, Field).sprouts.values()].filter((q) => q.t === t).length
       if (left + sprouts * 8 > 40) continue
       const seed = SEED[t]
-      for (const c of sowable(w, b).slice(0, 3)) {
-        if (!stockOf(w, seed) && seed === 'hay' && gs().coins > 10) buy(w, 'hay', 6)
-        if (!stockOf(w, seed) && seed === 'dye') gatherOwn('bush', 2)
-        if (!stockOf(w, seed)) break
-        res(w, Ui).seed = t
-        if (!place(w, 'sow', c.x, c.y, 0)) break
+      // seeds in the hand: a pile of them, else gathered, else bought; the hand walks there and on to the producer
+      let pile = pileOf(seed)
+      if (pile) pickUp(w, pile.x, pile.y)
+      else {
+        pile = gatherOne(t === 'meadow' ? 'meadow' : 'bush')
+        if (!pile && seed === 'hay' && gs().trade && gs().coins > 10 && buy(w, 'hay', 6)) {
+          pile = pileOf('hay')
+          if (pile) pickUp(w, pile.x, pile.y)
+        }
       }
+      if (!pile || !ui().carry.some((q) => q.kind === seed)) continue
+      res(w, Ui).seed = t
+      const cells = sowable(w, b).slice(0, 3)
+      for (const c of cells) if (!place(w, 'sow', c.x, c.y, 0)) break
+      go(pile.x, pile.y)
+      busy += Math.hypot(b.x - pile.x, b.y - pile.y) / BOT.hand.speed + BOT.hand.act * cells.length
+      at = { x: b.x + 0.5, y: b.y + 0.5 }
+      return
     }
   }
 
-  /** Sheep for every pen with room, once sheep are for sale, keeping a little for the next building. Returns how many. */
+  /** Sheep for every pen with room, once sheep are for sale, keeping a little for the next building — none while one roams, to be put in first. Returns how many. */
   function sheep() {
-    if (!has('sheep')) return 0
+    if (!has('sheep') || res(w, Flock).sheep.some((s) => s.state === 'roam')) return 0
     let n = 0
     for (const p of res(w, Flock).pastures) while (residents(w, p) < p.cap && gs().coins >= SHEEP.price * 2) if (buySheep(w, p)) n++
     else break

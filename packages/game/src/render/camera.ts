@@ -8,12 +8,12 @@ import { island } from './island'
  * two-finger swipe — the author: «чтобы камеру можно было поворачивать», but «по вертикали не надо»). `cam` is plain module
  * state: the pointer writes it, CameraRig reads it every frame, nothing re-renders. `yaw` 0 looks north from the south.
  */
-export const cam = { x: 16, z: 10, dist: CAMERA.distance as number, yaw: 0, pitch: (CAMERA.pitch * Math.PI) / 180 }
+export const cam = { x: GRID.cols / 2, z: GRID.rows / 2, dist: CAMERA.distance as number, yaw: 0, pitch: (CAMERA.pitch * Math.PI) / 180 }
 
 export function clampCam() {
   cam.dist = Math.min(CAMERA.maxDistance, Math.max(CAMERA.minDistance, cam.dist))
-  cam.x = Math.min(island.right, Math.max(0, cam.x))
-  cam.z = Math.min(GRID.rows, Math.max(0, cam.z))
+  cam.x = Math.min(island.right, Math.max(island.left, cam.x))
+  cam.z = Math.min(island.bottom, Math.max(island.top, cam.z))
 }
 
 /** Frame the owned land (the market stands on it), the way the prototype opens a mission. */

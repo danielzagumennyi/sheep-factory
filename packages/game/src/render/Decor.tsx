@@ -1,13 +1,13 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { GRID, ISLAND, LOOK } from '@/game/balance'
+import { ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { get, owned, pastureAt } from '@/game/grid'
+import { get, levelAt, owned, pastureAt } from '@/game/grid'
 import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
 import { flowers, mushroom } from './models'
-import { island, rimTree } from './island'
+import { inIsland, island, rimTree } from './island'
 
 const CAP = 900
 const KINDS: readonly string[] = ['mushroom', ...LOOK.flowers.map((_, i) => 'flowers' + i)]
@@ -59,16 +59,15 @@ function signature(w: World) {
   return p.b.size + ':' + p.occ.size + ':' + res(w, GameState).fieldVersion + ':' + res(w, Flock).pastures.map((q) => q.x + ',' + q.y + q.w + 'x' + q.h).join()
 }
 
-/** Is a cell free for decor: no terrain, no building (the market is one), no pasture. */
+/** Is a cell free for decor: no terrain, no hill (Hills.tsx dresses its own), no building (the market is one), no pasture. */
 function free(w: World, x: number, y: number) {
-  const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
-  if (!inside) return true
-  if (res(w, Field).terrain.has(key(x, y))) return false
+  if (!inIsland(x, y)) return true
+  if (res(w, Field).terrain.has(key(x, y)) || levelAt(w, x, y) > 1) return false
   if (get(w, x, y) || pastureAt(w, x, y)) return false
   return true
 }
 
-/** Is the cell next to a pen, a pond, a building or a resource (anything but open lawn)? */
+/** Is the cell next to a pen, a pond, a hill, a building or a resource (anything but open lawn)? */
 function besideSomething(w: World, x: number, y: number) {
   const t = res(w, Field).terrain
   for (let dy = -1; dy <= 1; dy++)
@@ -76,8 +75,8 @@ function besideSomething(w: World, x: number, y: number) {
       if (!dx && !dy) continue
       const nx = x + dx,
         ny = y + dy
-      if (nx < 0 || ny < island.top || nx >= island.right || ny >= GRID.rows) continue
-      if (t.has(key(nx, ny)) || pastureAt(w, nx, ny)) return true
+      if (!inIsland(nx, ny)) continue
+      if (t.has(key(nx, ny)) || levelAt(w, nx, ny) > 1 || pastureAt(w, nx, ny)) return true
       const b = get(w, nx, ny)
       if (b && b.type !== 'belt') return true
     }
@@ -98,11 +97,11 @@ function patch(x: number, y: number) {
 
 function scatter(w: World, put: (k: Kind, x: number, z: number, yaw: number, s: number) => void) {
   const m = Math.ceil(ISLAND.margin) - 1
-  for (let y = island.top - m - 1; y < GRID.rows + m + 1; y++)
-    for (let x = -m - 1; x < island.right + m + 1; x++) {
+  for (let y = island.top - m - 1; y < island.bottom + m + 1; y++)
+    for (let x = island.left - m - 1; x < island.right + m + 1; x++) {
       // a rim tree's cell is its own
       if (!free(w, x, y) || rimTree(x, y)) continue
-      const inside = x >= 0 && y >= island.top && x < island.right && y < GRID.rows
+      const inside = inIsland(x, y)
       // the rim of the island is a little garden; the player's land stays mostly clear
       const rim = !inside
       const mine = inside && !rim && owned(w, x, y)
@@ -119,7 +118,7 @@ function scatter(w: World, put: (k: Kind, x: number, z: number, yaw: number, s: 
       // keep inside the island's outline
       const fx = x + 0.2 + hash(x, y, 2) * 0.6,
         fz = y + 0.2 + hash(x, y, 3) * 0.6
-      if (fx < -ISLAND.margin + 0.35 || fz < island.top - ISLAND.margin + 0.35 || fx > island.right + ISLAND.margin - 0.35 || fz > GRID.rows + ISLAND.margin - 0.35) continue
+      if (fx < island.left - ISLAND.margin + 0.35 || fz < island.top - ISLAND.margin + 0.35 || fx > island.right + ISLAND.margin - 0.35 || fz > island.bottom + ISLAND.margin - 0.35) continue
       const r1 = hash(x, y, 4),
         yaw = hash(x, y, 5) * Math.PI * 2
       // the lawn itself is Grass.tsx: here only flowers, stones and toadstools

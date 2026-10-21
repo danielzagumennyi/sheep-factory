@@ -1,5 +1,5 @@
 import { DIRS, DROP, GRID, LOOK, ROAM, SHEEP, type Dir } from '../balance'
-import { get, inGrid, isBeltLike, isStation, outCells, owned, pastureAt, step, terr } from '../grid'
+import { get, inGrid, isBeltLike, isStation, levelAt, outCells, owned, pastureAt, step, terr } from '../grid'
 import { Flock, GameState, Plant, Rng, Time, Ui, float, key, newItem, pastureSpot, penOf, puff, res, sound, type Building, type PastureT, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
 
@@ -29,11 +29,11 @@ export function toPasture(w: World, s: SheepT, p: PastureT, x: number, y: number
 
 /** Ground a roaming sheep may stop on: own land with nothing built, no pen, none of ROAM's blocking ground. */
 export function grazeable(w: World, x: number, y: number) {
-  return inGrid(x, y) && owned(w, x, y) && !get(w, x, y) && !pastureAt(w, x, y) && !ROAM.blocking.includes(terr(w, x, y) as never)
+  return inGrid(x, y) && owned(w, x, y) && levelAt(w, x, y) === 1 && !get(w, x, y) && !pastureAt(w, x, y) && !ROAM.blocking.includes(terr(w, x, y) as never)
 }
-/** Ground it may walk over: that, or a belt, a splitter or a merger (it steps over them). */
+/** Ground it may walk over: that, or a belt, a splitter or a merger (it steps over them). Never up a hill. */
 function walkable(w: World, x: number, y: number) {
-  if (!inGrid(x, y) || !owned(w, x, y) || pastureAt(w, x, y) || ROAM.blocking.includes(terr(w, x, y) as never)) return false
+  if (!inGrid(x, y) || !owned(w, x, y) || levelAt(w, x, y) > 1 || pastureAt(w, x, y) || ROAM.blocking.includes(terr(w, x, y) as never)) return false
   const b = get(w, x, y)
   return !b || isBeltLike(b)
 }
@@ -159,13 +159,6 @@ export function penIn(w: World, s: SheepT, p: PastureT) {
   toPasture(w, s, p, t.x, t.y)
 }
 
-/** A sheep back to its pen; one with no pen (or whose pen is gone) roams from where it is. */
-export function sendHome(w: World, s: SheepT) {
-  const p = penOf(w, s.home)
-  if (!p) return toRoam(w, s, s.px, s.py)
-  penIn(w, s, p)
-}
-
 /** The feeder on the way out of a pen, before the way comes back in — through any other pens the loop crosses. */
 function traceFeeder(w: World, p: PastureT): Building | null {
   let x = p.exit.x,
@@ -287,10 +280,10 @@ export function sheepSystem(w: World, dt: number) {
   }
 }
 
-/** A sheep crossing another pen walks briskly to its way out and leaves by it as soon as the gate is free. */
+/** A sheep crossing another pen walks briskly to its way out and leaves by it as soon as the gate is free; with that pen gone, it roams from where it is. */
 function crossing(w: World, s: SheepT, dt: number) {
   const p = s.via === null ? null : penOf(w, s.via)
-  if (!p) return sendHome(w, s)
+  if (!p) return toRoam(w, s, s.px, s.py)
   const dx = s.tx - s.px,
     dy = s.ty - s.py,
     dist = Math.hypot(dx, dy)

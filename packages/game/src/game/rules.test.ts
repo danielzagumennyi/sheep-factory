@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { BUILDINGS, CLIENT, DROP, GRID, ISLAND_GROW, ITEMS, LEVELS, MARKET, PEN, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir } from './balance'
-import { anchorForInput, get, inCells, inGood, outCells, outGood, owned, pastureAt, plotPrice, reachOf, terr, whyNot } from './grid'
+import { BELT, BUILDINGS, CLIENT, DROP, GRID, ISLAND_GROW, ISLAND_START, ITEMS, LEVELS, MARKET, PEN, PILE, SHEEP, SOW, START, TOOL_ORDER, type BuildingId, type Dir, type ItemId } from './balance'
+import { anchorForInput, freeCell, get, inCells, inGood, outCells, outGood, owned, pastureAt, pileAt, pilesBy, plotPrice, reachOf, terr, whyNot } from './grid'
 import { buyPlot, buySheep, liftUp, place, putBack, putDown, remove, rotate, setSeed } from './actions/build'
-import { dropSheep, gather, handClick, pickSheep, sheepAt, shearClick } from './actions/hand'
+import { clickBuilding, dropCarry, dropSheep, gather, handClick, pickSheep, pickUp, putDownCarry, sheepAt, shearClick } from './actions/hand'
 import { stepSimulation } from './systems'
 import { shearYield } from './systems/machines'
 import { penIn, toRoam } from './systems/sheep'
@@ -10,14 +10,14 @@ import { dockAccept, openLevel, sell, sellPrice, buy, buyPrice } from './systems
 import { unlock } from './systems/unlocks'
 import { startWorld } from './start'
 import { openField, putTerrain, TEST_PEN } from './testing'
-import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, type SheepT, type World } from './world'
+import { blankBuilding, createGameWorld, DEMO, makePen, pastureSpot, Field, Flock, float, Fx, GameState, Market, noMarks, PLAY, puff, sound, Stock, SYSTEMS, Systems, Ui, Unlocks, key, newItem, res, stockOf, unkey, type SheepT, type World } from './world'
 
 let worlds: World[] = []
 afterEach(() => {
   for (const w of worlds) w.destroy()
   worlds = []
 })
-/** A fresh long game with everything open, plenty of coins and the plots of rows 1–3 bought. */
+/** A fresh long game with everything open, plenty of coins and the start's 3×3 plots bought. */
 /** The first pen, where the sheep roam at the start, with all of them in it (as the game began before they roamed). */
 function penned(w: World) {
   const p = makePen(openField(w), TEST_PEN.x, TEST_PEN.y, TEST_PEN.dir)
@@ -33,7 +33,7 @@ function world(opts: { all?: boolean } = { all: true }) {
     res(w, GameState).food = true
     for (const s of res(w, Flock).sheep) s.fed = false
     res(w, GameState).trade = true
-    for (let py = 1; py < 4; py++) for (let px = 0; px < 4; px++) res(w, Field).plots.add(key(px, py))
+    for (let py = 1; py < 4; py++) for (let px = 1; px < 4; px++) res(w, Field).plots.add(key(px, py))
   }
   res(w, GameState).coins = 5000
   worlds.push(w)
@@ -66,6 +66,20 @@ function nextLevel(w: World) {
   }
 }
 const sheepOf = (w: World) => res(w, Flock).sheep
+/** Every good lying on the ground, by kind, sorted. */
+const lying = (w: World) => [...res(w, Field).piles.values()].flat().map((q) => q.kind).sort()
+/** Goods put in the hand, as if picked up. */
+const inHand = (w: World, ...kinds: ItemId[]) => {
+  res(w, Ui).carry = kinds.map((k) => newItem(k))
+  res(w, Ui).carryFrom = { x: 0, y: 0 }
+}
+/** Every pile on the ground carried into the market by hand. */
+function carryToMarket(w: World) {
+  for (const k of [...res(w, Field).piles.keys()]) {
+    const [x, y] = unkey(k)
+    while (pickUp(w, x, y)) dropCarry(w, MARKET.x + 0.5, MARKET.y + 0.5)
+  }
+}
 
 describe('belts (GDD 4.2)', () => {
   it('take items from one side only; a second line needs a merger', () => {
@@ -98,6 +112,31 @@ describe('belts (GDD 4.2)', () => {
 })
 
 describe('resources and land (GDD 6)', () => {
+  it('nothing stands on a hill: no building, belt, pen or sheep put down; a roaming sheep never walks up one', () => {
+    const w = world()
+    // a hill of the second level with a third on top, east of the pen
+    for (let y = 14; y <= 17; y++) for (let x = 18; x <= 21; x++) res(w, Field).hills.set(key(x, y), x >= 19 && x <= 20 && y >= 15 && y <= 16 ? 3 : 2)
+    expect(whyNot(w, 'belt', 18, 14, 0)).toBe('hill')
+    expect(whyNot(w, 'shearer', 17, 14, 0)).toBe('hill')
+    expect(whyNot(w, 'pen', 20, 15, 0)).toBe('hill')
+    expect(whyNot(w, 'sheep', 19, 15)).toBe('hill')
+    expect(whyNot(w, 'belt', 22, 14, 0)).toBe('')
+    // nor is it free ground for a belt's route, a seeder's sowing or a machine's pile
+    expect(freeCell(w, 18, 14)).toBe(false)
+    expect(freeCell(w, 22, 14)).toBe(true)
+    // a sheep put down beside it roams for a minute and never sets foot on it
+    const s = sheepOf(w)[0]!
+    pickSheep(w, s)
+    dropSheep(w, s, 17.5, 18.5)
+    for (let t = 0; t < 60; t += 1 / 60) {
+      stepSimulation(w)
+      expect(res(w, Field).hills.has(key(Math.floor(s.px), Math.floor(s.py))), `${s.px.toFixed(2)},${s.py.toFixed(2)}`).toBe(false)
+    }
+    // dropped onto it, it comes down beside it
+    pickSheep(w, s)
+    dropSheep(w, s, 19.5, 15.5)
+    expect(res(w, Field).hills.has(key(Math.floor(s.px), Math.floor(s.py)))).toBe(false)
+  })
   it('a producer takes from the nearest owned cell and the empty cell disappears', () => {
     const w = world()
     putTerrain(w, 'meadow', [19, 11, 19, 14], [17, 14, 18, 14])
@@ -114,12 +153,18 @@ describe('resources and land (GDD 6)', () => {
   })
   it('the hand gathers one item a click, and only on own land', () => {
     const w = world({ all: false })
-    putTerrain(w, 'meadow', [19, 14, 19, 14], [13, 7, 13, 7])
-    expect(gather(w, 19, 14)).toBe(true)
-    expect(stockOf(w, 'hay')).toBe(1)
-    // the north plots aren't bought yet
-    expect(gather(w, 13, 7)).toBe(false)
-    expect(stockOf(w, 'hay')).toBe(1)
+    putTerrain(w, 'meadow', [10, 18, 10, 18], [19, 10, 19, 10])
+    // the hand picks the hay, nothing goes to the stock by itself; clicks on the same meadow gather on while it has room
+    expect(gather(w, 10, 18)).toBe(true)
+    expect(res(w, Ui).carry.map((q) => q.kind)).toEqual(['hay'])
+    expect(stockOf(w, 'hay')).toBe(0)
+    for (let i = 1; i < PILE.max; i++) handClick(w, 10.5, 18.5)
+    expect(res(w, Ui).carry.length).toBe(PILE.max)
+    // with the hand full, a gathered one falls beside it
+    expect(gather(w, 10, 18)).toBe(true)
+    expect(lying(w)).toEqual(['hay'])
+    // the plot north of the market isn't bought yet
+    expect(gather(w, 19, 10)).toBe(false)
   })
   it('a plot with nothing on it is not for sale; a richer one costs more and each purchase raises prices', () => {
     const w = world({ all: false })
@@ -127,23 +172,22 @@ describe('resources and land (GDD 6)', () => {
     expect(p11).toBeGreaterThan(0)
     expect(buyPlot(w, 1, 1)).toBe(true)
     expect(plotPrice(w, 2, 1)).toBeGreaterThan(0)
-    // the far row and the east are under the sky until the island grows
+    // the ring round the start is under the sky until the island grows
     expect(plotPrice(w, 1, 0)).toBe(0)
     expect(plotPrice(w, 4, 2)).toBe(0)
-    res(w, Field).top = 0
-    res(w, Field).right = GRID.cols
+    Object.assign(res(w, Field), { left: 0, top: 0, right: GRID.cols, bottom: GRID.rows })
     expect(plotPrice(w, 1, 0)).toBeGreaterThan(0)
     expect(plotPrice(w, 4, 2)).toBeGreaterThan(0)
   })
 })
 
 describe('sowing (GDD 6.1)', () => {
-  it('a seed from the stock sprouts and grows into a small meadow; a seeder sows from what its belt brings', () => {
+  it('a seed from the hand sprouts and grows into a small meadow; a seeder sows from what its belt brings', () => {
     const w = world()
-    res(w, Stock).n.hay = 1
+    inHand(w, 'hay')
     res(w, Ui).seed = 'meadow'
     expect(place(w, 'sow', 17, 17, 0)).toBe(true)
-    expect(stockOf(w, 'hay')).toBe(0)
+    expect(res(w, Ui).carry).toEqual([])
     expect(res(w, Field).terrain.get(key(17, 17))).toBe('sprout')
     expect(whyNot(w, 'belt', 17, 17)).toBe('sprout')
     // no seed, no sowing
@@ -235,12 +279,16 @@ describe('pens and sheep (GDD 5)', () => {
     place(w, 'pen', 15, 15, 0)
     const p = res(w, Flock).pastures.at(-1)!
     for (let i = 0; i < PEN.cap; i++) buySheep(w, p)
-    // a sheep of the first pen dropped on the full one goes back home
+    // a sheep of the first pen dropped on the full one stays by its fence and roams: no jump home
     const first = res(w, Flock).pastures[0]!.id
     const s = sheepOf(w).find((q) => q.home === first)!
     dropSheep(w, s, 16.5, 16.5)
-    expect(s.home).toBe(first)
-    // a belt into another pen's way in: with nothing at that pen's way out to ride on, the sheep waits on the belt
+    expect(s.state).toBe('roam')
+    expect(pastureAt(w, Math.floor(s.px), Math.floor(s.py))).toBeNull()
+    expect(Math.hypot(s.px - 16.5, s.py - 16.5)).toBeLessThan(3)
+    // carried home by hand; then a belt into another pen's way in: with nothing at that pen's way out to ride on, the
+    // sheep waits on the belt
+    penIn(w, s, res(w, Flock).pastures[0]!)
     place(w, 'belt', p.entry.x, p.entry.y, p.entry.d)
     const b = onBelt(w, p.entry.x, p.entry.y, 'sheep', s)
     res(w, Flock).sheep = sheepOf(w).filter((q) => q !== sheepOf(w).find((r) => r.home === p.id))
@@ -280,9 +328,15 @@ describe('pens and sheep (GDD 5)', () => {
     // the market takes goods from the start; trade comes only at its level
     expect(market(w).type).toBe('dock')
     expect(gs.trade).toBe(false)
-    // shorn by hand, the wool goes to the stock and the post takes it from there: the pen's level opens
+    // shorn by hand, the wool falls beside the sheep; carried by hand into the market, the post takes it: the pen's
+    // level opens. Left lying, it never reaches the stock
+    for (const s of sheepOf(w)) for (let i = 0; i < 3; i++) shearClick(w, s)
+    run(w, 2)
+    expect(lying(w).length).toBe(2 * sheepOf(w).length)
+    expect(stockOf(w, 'wool')).toBe(0)
     for (let n = 0; n < 300 && gs.level === 0; n++) {
       for (const s of sheepOf(w)) if (s.wool >= 1) for (let i = 0; i < 3; i++) shearClick(w, s)
+      carryToMarket(w)
       run(w, 1)
     }
     expect(gs.level).toBe(1)
@@ -410,20 +464,21 @@ describe('pens and sheep (GDD 5)', () => {
     dropSheep(w, s, p.x + 1.5, p.y + 1.5)
     expect([s.state, s.home]).toEqual(['pasture', p.id])
   })
-  it('a shorn sheep grows its next fleece only once fed; the hand feeds it one hay from the stock', () => {
+  it('a shorn sheep grows its next fleece only once fed; the hand feeds it one hay it carries', () => {
     const w = world()
     const s = sheepOf(w)[0]!
     for (let i = 0; i < 3; i++) shearClick(w, s)
-    expect(stockOf(w, 'wool')).toBe(2)
+    expect(lying(w)).toEqual(['wool', 'wool'])
+    res(w, Field).piles.clear()
     run(w, SHEEP.grow + 1)
     expect(s.wool).toBe(0)
-    // a click with no hay in stock does nothing; with one, it feeds
+    // a click with no hay in the hand does nothing to it; with hay, it feeds it one
     handClick(w, s.px, s.py)
     expect(s.fed).toBe(false)
-    res(w, Stock).n.hay = 1
+    inHand(w, 'hay', 'hay')
     handClick(w, s.px, s.py)
     expect(s.fed).toBe(true)
-    expect(stockOf(w, 'hay')).toBe(0)
+    expect(res(w, Ui).carry.map((q) => q.kind)).toEqual(['hay'])
     run(w, SHEEP.grow + 0.5)
     expect(s.wool).toBe(1)
     expect(s.fed).toBe(false)
@@ -520,7 +575,7 @@ describe('stations on the sheep loop (GDD 5)', () => {
       sh = get(w, 16, 11)!
     dy.inv.dye = 1
     run(w, 12)
-    expect(sh.pile.map((q) => q.kind)).toContain('cwool')
+    expect(pilesBy(w, sh).map((q) => q.kind)).toContain('cwool')
     expect(dy.count).toBe(1)
     run(w, 10)
     expect(sh.count).toBeGreaterThan(1)
@@ -561,8 +616,8 @@ describe('the salon (GDD 5)', () => {
     res(w, GameState).food = false
     run(w, 14)
     expect(sh.count).toBeGreaterThan(0)
-    expect(sh.pile.length).toBeGreaterThan(0)
-    expect(new Set(sh.pile.map((q) => q.kind))).toEqual(new Set(['yarn']))
+    expect(pilesBy(w, sh).length).toBeGreaterThan(0)
+    expect(new Set(pilesBy(w, sh).map((q) => q.kind))).toEqual(new Set(['yarn']))
     expect(get(w, 14, 11)!.count).toBeGreaterThan(0)
     // shorn, a sheep's marks are gone
     const shorn = sheepOf(w).filter((q) => q.wool < 1 && q.state !== 'machine')
@@ -576,31 +631,75 @@ describe('the salon (GDD 5)', () => {
     run(w, 14)
     expect(get(w, 14, 11)!.count).toBeGreaterThan(0)
     expect(get(w, 16, 11)!.count).toBe(0)
-    expect(new Set(sh.pile.map((q) => q.kind))).toEqual(new Set(['thread']))
+    expect(new Set(pilesBy(w, sh).map((q) => q.kind))).toEqual(new Set(['thread']))
   })
   it('the bath stands only by water', () => {
     const w = world()
     putTerrain(w, 'water', [22, 16, 23, 17])
-    expect(whyNot(w, 'bath', 24, 6, 0)).toBe('needWater')
+    expect(whyNot(w, 'bath', 28, 10, 0)).toBe('needWater')
     expect(whyNot(w, 'bath', 19, 16, 0)).toBe('')
   })
   it('shearing by hand gives what the shearer would', () => {
     const w = world()
     const s = sheepOf(w)[0]!
     s.marks = { ...noMarks(), comb: true, dye: true }
-    res(w, Stock).n = {}
     for (let i = 0; i < 3; i++) shearClick(w, s)
-    expect(res(w, Stock).n).toEqual({ cthread: 2 })
+    expect(lying(w)).toEqual(['cthread', 'cthread'])
     expect(s.marks).toEqual(noMarks())
   })
-  it('the hand never loads a machine: a click on one only selects it', () => {
+  it('an empty hand selects a machine; with the good it takes in the hand, a click loads it as far as it holds', () => {
     const w = world()
     place(w, 'feeder', 16, 16, 0)
-    res(w, Stock).n.hay = 10
     handClick(w, 16.5, 16.5)
     expect(get(w, 16, 16)!.inv).toEqual({})
-    expect(stockOf(w, 'hay')).toBe(10)
     expect(res(w, Ui).sel).toEqual({ kind: 'b', key: key(16, 16) })
+    res(w, Ui).sel = null
+    inHand(w, 'hay', 'hay', 'hay', 'hay', 'hay', 'wool')
+    clickBuilding(w, get(w, 16, 16)!)
+    expect(get(w, 16, 16)!.inv.hay).toBe(BELT.bufMax)
+    expect(res(w, Ui).carry.map((q) => q.kind).sort()).toEqual(['hay', 'wool'])
+  })
+  it('goods in the hand go where they are put down: into the market, onto an empty belt, on the ground; left in the hand what goes nowhere', () => {
+    const w = startWorld({ seed: 1 })
+    worlds.push(w)
+    res(w, Unlocks).cardQ.length = 0
+    // into the market, all of them, to its stock
+    inHand(w, 'wool', 'wool', 'wool')
+    expect(dropCarry(w, MARKET.x + 3.5, MARKET.y + 3.5)).toBe(3)
+    expect(stockOf(w, 'wool')).toBe(3)
+    // onto the ground: a pile of up to PILE.max; then picked up again, the whole of it
+    inHand(w, ...Array.from({ length: PILE.max }, () => 'hay' as const))
+    expect(dropCarry(w, 10.5, 18.5)).toBe(PILE.max)
+    expect(pileAt(w, 10, 18)!.length).toBe(PILE.max)
+    inHand(w, 'hay')
+    expect(dropCarry(w, 10.5, 18.5)).toBe(0)
+    expect(res(w, Ui).carry.length).toBe(1)
+    res(w, Ui).carry = []
+    expect(pickUp(w, 10, 18)).toBe(true)
+    expect(res(w, Ui).carry.length).toBe(PILE.max)
+    expect(pileAt(w, 10, 18)).toBeUndefined()
+    // one onto an empty belt, the rest stays in the hand
+    res(w, Unlocks).unlocked.add('belt')
+    place(w, 'belt', 10, 20, 0, true)
+    expect(dropCarry(w, 10.5, 20.5)).toBe(1)
+    expect(get(w, 10, 20)!.item?.kind).toBe('hay')
+    expect(res(w, Ui).carry.length).toBe(PILE.max - 1)
+    // put down when cancelled: on the ground, as near as there is room; never lost — far over the sky, on the nearest
+    // own land; never on land for sale
+    putDownCarry(w, 11.5, 18.5)
+    expect(res(w, Ui).carry).toEqual([])
+    expect(lying(w).length).toBe(PILE.max - 1)
+    inHand(w, 'wool', 'wool')
+    putDownCarry(w, -30, -30)
+    expect(res(w, Ui).carry).toEqual([])
+    expect(lying(w).length).toBe(PILE.max + 1)
+    for (const k of res(w, Field).piles.keys()) expect(owned(w, ...unkey(k)), k).toBe(true)
+    // a pen put down on goods moves them aside
+    res(w, Unlocks).unlocked.add('pen')
+    const [px, py] = unkey([...res(w, Field).piles.keys()][0]!)
+    expect(place(w, 'pen', px - 1, py - 1, 0, true)).toBe(true)
+    for (const k of res(w, Field).piles.keys()) expect(pastureAt(w, ...unkey(k)), k).toBeNull()
+    expect(lying(w).length).toBe(PILE.max + 1)
   })
 })
 
@@ -614,11 +713,12 @@ describe('building', () => {
     expect(c0 - c1).toBe(c1 - res(w, GameState).coins)
     const m = get(w, 16, 16)!
     m.inv.hay = 3
-    const hay = stockOf(w, 'hay')
     remove(w, 16, 16)
     remove(w, 16, 13)
     expect(res(w, GameState).coins).toBe(c0)
-    expect(stockOf(w, 'hay')).toBe(hay + 3)
+    // what it held falls in a pile where it stood
+    expect(pileAt(w, 16, 16)?.map((q) => q.kind)).toEqual(['hay', 'hay', 'hay'])
+    expect(stockOf(w, 'hay')).toBe(0)
   })
   it('a moved machine keeps what it holds and costs nothing; a move called off puts it back', () => {
     const w = world()
@@ -663,7 +763,7 @@ describe('building', () => {
 })
 
 describe('the market and its clients (GDD 7–8)', () => {
-  it('the market stands fixed in the middle of the start, takes a good from a belt on any side, and no sheep', () => {
+  it('the market stands fixed in the middle of the start; it takes a good only at its ways in, two on each side, and no sheep', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
     const m = market(w)
@@ -673,23 +773,28 @@ describe('the market and its clients (GDD 7–8)', () => {
     expect(remove(w, MARKET.x, MARKET.y)).toBe(false)
     expect(liftUp(w, m)).toBe(false)
     expect(whyNot(w, 'belt', MARKET.x + 2, MARKET.y + 2, 0)).toBe('taken')
-    // a belt on each side hands its goods in (the plots north of it bought first)
+    // a belt at each way in hands its goods in (the plots round it bought first); one beside a way in does not
     res(w, Unlocks).unlocked.add('belt')
-    res(w, Field).plots.add(key(1, 1)).add(key(2, 1))
+    res(w, Field).plots.add(key(2, 1)).add(key(3, 2)).add(key(2, 3))
+    const [a, b] = MARKET.ports
     const sides: [number, number, Dir][] = [
-      [MARKET.x - 1, MARKET.y + 2, 0],
-      [MARKET.x + MARKET.size, MARKET.y + 3, 2],
-      [MARKET.x + 2, MARKET.y - 1, 1],
-      [MARKET.x + 4, MARKET.y + MARKET.size, 3],
+      [MARKET.x - 1, MARKET.y + a, 0],
+      [MARKET.x + MARKET.size, MARKET.y + b, 2],
+      [MARKET.x + b, MARKET.y - 1, 1],
+      [MARKET.x + a, MARKET.y + MARKET.size, 3],
     ]
     for (const [x, y, d] of sides) {
       expect(place(w, 'belt', x, y, d, true), `${x},${y}`).toBe(true)
       onBelt(w, x, y, 'thread')
     }
+    expect(place(w, 'belt', MARKET.x - 1, MARKET.y + a + 1, 0, true)).toBe(true)
+    onBelt(w, MARKET.x - 1, MARKET.y + a + 1, 'wool')
     res(w, Fx).q.length = 0
     stepSimulation(w)
     expect(stockOf(w, 'thread')).toBe(4)
     expect(res(w, Fx).q.filter((e) => e.kind === 'deliver').length).toBe(4)
+    expect(get(w, MARKET.x - 1, MARKET.y + a + 1)!.item?.kind).toBe('wool')
+    expect(inCells(w, m).length).toBe(8)
     // a sheep is not taken: it waits on its belt
     const [x, y] = sides[0]!
     onBelt(w, x, y, 'sheep', sheepOf(w)[0])
@@ -748,12 +853,13 @@ describe('the market and its clients (GDD 7–8)', () => {
       m = market(w)
     const c0 = gs.coins
     res(w, Fx).q.length = 0
-    expect(dockAccept(w, m, newItem('felt'), MARKET.x, MARKET.y + 1, 0)).toBe(true)
+    const y = MARKET.y + MARKET.ports[0]!
+    expect(dockAccept(w, m, newItem('felt'), MARKET.x, y, 0)).toBe(true)
     expect(stockOf(w, 'felt')).toBe(1)
     expect(gs.coins).toBe(c0)
-    expect(res(w, Fx).q).toContainEqual({ kind: 'deliver', x: MARKET.x, y: MARKET.y + 1, fx: MARKET.x - 1, fy: MARKET.y + 1, good: 'felt' })
+    expect(res(w, Fx).q).toContainEqual({ kind: 'deliver', x: MARKET.x, y, fx: MARKET.x - 1, fy: y, good: 'felt' })
     res(w, Stock).n.felt = MARKET.keep
-    dockAccept(w, m, newItem('felt'), MARKET.x, MARKET.y + 1, 0)
+    dockAccept(w, m, newItem('felt'), MARKET.x, y, 0)
     expect(stockOf(w, 'felt')).toBe(MARKET.keep)
     expect(gs.coins - c0).toBe(sellPrice('felt'))
   })
@@ -777,7 +883,7 @@ describe('the market and its clients (GDD 7–8)', () => {
     }
     expect(res(w, Market).needs.length).toBeGreaterThan(0)
   })
-  it("trade in the market's window sells from the stock for a quarter and buys at twice the price", () => {
+  it("trade in the market's window sells from the stock for a quarter and buys at twice the price, put out in a pile by a way in", () => {
     const w = world()
     res(w, Stock).n.yarn = 4
     const c0 = res(w, GameState).coins
@@ -785,22 +891,30 @@ describe('the market and its clients (GDD 7–8)', () => {
     expect(res(w, GameState).coins - c0).toBe(4 * sellPrice('yarn'))
     buy(w, 'hay', 3)
     expect(res(w, GameState).coins - c0).toBe(4 * sellPrice('yarn') - 3 * buyPrice('hay'))
-    expect(stockOf(w, 'hay')).toBe(3)
+    expect(stockOf(w, 'hay')).toBe(0)
+    const at = inCells(w, { ...blankBuilding('dock', MARKET.x, MARKET.y, 0), w: MARKET.size, h: MARKET.size }).find((c) => pileAt(w, c.x, c.y))!
+    expect(pileAt(w, at.x, at.y)!.map((q) => q.kind)).toEqual(['hay', 'hay', 'hay'])
+    // more than one pile holds: put out round it, every one paid for
+    const c1 = res(w, GameState).coins
+    expect(buy(w, 'hay', 10)).toBe(10)
+    expect(c1 - res(w, GameState).coins).toBe(10 * buyPrice('hay'))
+    expect(lying(w).length).toBe(13)
   })
-  it('the island grows at its levels: east twice, then the far row', () => {
+  it('the island grows at its levels, ring by ring round the start: the east, the south, then the west and the north', () => {
     const w = startWorld({ seed: 1 })
     worlds.push(w)
     const gs = res(w, GameState),
       f = res(w, Field)
+    const edges = () => [f.left, f.top, f.right, f.bottom]
+    expect(edges()).toEqual([ISLAND_START.left, ISLAND_START.top, ISLAND_START.right, ISLAND_START.bottom])
     for (const g of ISLAND_GROW) {
-      // finish levels until the one where the island grows
+      const before = edges()
+      // finish levels until the one where the island grows: only its own edges move
       while (gs.level + 1 < g.level) nextLevel(w)
-      expect(f.top).toBe(g.top ?? f.top)
-      expect(f.right).toBe(g.right ?? f.right)
+      expect(edges()).toEqual([g.left ?? before[0], g.top ?? before[1], g.right ?? before[2], g.bottom ?? before[3]])
       expect(res(w, Unlocks).seen.has('island') || res(w, Unlocks).cardQ.includes('island')).toBe(true)
     }
-    expect(f.top).toBe(0)
-    expect(f.right).toBe(GRID.cols)
+    expect(edges()).toEqual([0, 0, GRID.cols, GRID.rows])
   })
 })
 
@@ -832,17 +946,17 @@ describe('systems (TDD 3)', () => {
     expect(res(w, Fx).q.map((e) => e.kind)).toEqual(['puff'])
     // the farm still works: a good rides its belt; with the belts off it stands
     res(w, Unlocks).unlocked.add('belt')
-    place(w, 'belt', 21, 15, 0, true)
-    place(w, 'belt', 22, 15, 0, true)
-    const b = get(w, 21, 15)!
+    place(w, 'belt', 9, 17, 0, true)
+    place(w, 'belt', 10, 17, 0, true)
+    const b = get(w, 9, 17)!
     b.item = newItem('wool')
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 22, 15)!.item?.kind).toBe('wool')
+    expect(get(w, 10, 17)!.item?.kind).toBe('wool')
     res(w, Systems).on.delete('belts')
-    const it = get(w, 22, 15)!.item!
+    const it = get(w, 10, 17)!.item!
     const p = it.p
     for (let i = 0; i < 60; i++) stepSimulation(w)
-    expect(get(w, 22, 15)!.item).toBe(it)
+    expect(get(w, 10, 17)!.item).toBe(it)
     expect(it.p).toBe(p)
   })
 })

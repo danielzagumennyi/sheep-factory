@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { BATH_YIELD, BELT, BUILDINGS, ITEMS, LOOK, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
+import { pilesBy, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
 import { buyPlot, cycleRule, liftUp, remove, setSeed } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
 import { hungry } from '@/game/systems/sheep'
@@ -17,6 +17,7 @@ import { setTool } from './actions'
 import { useHudStore } from './hudStore'
 import { Icon } from './Icon'
 import { Book } from './Book'
+import { ShearCursor } from './ShearCursor'
 
 /** m:ss of game time. */
 export const fmtT = (t: number) => {
@@ -84,12 +85,14 @@ export function Hud() {
       <Clients />
       <Bottom />
       <BottomRight />
+      <HandPanel />
       <StockPanel />
       <Popup />
       <Book />
       <NewCard />
       <MenuOverlay />
       <ErrorToast />
+      <ShearCursor />
     </>
   )
 }
@@ -355,9 +358,26 @@ function BottomRight() {
   )
 }
 
+/** What the hand carries (GDD 3), over the stock: its goods, one icon each; nothing while it is empty. */
+function HandPanel() {
+  const { t } = useT()
+  const hand = useHudStore((s) => s.hand)
+  if (!hand.length) return null
+  return (
+    <div className="ov ov-hand">
+      <div className="panel hand" title={t(UI.hand)}>
+        <Icon kind="hand" size={24} />
+        {hand.map((k, i) => (
+          <Icon key={i} kind={k} size={26} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /**
- * The stock, which is the hand, bottom left as in Tower Factory (the author): a column of goods with their counts, only
- * those there are.
+ * The market's stock, bottom left as in Tower Factory (the author): a column of goods with their counts, only those
+ * there are — what has come into the market, by a belt or in the hand.
  */
 const STOCK_ORDER = Object.keys(ITEMS) as ItemId[]
 function StockPanel() {
@@ -456,19 +476,21 @@ const secs = (n: number) => String(Math.round(n * 10) / 10)
 
 /**
  * How loaded a machine is (the author: «видеть его загруженность»): the job in hand as a bar with one job's seconds;
- * each good it takes with its four places, filled as far as it holds; what is done and waiting to leave. Machines take
- * goods only from belts (docs/05-REWORK.md), so nothing is loaded by hand.
+ * each good it takes with its four places, filled as far as it holds; what is done and waiting to leave (and lying by
+ * its way out). Goods come by belt or in the hand (GDD 3), not from the window.
  */
 function MachineLoad({ b }: { b: Building }) {
+  const { world } = useGame()
   const { t } = useT()
   const type = b.type as BuildingId
   const def = BUILDINGS[type]
   if (!def.time) return null
   const kinds: ItemId[] = def.uses ? [def.uses] : def.sows ? [SEED[b.seed ?? 'meadow']] : []
   // what waits to leave: a producer's good, or what the last sheep's fleece gave
-  const waiting = b.outs.find((o) => !o.item.sheep)?.item.kind ?? b.pile[0]?.kind
+  const lying = pilesBy(world, b)
+  const waiting = b.outs.find((o) => !o.item.sheep)?.item.kind ?? lying[0]?.kind
   const out = waiting && waiting !== 'sheep' ? waiting : (def.gives ?? null)
-  const ready = b.outs.filter((o) => !o.item.sheep).length + b.pile.length
+  const ready = b.outs.filter((o) => !o.item.sheep).length + lying.length
   return (
     <div className="load">
       <div className="load__job" title={t(UI.cycle, { a: secs(cycleTime(b)) })}>

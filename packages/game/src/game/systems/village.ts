@@ -1,5 +1,7 @@
-import { AFTER, BUILDINGS, BUY_SHARE, CLIENT, DIRS, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, type CardId, type Dir, type GrowDef, type ItemId, type LevelDef } from '../balance'
-import { Field, GameState, Market, Stats, Unlocks, emit, float, isOn, res, stockAdd, stockOf, stockTake, type Building, type Item, type NeedT, type World } from '../world'
+import { AFTER, BUILDINGS, BUY_SHARE, CLIENT, DIRS, ISLAND_GROW, ITEMS, LEVELS, MARKET, MARKET_SHARE, PILE, type CardId, type Dir, type GrowDef, type ItemId, type LevelDef } from '../balance'
+import { dockIns, pileAt, pileOk } from '../grid'
+import { Field, GameState, Market, Stats, Unlocks, emit, float, isOn, newItem, res, stockAdd, stockOf, stockTake, type Building, type Item, type NeedT, type World } from '../world'
+import { dropNear } from './ground'
 import { queueCard, unlock } from './unlocks'
 
 /**
@@ -54,9 +56,9 @@ export function openLevel(w: World, i: number) {
 /** A strip of plots rises with fresh deposits, for sale (the author, 16–18.10.2026). */
 export function growIsland(w: World, g: GrowDef) {
   const f = res(w, Field)
-  if (f.top <= (g.top ?? f.top) && f.right >= (g.right ?? f.right)) return
-  f.top = Math.min(f.top, g.top ?? f.top)
-  f.right = Math.max(f.right, g.right ?? f.right)
+  const to = { left: Math.min(f.left, g.left ?? f.left), top: Math.min(f.top, g.top ?? f.top), right: Math.max(f.right, g.right ?? f.right), bottom: Math.max(f.bottom, g.bottom ?? f.bottom) }
+  if (to.left === f.left && to.top === f.top && to.right === f.right && to.bottom === f.bottom) return
+  Object.assign(f, to)
   res(w, GameState).fieldVersion++
   // its card every time it grows
   res(w, Unlocks).seen.delete('island')
@@ -136,17 +138,22 @@ export function clientSystem(w: World, dt: number) {
  */
 export function dockAccept(w: World, _d: Building, it: Item, x: number, y: number, d: Dir): boolean {
   if (it.kind === 'sheep') return false
-  const kind = it.kind
-  emit(w, { kind: 'deliver', x, y, fx: x - DIRS[d]![0], fy: y - DIRS[d]![1], good: kind })
-  // with the village switched off the market only takes what comes: nothing is counted (the menu's farm)
-  if (!isOn(w, 'village')) return true
+  emit(w, { kind: 'deliver', x, y, fx: x - DIRS[d]![0], fy: y - DIRS[d]![1], good: it.kind })
+  marketTake(w, it.kind, x, y)
+  return true
+}
+/**
+ * A good comes into the market at (x, y), by a belt or in the hand: into the stock while it holds fewer than
+ * MARKET.keep of it, past that sold at once for a quarter. With the village off nothing is counted (the menu's farm).
+ */
+export function marketTake(w: World, kind: ItemId, x: number, y: number) {
+  if (!isOn(w, 'village')) return
   if (stockOf(w, kind) < MARKET.keep) stockAdd(w, kind)
   else {
     const g = sellPrice(kind)
     earn(w, g)
     float(w, x + 0.5, y + 0.5, '+' + g)
   }
-  return true
 }
 
 /** Sell up to n of a good from the stock in the market's window (none before trade opens). Returns how many were sold. */
@@ -160,19 +167,30 @@ export function sell(w: World, k: ItemId, n: number) {
   return got
 }
 
-/** Buy up to n of a good into the stock in the market's window, as many as the coins allow. Returns how many were bought. */
+/**
+ * Buy up to n of a good in the market's window, as many as the coins allow: they are put out in piles by the market's
+ * first way in on own land, and round it, for the hand to carry (PILE). Only what found room is paid for. Returns how
+ * many were bought.
+ */
 export function buy(w: World, k: ItemId, n: number) {
   if (!res(w, GameState).trade) return 0
   const gs = res(w, GameState),
     p = buyPrice(k)
-  const got = Math.max(0, Math.min(n, Math.floor(gs.coins / p)))
-  if (!got) {
+  const ins = dockIns({ x: MARKET.x, y: MARKET.y, w: MARKET.size, h: MARKET.size })
+  const spot = ins.find((c) => pileOk(w, c.x, c.y) && (pileAt(w, c.x, c.y)?.length ?? 0) < PILE.max) ?? ins.find((c) => pileOk(w, c.x, c.y)) ?? ins[0]!
+  const can = Math.max(0, Math.min(n, Math.floor(gs.coins / p)))
+  if (!can) {
     gs.noMoney++
+    return 0
+  }
+  // out of the market's door by that way in
+  const got = can - dropNear(w, spot.x, spot.y, Array.from({ length: can }, () => newItem(k)), { x: spot.sx + 0.5, y: spot.sy + 0.5, h: 0.3 }).length
+  if (!got) {
+    float(w, MID.x, MID.y, 'noRoom', 'bad')
     return 0
   }
   gs.coins -= got * p
   res(w, Stats).spent += got * p
-  stockAdd(w, k, got)
-  float(w, MID.x, MID.y, '−' + got * p, 'soft')
+  float(w, spot.x + 0.5, spot.y + 0.5, '−' + got * p, 'soft')
   return got
 }

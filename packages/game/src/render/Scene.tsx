@@ -12,6 +12,7 @@ import { GameLoop } from './GameLoop'
 import { Ghost } from './Ghost'
 import { Grass } from './Grass'
 import { Ground } from './Ground'
+import { Hills } from './Hills'
 import { Hover } from './Hover'
 import { PlotFence } from './PlotFence'
 import { Items } from './Items'
@@ -66,12 +67,12 @@ export function Scene() {
         intensity={LIGHT.sun}
         castShadow
         shadow-mapSize={[SHADOW.map, SHADOW.map]}
-        shadow-camera-left={-24}
-        shadow-camera-right={24}
-        shadow-camera-top={20}
-        shadow-camera-bottom={-20}
+        shadow-camera-left={-30}
+        shadow-camera-right={30}
+        shadow-camera-top={30}
+        shadow-camera-bottom={-30}
         shadow-camera-near={1}
-        shadow-camera-far={80}
+        shadow-camera-far={100}
         shadow-bias={-0.0005}
         shadow-normalBias={0.025}
       >
@@ -99,18 +100,19 @@ export function Scene() {
  */
 function Island() {
   const { world } = useGame()
-  const edge = () => res(world, Field).top + ',' + res(world, Field).right
+  const f = res(world, Field)
+  const edge = () => [f.left, f.top, f.right, f.bottom].join(',')
   const [k, setK] = useState(edge)
   useFrame(() => {
     const e = edge()
     if (e !== k) setK(e)
   })
-  island.top = res(world, Field).top
-  island.right = res(world, Field).right
+  Object.assign(island, { left: f.left, top: f.top, right: f.right, bottom: f.bottom, hills: f.hills })
   return (
     <group key={k}>
       <Ground />
       <Water />
+      <Hills />
       <PlotFence />
       <Terrain />
       <Grass />

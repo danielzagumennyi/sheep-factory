@@ -4,24 +4,29 @@ import { buyPlot, place, remove } from './actions/build'
 import { Field, Flock, GameState, key, res, type SplitRule, type World } from './world'
 
 /**
- * The farm of chapter 1, laid out cell by cell round the market in the middle (GDD 2, 7): what the balance bot builds,
- * step by step as levels open, the island grows and coins allow, and what the main menu shows built whole. Six loops,
- * each giving one good for its client — everything is made on the sheep (the author's salon, 19.10.2026), so a loop's
- * stations say what its shearer gives — each with its own way into the market, for no belt crosses a loop:
+ * The farm of chapter 1, laid out cell by cell round the market in the middle of the square map (GDD 2, 7): what the
+ * balance bot builds, step by step as levels open, the island grows and coins allow, and what the main menu shows
+ * built whole. Six loops, each giving one good for its client — everything is made on the sheep (the author's salon,
+ * 19.10.2026), so a loop's stations say what its shearer gives — each with its own way into the market, for no belt
+ * crosses a loop:
  *
- * - A, on the starting land west of the market: wool for the post. Its stations face north up the column beside the
- *   market, so the shearer's wool goes straight in; a second pen on the land west of it;
- * - E, east of the market (rows 10–14): comb — thread for the shop, along row 14 into the market's east side;
- * - X, past E in the east, by its pond: the bath — felt for the cobbler, into row 14 through a merger;
- * - W, above E (rows 5–9): comb and curl — yarn for the atelier, along row 9 and down into the market's north side;
- * - S, below E (rows 15–19): the dye station — coloured wool for the school, along row 19 and up into its south side;
- * - Y, on the far row once it rises: comb, curl and knitting — sweaters for the fair, down column 15 into the market.
+ * Each comes into one of the market's ways in (MARKET.ports: two on each side):
  *
- * A loop of the bands (E, X, W, S, Y) runs east from its pen and turns left round it, back along the row above; the good
+ * - A, on the start's land west of the market: wool for the post. Its stations face north up the column beside the
+ *   market, the shearer's wool a cell south and in; a second pen on the land west of it;
+ * - W, north of the market: comb and curl — yarn for the atelier, a few cells west and down into it;
+ * - E, south of the market: comb — thread for the shop, west along its goods row and up column 17 into it;
+ * - X, east of E, by its pond, once the east has risen: the bath — felt for the cobbler, along E's goods row through
+ *   a merger;
+ * - S, east of the market once the east has risen: the dye station — coloured wool for the school, west into it;
+ * - Y, in the far south once it rises: comb, curl and knitting — sweaters for the fair, west and up column 16 into E's
+ *   line through a merger.
+ *
+ * A loop of the bands (W, E, X, Y) runs east from its pen and turns left round it, back along the row above; the good
  * a station takes comes in from its right — from outside the loop — on the row under its stations, and the shearer's
  * good drops to the row under that and runs off to the market. A second pen stands at a loop's corner: each sheep
  * crosses the other pen on its way round and stays only in its own (systems/sheep.ts). A job buys the plots it stands
- * on first (`jobPlots`), and waits while any of them is still under the sky.
+ * on first (`jobPlots`), and waits while any of them is still under the sky. No hill is in the way (MAP_HILLS).
  */
 
 export type Step = { b: BuildingId; x: number; y: number; d: Dir; rules?: readonly [SplitRule, SplitRule, SplitRule] } | { pen: readonly [number, number]; d: Dir } | { remove: readonly [number, number] }
@@ -66,63 +71,69 @@ const bandMower = (fx: number, y: number): Step[] => [{ b: 'mower', x: fx + 2, y
 const bandFeeder = (fx: number, y: number): Step[] => [...off([fx, y + 1], [fx + 1, y + 1]), { b: 'feeder', x: fx, y, d: 0 }, ...belt(2, [fx + 1, y + 2]), ...belt(3, [fx, y + 2])]
 
 export const PLAN: readonly Job[] = [
-  // ---------------------------------------------------------------- A, west of the market, the first pen (9,17): wool
+  // ---------------------------------------------------------------- A, west of the market, the first pen (13,23): wool
   { id: 'A.pen', needs: ['pen'], steps: [{ pen: [START.pen.x, START.pen.y], d: START.pen.dir }] },
-  { id: 'A.shearer', needs: ['shearer'], after: ['A.pen'], steps: [{ b: 'shearer', x: 9, y: 13, d: 3 }] },
+  { id: 'A.shearer', needs: ['shearer'], after: ['A.pen'], steps: [{ b: 'shearer', x: 13, y: 19, d: 3 }] },
   {
     id: 'A.loop',
     needs: ['belt'],
     after: ['A.shearer'],
     // up from the pen to the shearer, on up through the feeder's place, round west and down the land's edge back into
-    // the pen; the wool straight east into the market
-    steps: [...belt(3, [10, 16], [10, 15], [10, 12], [10, 11]), ...belt(2, [10, 10], [9, 10]), ...belt(1, ...col(8, 10, 17)), ...belt(0, [8, 18]), ...belt(0, [11, 14])],
+    // the pen; the wool a cell south and east into the market's way in
+    steps: [...belt(3, [14, 22], [14, 21], [14, 18], [14, 17]), ...belt(2, [14, 16], [13, 16]), ...belt(1, ...col(12, 16, 23)), ...belt(0, [12, 24]), ...belt(1, [15, 20]), ...belt(0, [15, 21])],
   },
   // A's second pen, on the land west of it: the way down turns into it and its way out comes back onto it
-  { id: 'A.pen2', needs: ['pen', 'sheep'], after: ['A.loop'], whole: true, steps: [...belt(2, [8, 12], [7, 12]), ...belt(1, [6, 12]), { pen: [5, 13], d: 0 }, ...off([8, 13])] },
+  { id: 'A.pen2', needs: ['pen', 'sheep'], after: ['A.loop'], whole: true, steps: [...belt(2, [12, 18], [11, 18]), ...belt(1, [10, 18]), { pen: [9, 19], d: 0 }, ...off([12, 19])] },
   // hay: a mower north of the column, its hay down into the feeder's right
-  { id: 'A.mower', needs: ['mower'], after: ['A.loop'], steps: [{ b: 'mower', x: 11, y: 8, d: 1 }] },
-  { id: 'A.feeder', needs: ['feeder'], after: ['A.mower'], steps: [...off([10, 12], [10, 11]), { b: 'feeder', x: 9, y: 11, d: 3 }, ...belt(1, [11, 10], [11, 11]), ...belt(2, [11, 12])] },
-  // ---------------------------------------------------------------- E, east of the market (20,11): thread along row 14
-  { id: 'E.module', needs: ['pen', 'belt', 'shearer', 'comb'], steps: band(20, 11, ['comb', 'shearer'], belt(2, ...row(14, 25, 20))) },
-  { id: 'E.mower', needs: ['mower'], after: ['E.module'], steps: bandMower(27, 11) },
-  { id: 'E.feeder', needs: ['feeder'], after: ['E.mower'], steps: bandFeeder(27, 11) },
-  // ---------------------------------------------------------------- W, above E (20,6): yarn along row 9, down into the market
-  { id: 'W.module', needs: ['pen', 'belt', 'shearer', 'comb', 'curl'], steps: band(20, 6, ['comb', 'curl', 'shearer'], [...belt(2, ...row(9, 27, 20)), ...belt(1, [19, 9])]) },
-  { id: 'W.mower', needs: ['mower'], after: ['W.module'], steps: bandMower(29, 6) },
-  { id: 'W.feeder', needs: ['feeder'], after: ['W.mower'], steps: bandFeeder(29, 6) },
-  // ---------------------------------------------------------------- X, the first land in the east (32,11), by its pond: felt into row 14
-  { id: 'X.module', needs: ['pen', 'belt', 'shearer', 'bath', 'merger'], after: ['E.module'], steps: [...band(32, 11, ['bath', 'shearer'], belt(2, ...row(14, 37, 26))), { b: 'merger', x: 25, y: 14, d: 2 }] },
-  { id: 'X.mower', needs: ['mower'], after: ['X.module'], steps: bandMower(39, 11) },
-  { id: 'X.feeder', needs: ['feeder'], after: ['X.mower'], steps: bandFeeder(39, 11) },
-  // ---------------------------------------------------------------- S, below E (20,16): the dye station, coloured wool along row 19, up into the market
+  { id: 'A.mower', needs: ['mower'], after: ['A.loop'], steps: [{ b: 'mower', x: 15, y: 14, d: 1 }] },
+  { id: 'A.feeder', needs: ['feeder'], after: ['A.mower'], steps: [...off([14, 18], [14, 17]), { b: 'feeder', x: 13, y: 17, d: 3 }, ...belt(1, [15, 16], [15, 17]), ...belt(2, [15, 18])] },
+  // ---------------------------------------------------------------- E, south of the market (18,26): thread up column 17, into its way in at 18
+  { id: 'E.module', needs: ['pen', 'belt', 'shearer', 'comb'], steps: band(18, 26, ['comb', 'shearer'], [...belt(2, ...row(29, 23, 18)), ...belt(3, ...col(17, 29, 25)), ...belt(0, [17, 24]), ...belt(3, [18, 24])]) },
+  { id: 'E.mower', needs: ['mower'], after: ['E.module'], steps: bandMower(25, 26) },
+  { id: 'E.feeder', needs: ['feeder'], after: ['E.mower'], steps: bandFeeder(25, 26) },
+  // ---------------------------------------------------------------- W, north of the market (16,12): yarn west along row 15 and down into its way in
+  { id: 'W.module', needs: ['pen', 'belt', 'shearer', 'comb', 'curl'], steps: band(16, 12, ['comb', 'curl', 'shearer'], [...belt(2, [23, 15], [22, 15]), ...belt(1, [21, 15])]) },
+  { id: 'W.mower', needs: ['mower'], after: ['W.module'], steps: bandMower(25, 12) },
+  { id: 'W.feeder', needs: ['feeder'], after: ['W.mower'], steps: bandFeeder(25, 12) },
+  // ---------------------------------------------------------------- X, east of E (29,26), by its pond: felt into E's row through a merger
+  { id: 'X.module', needs: ['pen', 'belt', 'shearer', 'bath', 'merger'], after: ['E.module'], steps: [...band(29, 26, ['bath', 'shearer'], belt(2, ...row(29, 34, 24))), { b: 'merger', x: 23, y: 29, d: 2 }] },
+  { id: 'X.mower', needs: ['mower'], after: ['X.module'], steps: bandMower(36, 26) },
+  { id: 'X.feeder', needs: ['feeder'], after: ['X.mower'], steps: bandFeeder(36, 26) },
+  // ---------------------------------------------------------------- S, east of the market (25,17): the dye station, coloured wool west into it
   {
     id: 'S.module',
     needs: ['pen', 'belt', 'shearer', 'dyer', 'berry'],
     steps: [
-      { pen: [20, 16], d: 0 },
-      { b: 'dyer', x: 23, y: 16, d: 0 },
-      ...belt(0, [25, 17], [26, 17], [27, 17]),
-      { b: 'shearer', x: 28, y: 16, d: 0 },
-      ...belt(0, [30, 17], [31, 17]),
-      ...belt(3, [32, 17], [32, 16]),
-      ...belt(2, ...row(15, 32, 22)),
-      ...belt(1, [21, 15]),
+      { pen: [25, 17], d: 0 },
+      { b: 'dyer', x: 28, y: 17, d: 0 },
+      ...belt(0, [30, 18], [31, 18], [32, 18]),
+      { b: 'shearer', x: 33, y: 17, d: 0 },
+      ...belt(0, [35, 18], [36, 18]),
+      ...belt(3, [37, 18], [37, 17]),
+      ...belt(2, ...row(16, 37, 27)),
+      ...belt(1, [26, 16]),
       // the dye: a berry picker on the row under, through two belts into the station's right
-      { b: 'berry', x: 26, y: 18, d: 2 },
-      ...belt(2, [25, 18], [24, 18]),
-      ...belt(3, [23, 18]),
-      // the coloured wool: down to row 19, west along it and up into the market
-      ...belt(1, [28, 18]),
-      ...belt(2, ...row(19, 28, 20)),
-      ...belt(3, [19, 19], [19, 18]),
+      { b: 'berry', x: 31, y: 19, d: 2 },
+      ...belt(2, [30, 19], [29, 19]),
+      ...belt(3, [28, 19]),
+      // the coloured wool: down to row 20, west along it, and a cell south into the market's way in
+      ...belt(1, [33, 19]),
+      ...belt(2, ...row(20, 33, 25)),
+      ...belt(1, [24, 20]),
+      ...belt(2, [24, 21]),
     ],
   },
-  { id: 'S.mower', needs: ['mower'], after: ['S.module'], steps: bandMower(30, 16) },
-  { id: 'S.feeder', needs: ['feeder'], after: ['S.mower'], steps: bandFeeder(30, 16) },
-  // ---------------------------------------------------------------- Y, the far row once it rises (12,1): sweaters down column 15
-  { id: 'Y.module', needs: ['pen', 'belt', 'shearer', 'comb', 'curl', 'knit'], steps: band(12, 1, ['comb', 'curl', 'knit', 'shearer'], [...belt(2, ...row(4, 21, 16)), ...belt(1, ...col(15, 4, 9))]) },
-  { id: 'Y.mower', needs: ['mower'], after: ['Y.module'], steps: bandMower(23, 1) },
-  { id: 'Y.feeder', needs: ['feeder'], after: ['Y.mower'], steps: bandFeeder(23, 1) },
+  { id: 'S.mower', needs: ['mower'], after: ['S.module'], steps: bandMower(35, 17) },
+  { id: 'S.feeder', needs: ['feeder'], after: ['S.mower'], steps: bandFeeder(35, 17) },
+  // ---------------------------------------------------------------- Y, the far south once it rises (18,33): sweaters up column 16, into E's line through a merger
+  {
+    id: 'Y.module',
+    needs: ['pen', 'belt', 'shearer', 'comb', 'curl', 'knit', 'merger'],
+    after: ['E.module'],
+    steps: band(18, 33, ['comb', 'curl', 'knit', 'shearer'], [...belt(2, ...row(36, 27, 17)), ...belt(3, ...col(16, 36, 25)), ...belt(0, [16, 24]), { b: 'merger', x: 17, y: 24, d: 0 }]),
+  },
+  { id: 'Y.mower', needs: ['mower'], after: ['Y.module'], steps: bandMower(29, 33) },
+  { id: 'Y.feeder', needs: ['feeder'], after: ['Y.mower'], steps: bandFeeder(29, 33) },
 ]
 
 /** What a step costs now (a belt it stands on gives its coins back). */

@@ -56,7 +56,7 @@ export const BUILDING_TEXT: Readonly<Record<BuildingId, { name: Text; desc: Text
   seeder: { name: { ru: 'Сеялка', en: 'Seeder' }, desc: { ru: 'сеет вокруг то, что привезли', en: 'sows round it what comes in' } },
   splitter: { name: { ru: 'Делитель', en: 'Splitter' }, desc: { ru: 'каждому выходу — свой груз', en: 'each side gets its goods' } },
   merger: { name: { ru: 'Объединитель', en: 'Merger' }, desc: { ru: 'сводит до трёх лент в одну', en: 'joins up to three belts' } },
-  sow: { name: { ru: 'Посев', en: 'Sowing' }, desc: { ru: 'клик — семя со склада', en: 'click: a seed from stock' } },
+  sow: { name: { ru: 'Посев', en: 'Sowing' }, desc: { ru: 'клик — семя из руки', en: 'click: a seed from the hand' } },
 }
 
 export const RES_NAMES: Readonly<Record<ResId | 'sprout', Text>> = {
@@ -103,6 +103,7 @@ export const CARD_TEXT: Readonly<Record<CardId, { title: Text; text: Text }>> = 
 /** Why a building may not stand here: the short label under the ghost. */
 export const WHY_TEXT: Readonly<Record<Exclude<WhyNot, ''>, Text>> = {
   edge: { ru: 'край', en: 'edge' },
+  hill: { ru: 'на холме нельзя', en: 'not on a hill' },
   buyPlot: { ru: 'купи участок', en: 'buy the plot' },
   pasture: { ru: 'загон', en: 'pen' },
   onWater: { ru: 'на воде нельзя', en: 'not on water' },
@@ -132,9 +133,9 @@ export const STATE_TEXT: Readonly<Record<string, Text>> = {
 
 /** Words that float up from the field (the simulation emits these keys; numbers float as they are). */
 export const FX_TEXT: Readonly<Record<string, Text>> = {
-  toHand: { ru: '→ на склад', en: '→ to stock' },
-  noHay: { ru: 'нет сена', en: 'no hay' },
-  noSeed: { ru: 'нет семян', en: 'no seeds' },
+  fellOff: { ru: 'упало с ленты', en: 'fell off the belt' },
+  noHay: { ru: 'нет сена в руке', en: 'no hay in hand' },
+  noSeed: { ru: 'нет семян в руке', en: 'no seeds in hand' },
   penFull: { ru: 'в загоне овцы', en: 'sheep live here' },
   taken: { ru: 'занято', en: 'taken' },
   noRoom: { ru: 'нет места', en: 'no room' },

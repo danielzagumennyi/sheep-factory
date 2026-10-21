@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { TOOL_ORDER, type Dir } from './balance'
-import { anchorForInput, beltAutoDir, get, machineIns, outCells } from './grid'
+import { anchorForInput, beltAutoDir, get, machineIns, outCells, pileAt, pilesBy } from './grid'
 import { buySheep, place, remove, rotate } from './actions/build'
 import { pathDirs, routeCells } from './actions/path'
 import { stepSimulation } from './systems'
 import { penIn } from './systems/sheep'
 import { openField, putTerrain, TEST_PEN } from './testing'
-import { createGameWorld, Field, Flock, GameState, Unlocks, key, makePen, newItem, res, stockOf, type PastureT, type World } from './world'
+import { createGameWorld, Field, Flock, GameState, Unlocks, key, makePen, newItem, res, type PastureT, type World } from './world'
 
 /**
  * Everything connects whatever order it is built in (the author: a building that «не работало, но после переустановки
@@ -27,9 +27,11 @@ function penned(w: World) {
   for (const s of res(w, Flock).sheep) penIn(w, s, p)
   return w
 }
+/** A fresh long game with everything open, plenty of coins and the start's 3×3 plots bought. */
 function world() {
   const w = penned(createGameWorld({ seed: 3 }))
   for (const b of TOOL_ORDER) res(w, Unlocks).unlocked.add(b)
+  for (let py = 1; py < 4; py++) for (let px = 1; px < 4; px++) res(w, Field).plots.add(key(px, py))
   res(w, GameState).coins = 5000
   worlds.push(w)
   return w
@@ -81,12 +83,13 @@ describe('connections, in any order', () => {
     putTerrain(w, 'meadow', [16, 14, 19, 14])
     place(w, 'mower', 16, 16, 0)
     const m = get(w, 16, 16)!
-    // the first hay drops onto a pile on the output cell (18, 16); a belt laid there takes the pile to the stock and the next hay
+    // the first hay drops onto a pile on the ground by the output cell (18, 16); a belt laid there moves the pile aside
+    // (for the hand to carry) and takes the next hay
     run(w, 3.5)
-    expect(m.pile.length).toBe(1)
-    const hay = stockOf(w, 'hay')
+    expect(pilesBy(w, m).map((q) => q.kind)).toEqual(['hay'])
     expect(place(w, 'belt', 18, 16, 0)).toBe(true)
-    expect(stockOf(w, 'hay')).toBe(hay + 1)
+    expect(pileAt(w, 18, 16)).toBeUndefined()
+    expect([...res(w, Field).piles.values()].flat().map((q) => q.kind)).toEqual(['hay'])
     run(w, 3.5)
     expect(get(w, 18, 16)!.item?.kind).toBe('hay')
     // a belt head-on at the output jams it: the hay waits; turned south (R), the mower gives out of (16, 18)
@@ -137,7 +140,7 @@ describe('connections, in any order', () => {
       for (let t = 0; t < 40; t += 1 / 60) {
         stepSimulation(w)
         res(w, Unlocks).cardQ.length = 0
-        sh.pile.length = 0
+        res(w, Field).piles.clear()
       }
       expect(sh.type).toBe('shearer')
       expect(sh.count, order).toBeGreaterThan(2)
@@ -188,7 +191,7 @@ describe('connections, in any order', () => {
     for (let t = 0; t < 120; t += 1 / 60) {
       stepSimulation(w)
       res(w, Unlocks).cardQ.length = 0
-      sh.pile.length = 0
+      res(w, Field).piles.clear()
       crossed = Math.max(crossed, mine.filter((s) => s.state === 'transit').length)
     }
     // both pens' sheep were shorn by the one shearer, crossed the other pen, and each lives where it did

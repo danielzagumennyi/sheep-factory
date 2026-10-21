@@ -31,6 +31,8 @@ export interface HudState {
   pauseNudge: number
   /** The stock: how many of each good. */
   stock: Partial<Record<ItemId, number>>
+  /** The goods in the hand, one by one. */
+  hand: ItemId[]
   clock: number
   /** The village level open now, from 1. */
   level: number
@@ -58,6 +60,7 @@ export const useHudStore = create<HudState>((set) => ({
   noMoney: 0,
   pauseNudge: 0,
   stock: {},
+  hand: [],
   clock: 0,
   level: 1,
   speed: 1,

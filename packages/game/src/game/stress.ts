@@ -1,5 +1,5 @@
 import { BUILDINGS, GRID, type BuildingId, type Dir, type ItemId } from './balance'
-import { get, pastureAt } from './grid'
+import { get, levelAt, pastureAt } from './grid'
 import { place } from './actions/build'
 import { buildShowcase, keepFull } from './showcase'
 import { enterBelt } from './systems/belts'
@@ -36,9 +36,9 @@ export function buildStress(w: World, opts: { sheep?: number } = {}) {
         y0 = py * GRID.plotH,
         x1 = x0 + GRID.plotW - 1,
         y1 = y0 + GRID.plotH - 1
-      // only a plot the farm has left free
+      // only a plot the farm has left free, and with no hill
       let used = false
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (get(w, x, y) || pastureAt(w, x, y)) used = true
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (get(w, x, y) || pastureAt(w, x, y) || levelAt(w, x, y) > 1) used = true
       if (used) continue
       // the plot cleared of its deposits
       for (let y = y0; y <= y1; y++)
@@ -71,12 +71,12 @@ export function buildStress(w: World, opts: { sheep?: number } = {}) {
   for (let t = 0; t < STRESS.warmup; t += 1 / 60) stepSimulation(w)
 }
 
-/** Keep the stress factory working: every station stocked with the good it uses, its pile cleared, the land full. */
+/** Keep the stress factory working: every station stocked with the good it uses, the goods on the ground cleared, the land full. */
 export function feedStress(w: World) {
   for (const b of res(w, Plant).b.values()) {
     const uses = b.type === 'dock' ? undefined : BUILDINGS[b.type].uses
     if (uses) b.inv[uses] = Math.max(b.inv[uses] ?? 0, STRESS.stock)
-    b.pile.length = 0
   }
+  res(w, Field).piles.clear()
   keepFull(w)
 }

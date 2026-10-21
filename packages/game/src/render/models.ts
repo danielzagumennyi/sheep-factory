@@ -567,54 +567,73 @@ function awning(a: number, b: number, ya: number, yb: number, n: number, ca: str
 
 /**
  * The market's hall (GDD 2, 7; the author, 21.10.2026: «большой рынок куда будут идти все товары», the stalls before
- * it «вообще не нравятся»): on a stone plinth as wide as the market, tiled round the hall, a hall with a door in the
- * middle of every side where the goods go in and goods set out by it, a striped awning all round it like a market's,
- * and over the awning a second storey whose
- * walls carry the clients' signs, under a mint hip roof with a lantern and a gold coin on top. Low at its edges, so
- * the farm behind it still shows. `MARKET_HALL` is its size: the lower walls' square and height, the upper storey's
- * square, and where on it the signs hang. Origin at its middle, on the ground.
+ * it «вообще не нравятся»): on a stone plinth as wide as the market, tiled round the hall, a hall with two doors on
+ * every side, one at each of the market's ways in (MARKET.ports; the author: «понятные точки подключения как это
+ * сделано в tower factory»). A wooden trough runs across the paving from the edge into each door, between rails in the
+ * awning's coral, two posts with round caps at its mouth like a machine's way in, chevrons on its floor pointing in.
+ * Goods set out under the awning between the doors; a striped awning all round; over it a low storey with shuttered
+ * windows under a mint hip roof, a lantern and a gold coin on top. No signs: the clients are the HUD's (the author:
+ * «товары не надо на рынке выводить, лучше просто в интерфейсе»). Low at its edges, so the farm behind it still shows.
+ * `MARKET_HALL` is its size: the lower walls' square and height, the upper storey's square and height, the roof's
+ * height, the plinth, where along a side the doors stand and how wide they are. Origin at its middle, on the ground.
  */
-export const MARKET_HALL = { wall: 5.2, height: 1.3, upper: 4.0, plinth: 0.14, signY: 2.495 } as const
+export const MARKET_HALL = { wall: 5.2, height: 1.3, upper: 4.0, up: 0.75, roof: 1.0, plinth: 0.14, port: 1.5, door: 0.86 } as const
+/** How high the coin on the lantern stands: a sold good's coin pops up off it (Market.tsx). */
+export const MARKET_COIN_Y = MARKET_HALL.plinth + 0.03 + MARKET_HALL.height + 0.5 + MARKET_HALL.up + MARKET_HALL.roof * 0.72 + 1.48
 export const marketHall = () =>
   cached('marketHall', () => {
-    const { wall: W, height: H, upper: U, plinth: P } = MARKET_HALL
+    const { wall: W, height: H, upper: U, up, roof: roofH, plinth: P, port: A, door: D } = MARKET_HALL
     const S = 8
     const p: BufferGeometry[] = [put(rb(S - 0.1, P, S - 0.1, 0.06), LOOK.marketStone, [0, P / 2, 0])]
-    // pastel tiles on the paving round the hall, a cell each, their shades mixed
+    // pastel tiles on the paving round the hall, a cell each, their shades mixed — none where a trough runs
     for (let i = 0; i < S; i++)
       for (let j = 0; j < S; j++) {
         const x = i - S / 2 + 0.5,
           z = j - S / 2 + 0.5
         if (Math.max(Math.abs(x), Math.abs(z)) < 2.5) continue
+        if ((Math.abs(z) >= 2.5 && Math.abs(x) === A) || (Math.abs(x) >= 2.5 && Math.abs(z) === A)) continue
         p.push(put(rb(0.9, 0.03, 0.9, 0.012), LOOK.marketTiles[(i * 7 + j * 3 + i * j) % LOOK.marketTiles.length]!, [x, P + 0.015, z]))
       }
     const y0 = P + 0.03
-    // a wall piece along side d (0 south, then west, north, east): `along` from its middle, at distance `out` from the hall's
-    const side = (d: number, along: number, out: number, w: number, h: number, y: number, t: number, color: string) => {
+    // a point on side d (0 south, then east, north, west): `along` from its middle, `out` from the hall's
+    const at = (d: number, along: number, out: number, y: number): V3 => {
       const r = (d * Math.PI) / 2
-      return put(rb(w, h, t, 0.04), color, [along * Math.cos(r) + out * Math.sin(r), y, -along * Math.sin(r) + out * Math.cos(r)], [0, r, 0])
+      return [along * Math.cos(r) + out * Math.sin(r), y, -along * Math.sin(r) + out * Math.cos(r)]
     }
-    // the lower walls: corner posts, a wall either side of each door, the beam over the door and its wooden frame
-    const door = 1.3,
-      post = 0.34,
-      seg = (W - 2 * post - door) / 2
+    // a box on side d, turned with it (and by `yaw` more)
+    const side = (d: number, along: number, out: number, w: number, h: number, y: number, t: number, color: string, yaw = 0) =>
+      put(rb(w, h, t, Math.min(0.04, w / 2 - 0.003, t / 2 - 0.003)), color, at(d, along, out, y), [0, (d * Math.PI) / 2 + yaw, 0])
+    // the lower walls: corner posts, the walls between and beside the two doors, over each door its lintel and a frame
+    const post = 0.34,
+      inner = W / 2 - post,
+      dh = 0.9
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(post, H + 0.1, post, 0.05), WOOD, [sx * (W / 2 - post / 2), y0 + (H + 0.1) / 2, sz * (W / 2 - post / 2)]))
     for (let d = 0; d < 4; d++) {
+      const edge = inner - (A + D / 2)
       for (const k of [-1, 1]) {
-        p.push(side(d, k * (door / 2 + seg / 2), W / 2 - 0.13, seg, H, y0 + H / 2, 0.26, LOOK.marketWall))
-        p.push(side(d, k * (door / 2 + 0.05), W / 2 - 0.08, 0.1, 0.98, y0 + 0.49, 0.3, WOOD))
+        p.push(side(d, k * (A + D / 2 + edge / 2), W / 2 - 0.13, edge, H, y0 + H / 2, 0.26, LOOK.marketWall))
+        p.push(side(d, k * A, W / 2 - 0.13, D, H - dh, y0 + dh + (H - dh) / 2, 0.26, LOOK.marketWall))
+        for (const j of [-1, 1]) p.push(side(d, k * A + j * (D / 2 + 0.04), W / 2 - 0.08, 0.09, dh + 0.04, y0 + (dh + 0.04) / 2, 0.3, WOOD))
+        p.push(side(d, k * A, W / 2 - 0.08, D + 0.18, 0.09, y0 + dh + 0.03, 0.3, WOOD))
+        // the dim inside, seen through the door
+        p.push(side(d, k * A, W / 2 - 0.3, D, dh, y0 + dh / 2, 0.04, LOOK.marketInside))
+        // the way in: a trough from the paving's edge into the door, coral rails, two capped posts at its mouth, and
+        // cream chevrons on its floor pointing in
+        const len = S / 2 - (W / 2 - 0.05),
+          mid = (S / 2 + W / 2 - 0.05) / 2
+        p.push(side(d, k * A, mid, 0.62, 0.05, y0 + 0.03, len, WOOD_DARK))
+        for (const j of [-1, 1]) {
+          p.push(side(d, k * A + j * 0.34, mid, 0.08, 0.14, y0 + 0.1, len, LOOK.marketAwning[0]))
+          p.push(side(d, k * A + j * 0.42, S / 2 - 0.16, 0.14, 0.5, y0 + 0.25, 0.14, WOOD))
+          p.push(put(ball(0.11), LOOK.marketAwning[0], at(d, k * A + j * 0.42, S / 2 - 0.16, y0 + 0.54), [0, 0, 0], [1, 0.8, 1]))
+        }
+        for (const c of [S / 2 - 0.45, S / 2 - 0.95])
+          for (const j of [-1, 1]) p.push(side(d, k * A + j * 0.1, c + 0.1, 0.06, 0.02, y0 + 0.065, 0.3, LOOK.marketAwning[1], j * (Math.PI / 4)))
       }
-      p.push(side(d, 0, W / 2 - 0.13, door, H - 0.95, y0 + 0.95 + (H - 0.95) / 2, 0.26, LOOK.marketWall))
-      p.push(side(d, 0, W / 2 - 0.08, door + 0.2, 0.1, y0 + 0.98, 0.3, WOOD))
-      // the dim inside, seen through the door
-      p.push(side(d, 0, W / 2 - 0.3, door, 0.95, y0 + 0.475, 0.04, LOOK.marketInside))
-      // goods set out under the awning either side of the door: a crate of wool and a sack
-      p.push(side(d, door / 2 + 0.42, W / 2 + 0.24, 0.42, 0.36, y0 + 0.18, 0.36, '#d8a663'))
-      p.push(side(d, door / 2 + 0.42, W / 2 + 0.24, 0.44, 0.05, y0 + 0.35, 0.38, WOOD_DARK))
-      const r = (d * Math.PI) / 2,
-        sx = -(door / 2 + 0.38),
-        sz = W / 2 + 0.26
-      p.push(put(ball(0.21), '#e9d7a8', [sx * Math.cos(r) + sz * Math.sin(r), y0 + 0.18, -sx * Math.sin(r) + sz * Math.cos(r)], [0, 0, 0], [1, 0.95, 1]))
+      // goods set out under the awning between the doors: a crate of wool and a sack
+      p.push(side(d, -0.35, W / 2 + 0.24, 0.42, 0.36, y0 + 0.18, 0.36, '#d8a663'))
+      p.push(side(d, -0.35, W / 2 + 0.24, 0.44, 0.05, y0 + 0.35, 0.38, WOOD_DARK))
+      p.push(put(ball(0.21), '#e9d7a8', at(d, 0.3, W / 2 + 0.26, y0 + 0.18), [0, 0, 0], [1, 0.95, 1]))
     }
     // the band at the walls' top, under the awning
     p.push(put(rb(W + 0.1, 0.14, W + 0.1, 0.04), WOOD, [0, y0 + H, 0]))
@@ -622,16 +641,22 @@ export const marketHall = () =>
     const aTop = y0 + H + 0.5,
       aOut = W / 2 + 0.55
     p.push(...awning(U / 2, aOut, aTop, y0 + H - 0.15, 14, ...LOOK.marketAwning))
-    // the upper storey: its walls from inside the lower ones up past the awning, wooden corners and a band at the top
-    const up = 1.05,
-      uy = aTop + up / 2 - 0.25
+    // the upper storey: its walls from inside the lower ones up past the awning, wooden corners, a band at the top, and
+    // two windows with coral shutters on each side
+    const uy = aTop + up / 2 - 0.25
     p.push(put(rb(U, up + 0.5, U, 0.05), LOOK.marketWall, [0, uy, 0]))
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(put(rb(0.2, up + 0.5, 0.2, 0.04), WOOD, [sx * (U / 2 - 0.06), uy, sz * (U / 2 - 0.06)]))
+    const wy = aTop + up / 2
+    for (let d = 0; d < 4; d++)
+      for (const k of [-1, 1]) {
+        p.push(side(d, k * 0.95, U / 2 + 0.005, 0.5, 0.42, wy, 0.03, WOOD))
+        p.push(side(d, k * 0.95, U / 2 + 0.02, 0.4, 0.32, wy, 0.03, GLASS))
+        for (const j of [-1, 1]) p.push(side(d, k * 0.95 + j * 0.33, U / 2 + 0.02, 0.14, 0.4, wy, 0.04, LOOK.marketAwning[0]))
+      }
     const top = aTop + up
     p.push(put(rb(U + 0.12, 0.12, U + 0.12, 0.03), WOOD, [0, top - 0.04, 0]))
     // the hip roof: a four-sided pyramid with a little overhang, and a darker band along its eaves
-    const roofH = 1.0,
-      half = U / 2 + 0.22
+    const half = U / 2 + 0.22
     // lighter towards the top, so its wide slopes read round the light rather than flat; a ridge along each hip
     p.push(tintUp(faceted(new ConeGeometry(half * Math.SQRT2, roofH, 4, 1).rotateY(Math.PI / 4)).translate(0, top + roofH / 2, 0), shade(LOOK.marketRoof, 0.9), shade(LOOK.marketRoof, 1.12), top, top + roofH))
     p.push(put(rb(2 * half + 0.06, 0.09, 2 * half + 0.06, 0.03), LOOK.marketRoofEave, [0, top + 0.02, 0]))
@@ -649,33 +674,17 @@ export const marketHall = () =>
     for (let d = 0; d < 4; d++) p.push(put(rb(0.34, 0.2, 0.04, 0.02), GLASS, [Math.sin((d * Math.PI) / 2) * 0.46, ly + 0.3, Math.cos((d * Math.PI) / 2) * 0.46], [0, (d * Math.PI) / 2, 0]))
     p.push(tint(faceted(new ConeGeometry(0.8, 0.5, 4, 1).rotateY(Math.PI / 4)).translate(0, ly + 0.75, 0), LOOK.marketRoof))
     p.push(put(cyl(0.025, 0.3, 6), INKY, [0, ly + 1.1, 0]))
-    p.push(put(cyl(0.27, 0.08, 24).rotateX(Math.PI / 2), LOOK.marketCoin, [0, ly + 1.48, 0]))
-    p.push(put(cyl(0.18, 0.09, 24).rotateX(Math.PI / 2), shade(LOOK.marketCoin, 0.86), [0, ly + 1.48, 0]))
+    p.push(put(cyl(0.27, 0.08, 24).rotateX(Math.PI / 2), LOOK.marketCoin, [0, MARKET_COIN_Y, 0]))
+    p.push(put(cyl(0.18, 0.09, 24).rotateX(Math.PI / 2), shade(LOOK.marketCoin, 0.86), [0, MARKET_COIN_Y, 0]))
     // a round bush in a pot at each corner of the paving
     for (const sx of [-1, 1])
       for (const sz of [-1, 1]) {
-        const at: V3 = [sx * (S / 2 - 0.55), y0, sz * (S / 2 - 0.55)]
-        p.push(put(cyl(0.22, 0.3, 14, 0.27), '#d9825b', [at[0], y0 + 0.15, at[2]]))
-        p.push(put(ball(0.32), '#7cc457', [at[0], y0 + 0.5, at[2]]))
+        const c: V3 = [sx * (S / 2 - 0.55), y0, sz * (S / 2 - 0.55)]
+        p.push(put(cyl(0.22, 0.3, 14, 0.27), '#d9825b', [c[0], y0 + 0.15, c[2]]))
+        p.push(put(ball(0.32), '#7cc457', [c[0], y0 + 0.5, c[2]]))
       }
     return model(p)
   })
-
-/**
- * A client's sign on the hall's wall: a board framed in the client's colour, the track of its bar along the top (the
- * shelf would hide a bar under it from the camera above), and a little shelf at its foot where its good stands. Facing
- * +Z, its middle at the origin.
- */
-export const SIGN = { w: 1.1, h: 0.82, bar: { w: 0.86, h: 0.12, y: 0.25 }, shelf: -0.24, good: { y: -0.215, s: 0.95 } } as const
-export const signBoard = (color: string) =>
-  cached('sign' + color, () =>
-    model([
-      put(rb(SIGN.w, SIGN.h, 0.06, 0.04), color, [0, 0, 0]),
-      put(rb(SIGN.w - 0.14, SIGN.h - 0.14, 0.07, 0.03), LOOK.signBoard, [0, 0, 0.005]),
-      put(rb(SIGN.w - 0.2, 0.05, 0.2, 0.02), WOOD, [0, SIGN.shelf, 0.1]),
-      put(rb(SIGN.bar.w + 0.06, SIGN.bar.h + 0.05, 0.03, 0.02), INKY, [0, SIGN.bar.y, 0.05]),
-    ]),
-  )
 
 // ---------------------------------------------------------------- goods (on belts, piles and the ground; base at y = 0)
 
