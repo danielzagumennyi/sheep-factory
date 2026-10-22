@@ -2,8 +2,8 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { get, levelAt, owned, pastureAt } from '@/game/grid'
-import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/world'
+import { get, levelAt } from '@/game/grid'
+import { Field, GameState, Plant, key, res, type World } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { vmat } from './kit'
 import { flowers, mushroom } from './models'
@@ -21,8 +21,8 @@ const hash = (x: number, y: number, salt: number) => {
 
 /**
  * Small life on free land, like the reference dioramas: tufts of grass, flowers, stepping stones, a toadstool here and
- * there. Denser on the island's rim and on land for sale, sparse on the player's own plots so the factory stays readable;
- * nothing grows where something stands, so building there simply clears it. Placed from stable per-cell numbers and
+ * there. Denser on the island's rim, sparser on the land itself so the factory stays readable; nothing grows where
+ * something stands, so building there simply clears it. Placed from stable per-cell numbers and
  * rebuilt only when the land or the buildings change.
  */
 export function Decor() {
@@ -56,18 +56,18 @@ export function Decor() {
 
 function signature(w: World) {
   const p = res(w, Plant)
-  return p.b.size + ':' + p.occ.size + ':' + res(w, GameState).fieldVersion + ':' + res(w, Flock).pastures.map((q) => q.x + ',' + q.y + q.w + 'x' + q.h).join()
+  return res(w, GameState).plantVersion + ':' + p.b.size + ':' + res(w, GameState).fieldVersion
 }
 
-/** Is a cell free for decor: no terrain, no hill (Hills.tsx dresses its own), no building (the market is one), no pasture. */
+/** Is a cell free for decor: no terrain, no hill (Hills.tsx dresses its own), no building (the portal is one). */
 function free(w: World, x: number, y: number) {
   if (!inIsland(x, y)) return true
   if (res(w, Field).terrain.has(key(x, y)) || levelAt(w, x, y) > 1) return false
-  if (get(w, x, y) || pastureAt(w, x, y)) return false
+  if (get(w, x, y)) return false
   return true
 }
 
-/** Is the cell next to a pen, a pond, a hill, a building or a resource (anything but open lawn)? */
+/** Is the cell next to a pond, a hill, a building or a patch of landscape (anything but open lawn)? */
 function besideSomething(w: World, x: number, y: number) {
   const t = res(w, Field).terrain
   for (let dy = -1; dy <= 1; dy++)
@@ -76,7 +76,7 @@ function besideSomething(w: World, x: number, y: number) {
       const nx = x + dx,
         ny = y + dy
       if (!inIsland(nx, ny)) continue
-      if (t.has(key(nx, ny)) || levelAt(w, nx, ny) > 1 || pastureAt(w, nx, ny)) return true
+      if (t.has(key(nx, ny)) || levelAt(w, nx, ny) > 1) return true
       const b = get(w, nx, ny)
       if (b && b.type !== 'belt') return true
     }
@@ -102,17 +102,16 @@ function scatter(w: World, put: (k: Kind, x: number, z: number, yaw: number, s: 
       // a rim tree's cell is its own
       if (!free(w, x, y) || rimTree(x, y)) continue
       const inside = inIsland(x, y)
-      // the rim of the island is a little garden; the player's land stays mostly clear
+      // the rim of the island is a little garden; the land itself stays mostly clear
       const rim = !inside
-      const mine = inside && !rim && owned(w, x, y)
-      // flowers gather where something stands — by fences, water, machines and the rim — and in a few clumps on
+      // flowers gather where something stands — by water, hills, machines and the rim — and in a few clumps on
       // the open lawn, which otherwise stays clear
       const by = besideSomething(w, x, y)
       // only where the slow wave of clusters is high: a few clumps, not a sprinkle
       const clump = patch(x, y)
       if (clump < 0.62) continue
       // half what it was (the author: «уменьши кол-во цветов на половину»)
-      const density = (rim ? 0.27 : by ? 0.22 : 0.12) * (mine ? 0.7 : 1)
+      const density = rim ? 0.27 : (by ? 0.22 : 0.12) * 0.7
       const r0 = hash(x, y, 1)
       if (r0 > density) continue
       // keep inside the island's outline

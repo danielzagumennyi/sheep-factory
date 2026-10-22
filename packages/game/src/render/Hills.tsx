@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { ExtrudeGeometry, Mesh, type BufferGeometry } from 'three'
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import { HILL, LOOK, MAP_HILLS } from '@/game/balance'
+import { HILL, LOOK } from '@/game/balance'
 import { unkey } from '@/game/world'
 import { Batch, useInstanced } from './instancing'
 import { softMat, vmat } from './kit'
@@ -70,12 +70,12 @@ export function Hills() {
 }
 
 /**
- * Every step of the hills on the island (MAP_HILLS, as the world has them — Field.hills), merged: its soil from the
+ * Every step of the hills on the island (Field.hillRects), merged: its soil from the
  * step below up to under its cap, or the grass caps of one level, thin slabs whose lips round over the soil.
  */
 function steps(part: 'soil' | 'cap', level?: number) {
   const out: BufferGeometry[] = []
-  for (const [l, x0, y0, x1, y1] of MAP_HILLS) {
+  for (const [l, x0, y0, x1, y1] of island.hillRects) {
     if (!inIsland(x0, y0) || levelOf(x0, y0) < l || (level && l !== level)) continue
     const top = (l - 1) * HILL.tier,
       under = (l - 2) * HILL.tier

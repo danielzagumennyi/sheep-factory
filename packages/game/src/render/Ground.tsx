@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { Mesh } from 'three'
 import { useFrame } from '@react-three/fiber'
-import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, Shape, ShapeGeometry, SRGBColorSpace } from 'three'
-import { CONTACT, GRID, ISLAND, LOOK } from '@/game/balance'
+import { BufferAttribute, BufferGeometry, CanvasTexture, ExtrudeGeometry, LinearFilter, LinearMipmapLinearFilter, MeshToonMaterial, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace } from 'three'
+import { CONTACT, ISLAND, LOOK } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { Field, Flock, GameState, Plant, Ui, isOn, key, res, unkey, type World } from '@/game/world'
+import { Field, GameState, Plant, Ui, isOn, res, unkey, type World } from '@/game/world'
 import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { softMat, toonBands } from './kit'
 import { withReach } from './reach'
@@ -21,37 +21,42 @@ const Z1 = () => island.bottom + M
 
 /**
  * The board as a diorama island, like the author's reference scenes (15.10.2026): a grass top with a rounded lip over
- * thick soil sides, floating on the sky. The top is one flat mesh with a painted texture — one green with faint patches
- * and the plots; the water lies on it as a surface of its own.
- * The cell grid is a second, transparent layer shown only while building. All of it is rebuilt only when the land
- * changes (`fieldVersion`).
+ * thick soil sides, floating on the sky. The top is one flat mesh with a painted texture — one green with faint patches,
+ * trodden earth and contact shadows round what stands on it, tilled soil under meadows; the water lies on it as a
+ * surface of its own. The cell grid is a second, transparent layer shown only while building: one cell's tile repeated.
+ * The green is painted once; what stands on it is painted over it again only when a building or the land changes.
  */
 export function Ground() {
   const { world } = useGame()
-  const ground = useCanvasTexture(true)
-  const grid = useCanvasTexture(false)
+  const ground = useCanvasTexture()
+  const grid = useMemo(() => gridTile(), [])
+  useEffect(() => () => grid.dispose(), [grid])
   const top = useMemo(() => topGeometry(), [])
   const gridMesh = useRef<Mesh>(null)
   const ver = useRef('')
+  const painted = useRef(-1)
   const parts = useMemo(() => islandBody(), [])
+  const base = useMemo(() => paintBase(ground.canvas.width, ground.canvas.height), [ground])
   const groundMat = useMemo(() => withReach(new MeshToonMaterial({ map: ground.tex, gradientMap: toonBands })), [ground])
   useEffect(() => () => groundMat.dispose(), [groundMat])
-  useFrame(() => {
+  useFrame((state) => {
     if (gridMesh.current) gridMesh.current.visible = isOn(world, 'ghost') && res(world, Ui).tool !== 'hand'
-    const plant = res(world, Plant)
-    const v = res(world, GameState).fieldVersion + ':' + plant.b.size + ':' + plant.occ.size + ':' + res(world, Flock).pastures.length + ':' + res(world, Field).plots.size
-    if (v === ver.current) return
+    const gs = res(world, GameState)
+    const v = gs.fieldVersion + ':' + gs.plantVersion
+    // a belt dragged out changes the plant every few frames: the whole top is painted and sent again at most every
+    // REPAINT seconds, the last change always shown
+    const now = state.clock.elapsedTime
+    if (v === ver.current || now - painted.current < REPAINT) return
     ver.current = v
-    paint(world, ground.canvas)
-    paintGrid(world, grid.canvas)
+    painted.current = now
+    paint(world, ground.canvas, base)
     ground.tex.needsUpdate = true
-    grid.tex.needsUpdate = true
   })
   return (
     <group>
       <mesh geometry={top} material={groundMat} receiveShadow />
       <mesh ref={gridMesh} geometry={top} visible={false} renderOrder={1}>
-        <meshBasicMaterial map={grid.tex} transparent depthWrite={false} toneMapped={false} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        <meshBasicMaterial map={grid} transparent depthWrite={false} toneMapped={false} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
       <mesh geometry={parts.lip} material={parts.lipMat} receiveShadow />
       <mesh geometry={parts.soil} material={parts.soilMat} receiveShadow />
@@ -60,7 +65,7 @@ export function Ground() {
 }
 
 /** A canvas texture over the island top, repainted on demand. */
-function useCanvasTexture(mips: boolean) {
+function useCanvasTexture() {
   const out = useMemo(() => {
     const c = document.createElement('canvas')
     c.width = Math.round((X1() - X0()) * PX)
@@ -68,14 +73,16 @@ function useCanvasTexture(mips: boolean) {
     const t = new CanvasTexture(c)
     t.colorSpace = SRGBColorSpace
     t.magFilter = LinearFilter
-    t.minFilter = mips ? LinearMipmapLinearFilter : LinearFilter
-    t.generateMipmaps = mips
+    t.minFilter = LinearMipmapLinearFilter
     t.anisotropy = 8
     return { canvas: c, tex: t }
-  }, [mips])
+  }, [])
   useEffect(() => () => out.tex.dispose(), [out])
   return out
 }
+
+/** The ground's top is painted and sent to the GPU again at most this often, seconds. */
+const REPAINT = 0.3
 
 // ---------------------------------------------------------------- the island's shape
 
@@ -166,15 +173,18 @@ const hash = (n: number) => {
   return j - Math.floor(j)
 }
 
-function paint(world: World, c: HTMLCanvasElement) {
+/** The green of the whole top, painted once: what stands on it is painted over a copy of it (`paint`). */
+function paintBase(w: number, h: number) {
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
   const g = c.getContext('2d')!
   g.fillStyle = LOOK.ground
   g.fillRect(0, 0, c.width, c.height)
-  // big soft patches of a lighter and a deeper green, faint, so the lawn is never one flat colour; the land for sale
-  // is the same green as the owned, the fence round the owned land is what tells them apart
+  // big soft patches of a lighter and a deeper green, faint, so the lawn is never one flat colour
   const blob = (x: number, y: number, r: number, color: string, a: number) => {
-    // straight from the hex: three's Color holds linear values, which painted every patch far too dark — and so all the
-    // owned land, the land for sale being painted over them (the author: «почему темная именно доступная зона»)
+    // straight from the hex: three's Color holds linear values, which painted every patch far too dark (the author:
+    // «почему темная именно доступная зона»)
     const n = parseInt(color.slice(1), 16)
     const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
     const grad = g.createRadialGradient(x, y, 0, x, y, r)
@@ -184,9 +194,17 @@ function paint(world: World, c: HTMLCanvasElement) {
     g.fillStyle = grad
     g.fillRect(x - r, y - r, r * 2, r * 2)
   }
-  for (let i = 0; i < 70; i++) blob(hash(i * 3.1) * c.width, hash(i * 7.7 + 1) * c.height, (2.2 + hash(i * 1.3 + 2) * 3.2) * PX, i % 2 ? LOOK.groundLight : LOOK.groundDark, 0.55)
-  for (let i = 0; i < 160; i++) blob(hash(i * 5.3 + 9) * c.width, hash(i * 2.9 + 4) * c.height, (0.6 + hash(i * 4.1 + 3) * 1.2) * PX, i % 3 ? LOOK.groundLight : LOOK.groundDark, 0.35)
-  // trodden earth round every building and the pen, where feet and carts wear the grass away
+  // as many patches to a cell of land as on the first, smaller map
+  const n = (c.width * c.height) / (58 * 58 * PX * PX)
+  for (let i = 0; i < 70 * n; i++) blob(hash(i * 3.1) * c.width, hash(i * 7.7 + 1) * c.height, (2.2 + hash(i * 1.3 + 2) * 3.2) * PX, i % 2 ? LOOK.groundLight : LOOK.groundDark, 0.55)
+  for (let i = 0; i < 160 * n; i++) blob(hash(i * 5.3 + 9) * c.width, hash(i * 2.9 + 4) * c.height, (0.6 + hash(i * 4.1 + 3) * 1.2) * PX, i % 3 ? LOOK.groundLight : LOOK.groundDark, 0.35)
+  return c
+}
+
+function paint(world: World, c: HTMLCanvasElement, base: HTMLCanvasElement) {
+  const g = c.getContext('2d')!
+  g.drawImage(base, 0, 0)
+  // trodden earth round every building, where feet and carts wear the grass away
   g.filter = 'blur(7px)'
   g.fillStyle = LOOK.trodden
   g.globalAlpha = 0.55
@@ -194,11 +212,6 @@ function paint(world: World, c: HTMLCanvasElement) {
     if (b.type === 'dock' || b.type === 'belt' || b.type === 'splitter' || b.type === 'merger') continue
     g.beginPath()
     g.roundRect(wx(b.x - 0.28), wz(b.y - 0.28), (b.w + 0.56) * PX, (b.h + 0.56) * PX, 14)
-    g.fill()
-  }
-  for (const p of res(world, Flock).pastures) {
-    g.beginPath()
-    g.roundRect(wx(p.x - 0.3), wz(p.y - 0.3), (p.w + 0.6) * PX, (p.h + 0.6) * PX, 16)
     g.fill()
   }
   g.globalAlpha = 1
@@ -214,16 +227,9 @@ function paint(world: World, c: HTMLCanvasElement) {
     g.roundRect(wx(b.x - e), wz(b.y - e), (b.w + 2 * e) * PX, (b.h + 2 * e) * PX, 8)
     g.fill()
   }
-  for (const p of res(world, Flock).pastures) {
-    g.globalAlpha = CONTACT.belt
-    g.beginPath()
-    g.roundRect(wx(p.x - 0.06), wz(p.y - 0.06), (p.w + 0.12) * PX, (p.h + 0.12) * PX, 8)
-    g.fill()
-  }
   g.globalAlpha = 1
   g.filter = 'none'
-  // meadows: tilled soil with two furrows under the sheaves — on the island only: one still under the sky (it grows
-  // later) left a bare patch on the rim's grass
+  // meadows: tilled soil with two furrows under the sheaves
   for (const [k, t] of res(world, Field).terrain) {
     if (t !== 'meadow') continue
     const [x, y] = unkey(k)
@@ -243,27 +249,24 @@ function paint(world: World, c: HTMLCanvasElement) {
   }
 }
 
-/** The cell grid over owned plots: thin lines on a transparent layer. */
-function paintGrid(world: World, c: HTMLCanvasElement) {
+/**
+ * The cell grid: one cell's tile — a thin line along two of its edges — repeated over the top, a cell a tile (the top's
+ * UVs run over the island and its margin, a whole number of cells).
+ */
+function gridTile() {
+  const c = document.createElement('canvas')
+  c.width = c.height = PX
   const g = c.getContext('2d')!
-  const plots = res(world, Field).plots
-  g.clearRect(0, 0, c.width, c.height)
-  g.strokeStyle = LOOK.grid
-  g.lineWidth = 1
-  g.beginPath()
-  for (let py = island.top / GRID.plotH; py * GRID.plotH < island.bottom; py++)
-    for (let px = island.left / GRID.plotW; px * GRID.plotW < island.right; px++) {
-      if (!plots.has(key(px, py))) continue
-      const x = wx(px * GRID.plotW),
-        y = wz(py * GRID.plotH)
-      for (let i = 0; i <= GRID.plotW; i++) {
-        g.moveTo(x + i * PX, y)
-        g.lineTo(x + i * PX, y + GRID.plotH * PX)
-      }
-      for (let i = 0; i <= GRID.plotH; i++) {
-        g.moveTo(x, y + i * PX)
-        g.lineTo(x + GRID.plotW * PX, y + i * PX)
-      }
-    }
-  g.stroke()
+  g.fillStyle = LOOK.grid
+  g.fillRect(0, 0, PX, 1)
+  g.fillRect(0, 0, 1, PX)
+  const t = new CanvasTexture(c)
+  t.colorSpace = SRGBColorSpace
+  t.wrapS = t.wrapT = RepeatWrapping
+  t.repeat.set(X1() - X0(), Z1() - Z0())
+  t.magFilter = LinearFilter
+  t.minFilter = LinearFilter
+  t.generateMipmaps = false
+  t.anisotropy = 8
+  return t
 }

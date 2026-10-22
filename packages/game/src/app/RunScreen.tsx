@@ -8,15 +8,14 @@ import { loadSaved, writeSave } from './saves'
 import { useAppStore } from './store'
 
 /**
- * The game — the long one or the endless mode: its world, the 3D field and the HUD over it. «Again» remounts this with a
- * fresh world, «Продолжить» with the kept one of its mode. The game is kept as it goes: at once (a new game takes the old
- * one's place), every few seconds, when the page is hidden or closed, and when it is left for the main menu.
+ * The game: its world, the 3D field and the HUD over it. «Again» remounts this with a fresh world, «Продолжить» with
+ * the kept one. The game is kept as it goes: at once (a new game takes the old one's place), every few seconds, when the
+ * page is hidden or closed, and when it is left for the main menu.
  */
 export function RunScreen() {
   const world = useMemo(() => {
     const app = useAppStore.getState()
-    const opts = { seed: (Date.now() & 0xffff) + 1, seenEver: app.seenEver }
-    return (app.from === 'save' && loadSaved(app.mode, opts)) || startWorld({ ...opts, endless: app.mode === 'endless' })
+    return (app.from === 'save' && loadSaved({})) || startWorld({ seed: (Date.now() & 0xffff) + 1 })
   }, [])
   useEffect(() => {
     const keep = () => writeSave(world)

@@ -1,36 +1,25 @@
 import { BELT, type Dir } from '../balance'
-import { back, beltInDir, entersAt, entersPasture, get, inGrid, isBeltLike, isStation, pastureAt, step } from '../grid'
-import { GameState, Plant, float, key, res, type Building, type Item, type World } from '../world'
-import { dropNear } from './ground'
+import { back, beltInDir, entersAt, get, inGrid, isBeltLike, isStation, step } from '../grid'
+import { Plant, ready, res, type Building, type Item, type SheepT, type SplitRule, type World } from '../world'
 import { stationTake } from './machines'
-import { dockAccept } from './village'
-import { crossPen, toPasture } from './sheep'
+import { dockAccept } from './portal'
 
 /**
- * Items on belts (GDD 4.2). An item crosses a cell in 1/BELT.speed s, then tries to move on. A belt takes items from
- * one side only (`beltInDir`); joining two lines needs a merger. A splitter sends each item to the side whose rule
- * matches it, round-robin among equals. A machine takes a good only by the way in meant for it.
+ * Sheep on belts (GDD 4.2). A sheep crosses a cell in 1/BELT.speed s, then tries to move on. A belt takes from one side
+ * only (`beltInDir`); joining two lines needs a merger. A splitter sends each sheep to the side whose rule fits what it
+ * needs now (GDD 4.4), round-robin among equals. A station takes only the sheep its job is for, the portal only shorn
+ * ones: any other stands at the way in, and the line behind it stands (GDD 4.3).
  */
 
 export function enterBelt(it: Item, d: Dir) {
   it.p = 0
   it.ed = d
-  it.strayT = 0
-  if (it.sheep) it.sheep.state = 'belt'
+  it.sheep.state = 'belt'
 }
 
-/** Push an item from (x, y) into the neighbour towards d. True when it was taken. */
+/** Push a sheep from (x, y) into the neighbour towards d. True when it was taken. */
 export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boolean {
   const [tx, ty] = step(x, y, d)
-  const p = pastureAt(w, tx, ty)
-  if (p) {
-    // only sheep go into a pen, and only through its way in: its own sheep stay home, any other crosses it to its way
-    // out and rides on (several pens may share one loop), while that way out leads somewhere
-    if (!it.sheep || !entersPasture(p, x, y, d)) return false
-    if (it.sheep.home === p.id) toPasture(w, it.sheep, p, tx + 0.5, ty + 0.5)
-    else if (!crossPen(w, it.sheep, p, tx + 0.5, ty + 0.5)) return false
-    return true
-  }
   if (!inGrid(tx, ty)) return false
   const t = get(w, tx, ty)
   if (!t) return false
@@ -52,23 +41,18 @@ export function tryPush(w: World, it: Item, x: number, y: number, d: Dir): boole
     t.item = it
     return true
   }
-  const way = entersAt(t, tx, ty, d)
-  if (!way) return false
-  if (t.type === 'dock') return dockAccept(w, t, it, tx, ty, d)
-  return machineAccept(w, t, it, way.takes)
+  if (!entersAt(t, tx, ty, d)) return false
+  if (t.type === 'dock') return dockAccept(w, t, it, tx, ty)
+  return isStation(t) && stationTake(w, t, it.sheep)
 }
 
-/**
- * A machine takes an item by one of its ways in (`takes` says what that way takes; a hand dropping a sheep gives
- * 'sheep'): a station its sheep, or its good up to BELT.bufMax; a seeder its seeds.
- */
-export function machineAccept(_w: World, m: Building, it: Item, takes?: string): boolean {
-  if (it.sheep) return takes === 'sheep' && isStation(m) && stationTake(m, it.sheep)
-  const kind = it.kind as Exclude<Item['kind'], 'sheep'>
-  if (takes !== kind) return false
-  if ((m.inv[kind] ?? 0) >= BELT.bufMax) return false
-  m.inv[kind] = (m.inv[kind] ?? 0) + 1
-  return true
+/** Does a splitter's rule fit the sheep (GDD 4.4): by what it needs now — a station, shearing, the portal. */
+export function ruleFits(rule: SplitRule, s: SheepT) {
+  if (rule === 'any') return true
+  if (rule === 'off') return false
+  if (rule === 'shorn') return s.wool < 1
+  if (rule === 'ready') return ready(s)
+  return s.wool >= 1 && s.needs.includes(rule)
 }
 
 const SPLIT_OUT = { f: 0, r: 1, l: 3 } as const
@@ -79,7 +63,7 @@ function routeSplit(w: World, b: Building, it: Item) {
     const rule = b.rules![k],
       d = ((b.dir + SPLIT_OUT[k]) % 4) as Dir
     if (rule === 'any') any.push(d)
-    else if (rule !== 'off' && rule === it.kind) own.push(d)
+    else if (ruleFits(rule, it.sheep)) own.push(d)
   }
   const main = own.length ? own : any
   for (let i = 0; i < main.length; i++) {
@@ -93,18 +77,7 @@ function routeSplit(w: World, b: Building, it: Item) {
   return false
 }
 
-/** Does the cell ahead of a belt lead into the sheep's lane: a pen, or a station's way in for sheep? */
-function sheepLaneAhead(w: World, b: Building) {
-  const [nx, ny] = step(b.x, b.y, b.dir)
-  if (pastureAt(w, nx, ny)) return true
-  const nb = inGrid(nx, ny) ? get(w, nx, ny) : null
-  if (!nb || !isStation(nb)) return false
-  const way = entersAt(nb, nx, ny, b.dir)
-  return way?.takes === 'sheep'
-}
-
 export function beltSystem(w: World, dt: number) {
-  const gs = res(w, GameState)
   for (const b of res(w, Plant).b.values()) {
     if (b.type === 'merger') {
       const it = b.buf[0]
@@ -122,22 +95,6 @@ export function beltSystem(w: World, dt: number) {
       it.p = Math.min(1, it.p + BELT.speed * dt)
       continue
     }
-    const pushed = b.type === 'splitter' ? routeSplit(w, b, it) : tryPush(w, it, b.x, b.y, b.dir)
-    if (pushed) {
-      b.item = null
-      continue
-    }
-    // a good stuck in front of the sheep's lane falls off the belt beside it, so the sheep loop never stops (GDD 4.4)
-    if (!it.sheep && b.type === 'belt' && sheepLaneAhead(w, b)) {
-      it.strayT += dt
-      if (it.strayT > BELT.strayAfter) {
-        dropNear(w, b.x, b.y, [it], { x: b.x + 0.5, y: b.y + 0.5, h: 0.25 })
-        b.item = null
-        gs.strayAt = key(b.x, b.y)
-        gs.strayT = 6
-        float(w, b.x + 0.5, b.y, 'fellOff', 'bad')
-      }
-    }
+    if (b.type === 'splitter' ? routeSplit(w, b, it) : tryPush(w, it, b.x, b.y, b.dir)) b.item = null
   }
-  if (gs.strayT > 0) gs.strayT -= dt
 }

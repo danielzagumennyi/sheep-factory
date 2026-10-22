@@ -1,9 +1,9 @@
 import { GameState, Time, Unlocks, isOn, res, type SystemId, type World } from '../world'
+import { arriveSystem } from './arrive'
 import { beltSystem } from './belts'
-import { machineSystem, sproutSystem } from './machines'
-import { clientSystem } from './village'
+import { machineSystem } from './machines'
+import { goalSystem } from './portal'
 import { sheepSystem } from './sheep'
-import { landHintSystem } from './unlocks'
 
 /** One fixed step of the simulation, seconds (TDD 3.2). The view interpolates between steps. */
 export const FIXED_DT = 1 / 60
@@ -14,17 +14,15 @@ export function isFrozen(world: World) {
 }
 
 /**
- * The steps of one fixed step, each under its system's name (world.ts, `SYSTEMS`). The order matters and mirrors the
- * prototype: the market's clients, sheep (they may step onto the exit belt), sprouts, the land hint, items on belts,
- * then machines (they push onto belts that just moved on).
+ * The steps of one fixed step, each under its system's name (world.ts, `SYSTEMS`): arrivals, the sheep's walks, sheep on
+ * belts (the portal takes the shorn), stations and carrots (they push onto belts that just moved on), the goal.
  */
 const STEPS: readonly (readonly [SystemId, (w: World, dt: number) => void])[] = [
-  ['clients', clientSystem],
+  ['arrive', arriveSystem],
   ['sheep', sheepSystem],
-  ['sprouts', sproutSystem],
-  ['hints', landHintSystem],
   ['belts', beltSystem],
   ['machines', machineSystem],
+  ['goal', goalSystem],
 ]
 
 /** Advance the world by one fixed step: every step whose system is on. */

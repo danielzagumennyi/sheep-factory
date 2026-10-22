@@ -1,45 +1,34 @@
 import { CircleGeometry, DirectionalLight, HemisphereLight, Matrix4, Mesh, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer, WebGLRenderTarget } from 'three'
 import { CAMERA, DROP, LIGHT, LOOK } from '@/game/balance'
-import { noMarks, type SheepMarks } from '@/game/world'
 import { mat } from './kit'
 import { dropPose, newPose, sheepDrawer, sheepMeshes, type SheepLook } from './sheepLook'
 
 /**
  * Dev only (`__game.sheep()`): every kind of sheep on one sheet, drawn by the flock's own code (sheepLook.ts) in the
- * field's light, and kept as docs/concept/shots/sheep-sheet.png — for judging the look against the references. Rows: the
- * plain kinds from the front and from behind, the coloured ones, and the plain kinds as small as the game shows them;
- * then the same built plain, as the flock is drawn far off (models.ts `plain`).
+ * field's light, and kept as docs/concept/shots/sheep-sheet.png — for judging the look against the references. Rows:
+ * the kinds from the front and from behind, and as small as the game shows them; then the same built plain, as the flock
+ * is drawn far off (models.ts `plain`).
  * It draws with the game's renderer, or with one of its own when the field is not running (a hidden tab:
  * `(await import('/src/render/sheepSheet.ts')).renderSheepSheet()`).
  */
 
-type Kind = readonly [label: string, look: Partial<Omit<SheepLook, 'marks'>> & { marks?: Partial<SheepMarks>; blink?: boolean; drop?: number }]
-const PLAIN: Kind[] = [
-  ['Пушистая', {}],
-  ['Растёт', { wool: 0.45 }],
+type Kind = readonly [label: string, look: Partial<SheepLook> & { blink?: boolean; drop?: number }]
+const KINDS: Kind[] = [
+  ['Готова', {}],
+  ['Грязная', { needs: ['wash'] }],
+  ['Нечёсаная', { needs: ['comb'] }],
+  ['С репьями', { needs: ['pick'] }],
+  ['Грязная + нечёсаная', { needs: ['wash', 'comb'] }],
+  ['Грязная + репьи', { needs: ['wash', 'pick'] }],
+  ['Нечёсаная + репьи', { needs: ['comb', 'pick'] }],
+  ['Всё сразу', { needs: ['wash', 'comb', 'pick'] }],
+  ['Стрижётся', { wool: 0.45 }],
   ['Стриженая', { wool: 0 }],
-  ['Расчёска', { marks: { comb: true } }],
-  ['Завивка', { marks: { curl: true } }],
-  ['Вязка', { marks: { knit: true } }],
-  ['Баня', { marks: { bath: true } }],
-  ['Расчёска + Завивка', { marks: { comb: true, curl: true } }],
-  ['Все три', { marks: { comb: true, curl: true, knit: true } }],
-  ['Баня + Завивка', { marks: { bath: true, curl: true } }],
-  ['Баня + Вязка', { marks: { bath: true, knit: true } }],
   ['Моргает', { blink: true }],
-  // a bought sheep just above the grass under its parachute, seen from further off
+  // an arriving sheep just above the grass under its parachute, seen from further off
   ['Парашют', { drop: DROP.fall * 0.9 }],
 ]
-const COLOURED: Kind[] = [
-  ...LOOK.fleeceColors.map((_, i): Kind => ['Покраска ' + (i + 1), { id: i, marks: { dye: true } }]),
-  ['Покраска + Завивка', { id: 1, marks: { dye: true, curl: true } }],
-  ['Покраска + Вязка', { id: 2, marks: { dye: true, knit: true } }],
-  ['Покраска + Баня', { id: 3, marks: { dye: true, bath: true } }],
-  ['Покраска + все три', { id: 4, marks: { dye: true, comb: true, curl: true, knit: true } }],
-  ['Покраска + Расчёска', { id: 0, marks: { dye: true, comb: true } }],
-  ['Покраска + Баня + Завивка', { id: 2, marks: { dye: true, bath: true, curl: true } }],
-]
-const lookOf = ([, k]: Kind): SheepLook => ({ id: k.id ?? 0, wool: k.wool ?? 1, marks: { ...noMarks(), ...k.marks } })
+const lookOf = ([, k]: Kind): SheepLook => ({ id: k.id ?? 0, wool: k.wool ?? 1, needs: k.needs ?? [] })
 
 /** A cell's side in pixels, the label strip under it, and the far row's drawn size (a sheep as small as in the game). */
 const CELL = 300,
@@ -72,16 +61,14 @@ export async function renderSheepSheet(given?: WebGLRenderer) {
     high = new Vector3(0.04, 1.2, 0),
     chuteAt = new Matrix4()
 
-  const cols = Math.max(PLAIN.length, COLOURED.length)
+  const cols = KINDS.length
   // `plain`: the builds the flock is drawn with far off (models.ts `plain`), close up to judge them and as small as seen
   const rows: { kinds: Kind[]; view: keyof typeof VIEWS; plain?: boolean }[] = [
-    { kinds: PLAIN, view: 'front' },
-    { kinds: PLAIN, view: 'back' },
-    { kinds: COLOURED, view: 'front' },
-    { kinds: PLAIN, view: 'far' },
-    { kinds: PLAIN, view: 'front', plain: true },
-    { kinds: COLOURED, view: 'front', plain: true },
-    { kinds: PLAIN, view: 'far', plain: true },
+    { kinds: KINDS, view: 'front' },
+    { kinds: KINDS, view: 'back' },
+    { kinds: KINDS, view: 'far' },
+    { kinds: KINDS, view: 'front', plain: true },
+    { kinds: KINDS, view: 'far', plain: true },
   ]
   const sheet = document.createElement('canvas')
   sheet.width = cols * CELL

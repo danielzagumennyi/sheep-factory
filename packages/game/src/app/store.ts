@@ -1,11 +1,10 @@
 import { create } from 'zustand'
-import { TOOL_ORDER, type BuildingId, type CardId } from '@/game/balance'
-import type { Mode } from './saves'
+import { TOOL_ORDER, type BuildingId } from '@/game/balance'
 
 /**
- * The app around the game: which screen is up (the title over a big farm, or the long game), the once-per-game cards
- * already seen, the quick bar's slots, the switches. Saved in localStorage under `ovf.*` (inside try/catch: private
- * mode just forgets on reload). The games themselves are kept by app/saves.ts, one per mode: «Продолжить» goes on with one.
+ * The app around the game: which screen is up (the title over a big farm, or the game), the quick bar's slots, the
+ * switches. Saved in localStorage under `ovf.*` (inside try/catch: private mode just forgets on reload). The game itself
+ * is kept by app/saves.ts: «Продолжить» goes on with it.
  */
 type Screen = 'title' | 'run'
 /** The quick bar: ten slots, keys 1–9 and 0 (the clearing tool stands apart, on X). */
@@ -32,24 +31,22 @@ interface AppState {
   screen: Screen
   /** Bumped on every start, so «again» builds a fresh world. */
   runId: number
-  /** How the run screen gets its world: a new game, or the kept one; of the long game or the endless mode. */
+  /** How the run screen gets its world: a new game, or the kept one. */
   from: 'new' | 'save'
-  mode: Mode
   /** True while the menu is open over the running game. */
   menuOver: boolean
-  seenEver: CardId[]
   sound: boolean
   /** The lawn can be switched on; it starts off (the author: «трава по-умолчанию выключена»). */
   grass: boolean
   /** The quick bar as the player set it in the book (empty slots fill with unlocked buildings: `barOf`). */
   bar: Bar
-  /** The book of buildings and goods is open (the game waits), and the building the pointer is over in it. */
+  /** The book of buildings and sheep is open (the game waits), and the building the pointer is over in it. */
   book: boolean
   bookHover: BuildingId | null
-  /** A new game of a mode (the one played last, by default): it takes that mode's kept game's place. */
-  start: (mode?: Mode) => void
-  /** Go on with a mode's kept game. */
-  cont: (mode?: Mode) => void
+  /** A new game: it takes the kept game's place. */
+  start: () => void
+  /** Go on with the kept game. */
+  cont: () => void
   toTitle: () => void
   setBook: (open: boolean) => void
   setBookHover: (id: BuildingId | null) => void
@@ -57,7 +54,6 @@ interface AppState {
   assignSlot: (i: number, id: BuildingId, shown: Bar) => void
   openMenu: () => void
   closeMenu: () => void
-  sawCards: (ids: readonly CardId[]) => void
   setSound: (on: boolean) => void
   setGrass: (on: boolean) => void
 }
@@ -66,16 +62,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   screen: 'title',
   runId: 0,
   from: 'new',
-  mode: 'story',
   menuOver: false,
-  seenEver: load('ovf.seen', []),
   sound: load('ovf.sound', true),
   grass: load('ovf.grass', false),
   bar: load<Bar>('ovf.bar', []),
   book: false,
   bookHover: null,
-  start: (mode = get().mode) => set({ screen: 'run', from: 'new', mode, runId: get().runId + 1, menuOver: false, book: false }),
-  cont: (mode = get().mode) => set({ screen: 'run', from: 'save', mode, runId: get().runId + 1, menuOver: false, book: false }),
+  start: () => set({ screen: 'run', from: 'new', runId: get().runId + 1, menuOver: false, book: false }),
+  cont: () => set({ screen: 'run', from: 'save', runId: get().runId + 1, menuOver: false, book: false }),
   toTitle: () => set({ screen: 'title', menuOver: false, book: false, runId: get().runId + 1 }),
   setBook: (open) => set({ book: open, bookHover: null }),
   setBookHover: (id) => set({ bookHover: id }),
@@ -87,11 +81,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   openMenu: () => set({ menuOver: true }),
   closeMenu: () => set({ menuOver: false }),
-  sawCards: (ids) => {
-    const seen = [...new Set([...get().seenEver, ...ids])]
-    save('ovf.seen', seen)
-    set({ seenEver: seen })
-  },
   setSound: (on) => {
     save('ovf.sound', on)
     set({ sound: on })

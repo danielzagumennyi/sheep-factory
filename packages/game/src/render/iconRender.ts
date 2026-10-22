@@ -1,9 +1,9 @@
-import { Box3, DirectionalLight, HemisphereLight, Mesh, OrthographicCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer, WebGLRenderTarget, type BufferGeometry } from 'three'
-import { BUILDINGS, LIGHT, LOOK, ROOF, type BuildingId, type ItemId } from '@/game/balance'
+import { Box3, Color, DirectionalLight, HemisphereLight, Mesh, OrthographicCamera, Scene, SRGBColorSpace, TorusGeometry, Vector3, WebGLRenderer, WebGLRenderTarget, type BufferGeometry } from 'three'
+import { LIGHT, LOOK, ROOF, TOOL_ORDER, type BuildingId } from '@/game/balance'
 import { RENDERED_ICONS, type RenderedIcon } from '@/ui/iconKinds'
 import { model, sheepVmat, vmat } from './kit'
 import { machineBody } from './machineModels'
-import { METAL, WOOD, ball, bushBody, cyl, good, grassClump, put, rb, ring, sheepModel, shade } from './models'
+import { FLEECE_FIT, METAL, SHEEP_AT, ball, cone, cyl, fleece, fleeceBurrs, fleeceFelt, fleeceMud, put, rb, ring, sheepHead, sheepLegs, sheepModel, sheepTuft, shade, shornSheepModel } from './models'
 
 /** A straight piece of belt: the bed, three planks and the two walls with their caps. */
 const belt = () =>
@@ -30,55 +30,89 @@ const shears = () => {
   return model([...blade(1), ...blade(-1), put(cyl(0.05, 0.16, 10), LOOK.machineEdge, [0.02, 0, 0], [Math.PI / 2, 0, 0])])
 }
 
-/** Sowing by hand: a mound of earth with a young shoot, a seed bale beside it. */
-const sow = () =>
+/** A copy of `g` with its vertex colours multiplied by `color`: a fleece muddied, matted or browned. */
+function tinted(g: BufferGeometry, color: string) {
+  const out = g.clone(),
+    c = new Color(color),
+    col = out.getAttribute('color')
+  for (let i = 0; i < col.count; i++) col.setXYZ(i, col.getX(i) * c.r, col.getY(i) * c.g, col.getZ(i) * c.b)
+  return out
+}
+
+/** A sheep standing as the sheep icon does, its fleece as each kind has it (GDD 5; sheepLook.ts draws the flock so). */
+const kindSheep = (kind: 'dirty' | 'tangled' | 'burrs') => {
+  const fl = kind === 'tangled' ? tinted(fleeceFelt(), LOOK.feltFleece) : fleece().clone()
+  const parts = [sheepLegs().clone(), fl.translate(...SHEEP_AT.fleece), sheepHead().clone().translate(...SHEEP_AT.head), tinted(sheepTuft(), kind === 'tangled' ? LOOK.feltFleece : '#ffffff').translate(...SHEEP_AT.head)]
+  const k = FLEECE_FIT.fleece.burrs
+  if (kind === 'burrs') parts.push(tinted(fleeceBurrs(), LOOK.burrs).scale(k, k, k).translate(...SHEEP_AT.fleece))
+  if (kind === 'dirty') parts.push(tinted(fleeceMud(), LOOK.dirtFleece).scale(k, k, k).translate(...SHEEP_AT.fleece))
+  return model(parts).rotateY(-0.5)
+}
+
+/**
+ * What a sheep needs, each by the one thing it is about, big enough to tell apart at 22 pixels (the sign over a sheep,
+ * the scissors' list): a drop of water with bubbles for the wash, a big comb, tweezers holding a burr.
+ */
+const water = () =>
   model([
-    put(ball(0.3), LOOK.sproutSoil, [0, 0, 0], [0, 0, 0], [1.2, 0.35, 1.2]),
-    put(cyl(0.025, 0.2, 8), LOOK.sprout, [0, 0.16, 0]),
-    put(ball(0.08), LOOK.sprout, [0.07, 0.25, 0], [0, 0, 0.6], [1.4, 0.5, 0.8]),
-    put(ball(0.08), LOOK.sprout, [-0.07, 0.22, 0], [0, 0, -0.6], [1.4, 0.5, 0.8]),
-    good('hay').clone().translate(0.36, 0, 0.18),
+    put(ball(0.34), LOOK.water, [0, 0, 0], [0, 0, 0], [1, 1.05, 1]),
+    put(cone(0.27, 0.42, 20), LOOK.water, [0, 0.38, 0]),
+    put(ball(0.07), LOOK.waterFoam, [0.11, 0.12, 0.26]),
+    put(ball(0.13), LOOK.waterFoam, [0.42, 0.42, 0.05]),
+    put(ball(0.09), LOOK.waterFoam, [-0.4, 0.3, 0.08]),
   ])
-
-/** The stock: an open crate of what the farm has gathered — hay, a fleece, a ball of yarn. */
-const stock = () =>
+const combing = () =>
+  model([put(rb(0.95, 0.24, 0.14, 0.09), ROOF.comb, [0, 0.2, 0]), ...Array.from({ length: 8 }, (_, i) => put(rb(0.075, 0.42, 0.1, 0.035), shade(ROOF.comb, 0.82), [-0.39 + i * 0.111, -0.1, 0]))]).rotateZ(-0.25)
+const tweezers = () =>
   model([
-    put(rb(0.62, 0.34, 0.46, 0.04), WOOD, [0, 0.17, 0]),
-    ...[-0.12, 0.12].map((y) => put(rb(0.64, 0.05, 0.48, 0.02), shade(WOOD, 0.8), [0, 0.17 + y, 0])),
-    good('hay').clone().translate(-0.14, 0.3, 0),
-    good('wool').clone().translate(0.14, 0.28, -0.04),
-    good('yarn').clone().translate(0.06, 0.28, 0.12),
-  ])
+    put(rb(0.1, 0.8, 0.08, 0.04), METAL, [-0.07, 0.05, 0], [0, 0, -0.14]),
+    put(rb(0.1, 0.8, 0.08, 0.04), METAL, [0.07, 0.05, 0], [0, 0, 0.14]),
+    put(ball(0.09), ROOF.pick, [0, 0.46, 0]),
+    put(ball(0.17), LOOK.burrs, [0, -0.42, 0]),
+    ...Array.from({ length: 6 }, (_, i) => {
+      const a = (i / 6) * Math.PI * 2
+      return put(ball(0.06), shade(LOOK.burrs, 0.85), [Math.cos(a) * 0.17, -0.42 + Math.sin(a) * 0.17, 0.05])
+    }),
+  ]).rotateZ(0.3)
 
-/** A berry bush, its berries on. */
-const bush = () => model([bushBody().clone(), ...[[0.12, 0.38, 0.2], [-0.16, 0.33, 0.18], [0.02, 0.48, 0.12], [0.24, 0.26, 0.05], [-0.04, 0.28, 0.27]].map((c) => put(ball(0.05), LOOK.berry, c as [number, number, number]))])
+/** The portal as its icon: the stone ring standing up, the swirl inside it, the gem on top (models.ts `portalModel`). */
+const portal = () =>
+  model([
+    put(new TorusGeometry(0.5, 0.1, 10, 40), LOOK.portalStone, [0, 0, 0]),
+    put(cyl(0.42, 0.04, 32), LOOK.portalSwirl[0], [0, 0, 0], [Math.PI / 2, 0, 0]),
+    put(cyl(0.24, 0.05, 28), LOOK.portalSwirl[2], [0, 0, 0], [Math.PI / 2, 0, 0]),
+    put(ball(0.09), LOOK.portalRune, [0, 0.6, 0], [0, 0, 0], [0.8, 1.2, 0.8]),
+    put(rb(0.5, 0.12, 0.3, 0.04), shade(LOOK.portalStone, 0.88), [0, -0.6, 0]),
+  ]).rotateY(0.5)
 
-const MACHINES: BuildingId[] = ['pen', 'shearer', 'feeder', 'dyer', 'comb', 'curl', 'knit', 'bath', 'mower', 'berry', 'seeder', 'splitter', 'merger']
+const MACHINES = TOOL_ORDER.filter((t) => t !== 'belt')
 function geometryOf(kind: RenderedIcon): BufferGeometry {
-  if ((MACHINES as string[]).includes(kind)) {
-    // a 2×1 lies along z; for its icon it is turned to lie across the frame, machine on the left
-    const g = machineBody(kind as BuildingId)
-    return BUILDINGS[kind as BuildingId].size?.[0] === 2 && BUILDINGS[kind as BuildingId].size?.[1] === 1 ? g.clone().rotateY(Math.PI / 2) : g
-  }
+  if ((MACHINES as string[]).includes(kind)) return machineBody(kind as BuildingId)
   switch (kind) {
     case 'belt':
       return belt()
     case 'sheep':
       return sheepModel()
+    case 'dirty':
+    case 'tangled':
+    case 'burrs':
+      return kindSheep(kind)
+    case 'shorn':
+      return shornSheepModel().clone().rotateY(-0.5)
+    case 'portal':
+      return portal()
+    case 'water':
+      return water()
+    case 'combing':
+      return combing()
+    case 'tweezers':
+      return tweezers()
     case 'coin':
       return coin()
     case 'shear':
       return shears()
-    case 'sow':
-      return sow()
-    case 'stock':
-      return stock()
-    case 'meadow':
-      return grassClump(0)
-    case 'bush':
-      return bush()
     default:
-      return good(kind as ItemId)
+      return sheepModel()
   }
 }
 
@@ -120,7 +154,7 @@ export async function renderIcons(given?: WebGLRenderer) {
     const geo = geometryOf(kind)
     mesh.geometry = geo
     // a sheep in its own soft light, as in the field
-    mesh.material = kind === 'sheep' ? sheepVmat() : vmat()
+    mesh.material = ['sheep', 'dirty', 'tangled', 'burrs', 'shorn'].includes(kind) ? sheepVmat() : vmat()
     box.setFromObject(mesh)
     box.getCenter(c)
     const r = box.getSize(v).length()

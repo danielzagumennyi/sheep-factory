@@ -43,7 +43,7 @@ const ICONS: Readonly<Record<string, ReactNode>> = {
 }
 
 export function Icon({ kind, size = 20 }: { kind: string; size?: number }) {
-  // buildings, goods, resources, the sheep and the coin are pictures drawn from their 3D models (iconKinds.ts)
+  // buildings, the kinds of sheep, the portal and the coin are pictures drawn from their 3D models (iconKinds.ts)
   if (isRendered(kind)) return <img className="ico ico--3d" src={iconUrl(kind)} width={size} height={size} alt="" draggable={false} />
   return (
     <svg className="ico" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">

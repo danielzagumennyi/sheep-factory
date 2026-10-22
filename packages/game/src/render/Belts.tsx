@@ -8,7 +8,7 @@ import { frame } from './frame'
 
 const CAP = 700
 const yaw = (d: number) => -d * (Math.PI / 2)
-/** Slats per half cell, running with the goods; wedge planks round a bend. */
+/** Slats per half cell, running with the sheep; wedge planks round a bend. */
 const SLATS = 3
 const CORNER_SLATS = 5
 /** A wedge plank: a pie slice about the bend's corner, from just inside the belt to its outer edge, pointing +Z. */
@@ -70,7 +70,7 @@ export function useBeltPieces(cap: number, name: string, shadows = true, tint = 
 export type BeltPieces = ReturnType<typeof useBeltPieces>
 
 /**
- * One cell of belt: goods come in moving `inDir` and leave moving `dir`; `phase` runs the planks along; `y` lifts it
+ * One cell of belt: sheep come in moving `inDir` and leave moving `dir`; `phase` runs the planks along; `y` lifts it
  * (the line being drawn is held up, like a building in hand). A straight cell has a bed, planks, an arrow and two
  * walls; a turn a quarter-disc bed, fanned planks, a curved outer wall and a post on the inside corner.
  */
@@ -127,7 +127,7 @@ export function drawBelt(b: BeltPieces, x: number, z: number, inDir: number, dir
 
 /**
  * Belts in the manner of Tower Factory's wooden conveyors: a dark wooden bed, a floor of light planks laid across the
- * way that run along with the goods, and a side wall on every edge the line doesn't pass through — so a straight cell
+ * way that run along with the sheep, and a side wall on every edge the line doesn't pass through — so a straight cell
  * has two walls and a turn an outer corner, its planks fanned round a quarter arc. A small dark arrow rides on straight
  * runs; a red cross marks a side input it refuses (a merger is needed), a red dot a belt that leads nowhere.
  */

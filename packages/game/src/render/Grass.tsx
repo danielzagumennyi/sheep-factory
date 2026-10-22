@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { BufferAttribute, BufferGeometry, Color, MeshToonMaterial } from 'three'
+import { BufferAttribute, BufferGeometry, Color, InstancedMesh, MeshToonMaterial, Sphere, Vector3 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { GRASS, ISLAND, LOOK } from '@/game/balance'
 import { useAppStore } from '@/app/store'
 import { useGame } from '@/game/GameContext'
-import { get, levelAt, owned, pastureAt } from '@/game/grid'
-import { Field, Flock, GameState, Plant, key, res, type World } from '@/game/world'
-import { Batch, useInstanced } from './instancing'
+import { get, levelAt } from '@/game/grid'
+import { Field, GameState, Plant, key, res, unkey, type World } from '@/game/world'
+import { Batch } from './instancing'
 import { cam } from './camera'
 import { toonBands } from './kit'
 import { withReach } from './reach'
@@ -82,20 +82,35 @@ function tuft(seed: number): BufferGeometry {
   return mergeGeometries(parts)!
 }
 
-/** One tuft shape for the whole lawn (one instanced mesh, so the far-to-near order holds across all of it). */
-const KINDS = 1
-
 /**
  * A lawn of broad soft grass over all the free land: dense tufts on every cell where nothing stands — not on
- * buildings (the market is one), belts, water, meadows, the pen or where goods lie. It sways in the wind. It writes no depth,
- * so the contact shadows see the ground beneath, not a thousand blade edges; drawn after everything else and from the
- * far side to the near, it still lies in front of what it should. It stays up while building (the author: «убери
- * сжатие травы при строительстве»).
+ * buildings (the portal is one), belts, water or meadows. It sways in the wind. It writes no depth, so the contact
+ * shadows see the ground beneath, not a thousand blade edges; drawn after everything else and from the far side to the
+ * near, it still lies in front of what it should. It stays up while building (the author: «убери сжатие травы при
+ * строительстве»). Laid in square pieces (GRASS.chunk): a piece out of the view is not drawn, and only a piece whose
+ * ground changed is laid again.
  */
 export function Grass() {
   // the player can switch the lawn off (the author: «сделай траву и обводку выключаемой»)
   const on = useAppStore((s) => s.grass)
   return on ? <Lawn /> : null
+}
+
+/** The lawn is laid again at most this often, seconds, while the plant keeps changing. */
+const RELAY = 0.3
+
+/** The pieces of the lawn: the island and its rim, GRASS.chunk cells a side. */
+function chunks() {
+  const m = Math.ceil(ISLAND.margin),
+    C = GRASS.chunk
+  const x0 = island.left - m,
+    y0 = island.top - m
+  const nx = Math.ceil((island.right - island.left + 2 * m) / C),
+    ny = Math.ceil((island.bottom - island.top + 2 * m) / C)
+  const a: { x0: number; y0: number; x1: number; y1: number }[] = []
+  for (let j = 0; j < ny; j++)
+    for (let i = 0; i < nx; i++) a.push({ x0: x0 + i * C, y0: y0 + j * C, x1: Math.min(island.right + m, x0 + (i + 1) * C), y1: Math.min(island.bottom + m, y0 + (j + 1) * C) })
+  return a
 }
 
 function Lawn() {
@@ -111,8 +126,7 @@ function Lawn() {
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uYaw;\nattribute float aLeaf;').replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        // no two tufts alike: every leaf of every tuft its own height (one mesh, so the far-to-near order holds; the
-        // author's sample has no repeated stamp)
+        // no two tufts alike: every leaf of every tuft its own height (the author's sample has no repeated stamp)
         vec4 root0 = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
         float rnd = fract(sin(dot(root0.xz + aLeaf * 7.13, vec2(12.9898, 78.233))) * 43758.5453);
         transformed.y *= 0.7 + 0.6 * rnd;
@@ -130,41 +144,91 @@ function Lawn() {
     return withReach(m, 'grass')
   }, [])
   useEffect(() => () => material.dispose(), [material])
-  const geos = useMemo(() => Array.from({ length: KINDS }, (_, i) => tuft(i + 1)), [])
-  const meshes = geos.map((g, i) => {
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- a fixed list, same order every render
-    const m = useInstanced(g, material, GRASS.cap, 'grass_' + i, false)
-    return m
-  })
-  for (const m of meshes) {
-    m.receiveShadow = true
-    m.renderOrder = 5
-  }
-  const batches = useMemo(() => meshes.map((m) => new Batch(m)), [meshes])
-  const sig = useRef('')
-  useFrame(() => {
+  const geo = useMemo(() => tuft(1), [])
+  useEffect(() => () => geo.dispose(), [geo])
+  const pieces = useMemo(() => {
+    const G = GRASS.grid
+    return chunks().map((c, i) => {
+      const m = new InstancedMesh(geo, material, (c.x1 - c.x0) * (c.y1 - c.y0) * G * G)
+      m.name = 'grass_' + i
+      m.count = 0
+      m.receiveShadow = true
+      m.renderOrder = 5
+      // a piece is culled by its own square (and the hills' height), not by its tufts
+      m.frustumCulled = true
+      m.boundingSphere = new Sphere(new Vector3((c.x0 + c.x1) / 2, 0.5, (c.y0 + c.y1) / 2), Math.hypot(c.x1 - c.x0, c.y1 - c.y0) / 2 + 1)
+      // null: not laid yet — a piece with nothing on it signs '' and must still be laid once
+      return { ...c, mesh: m, batch: new Batch(m), sig: null as string | null }
+    })
+  }, [geo, material])
+  useEffect(() => () => pieces.forEach((p) => p.mesh.dispose()), [pieces])
+  const ver = useRef('')
+  const laid = useRef(-1)
+  useFrame((state) => {
     time.current.value = frame.t
     yaw.current.value = cam.yaw
-    const s = signature(world)
-    if (s === sig.current) return
-    sig.current = s
-    for (const b of batches) b.begin()
-    lay(world, (k, x, y, z, yaw, s, h, shade) => batches[k]!.put(x, y, z, yaw, s, h, s, shade))
-    for (const b of batches) b.end()
+    const far = cam.dist > GRASS.far
+    // the pieces far side first (by the camera's own look over the ground), so nearer tufts are drawn over farther
+    const fx = -Math.sin(cam.yaw),
+      fz = -Math.cos(cam.yaw)
+    const order = pieces.map((p) => ({ p, d: ((p.x0 + p.x1) / 2 - cam.x) * fx + ((p.y0 + p.y1) / 2 - cam.z) * fz })).sort((a, b) => b.d - a.d)
+    order.forEach(({ p }, i) => {
+      p.mesh.visible = !far
+      p.mesh.renderOrder = 5 + i / (order.length + 1)
+    })
+    const gs = res(world, GameState),
+      v = gs.plantVersion + ':' + gs.fieldVersion
+    // a belt dragged out changes the plant every few frames: pieces are laid again at most every RELAY seconds
+    const now = state.clock.elapsedTime
+    if (v === ver.current || now - laid.current < RELAY) return
+    ver.current = v
+    laid.current = now
+    const sigs = signatures(world, pieces)
+    pieces.forEach((p, i) => {
+      if (sigs[i] === p.sig) return
+      p.sig = sigs[i]!
+      p.batch.begin()
+      lay(world, p, (x, y, z, yaw, s, h, shade) => p.batch.put(x, y, z, yaw, s, h, s, shade))
+      p.batch.end()
+    })
   })
   return (
     <group>
-      {meshes.map((m) => (
-        <primitive key={m.name} object={m} />
+      {pieces.map((p) => (
+        <primitive key={p.mesh.name} object={p.mesh} />
       ))}
     </group>
   )
 }
 
-function signature(w: World) {
-  const p = res(w, Plant),
-    f = res(w, Field)
-  return p.b.size + ':' + p.occ.size + ':' + res(w, GameState).fieldVersion + ':' + res(w, Flock).pastures.length + ':' + f.plots.size + ':' + res(w, GameState).pileVersion
+/**
+ * What each piece's lawn depends on: the buildings on it or a cell beside it (a building shortens the tufts next to it)
+ * and the water and meadows on it. A piece is laid again only when this changes.
+ */
+function signatures(w: World, pieces: readonly { x0: number; y0: number; x1: number; y1: number }[]) {
+  const sig = pieces.map(() => '')
+  const C = GRASS.chunk,
+    p0 = pieces[0]!
+  const nx = Math.round((pieces[pieces.length - 1]!.x0 - p0.x0) / C) + 1
+  const mark = (x0: number, y0: number, x1: number, y1: number, s: string) => {
+    const seen = new Set<number>()
+    for (const [x, y] of [
+      [x0, y0],
+      [x1, y0],
+      [x0, y1],
+      [x1, y1],
+    ] as const) {
+      const i = Math.floor((x - p0.x0) / C),
+        j = Math.floor((y - p0.y0) / C)
+      const at = j * nx + i
+      if (i < 0 || j < 0 || i >= nx || at >= pieces.length || seen.has(at)) continue
+      seen.add(at)
+      sig[at] += s
+    }
+  }
+  for (const b of res(w, Plant).b.values()) mark(b.x - 1, b.y - 1, b.x + b.w, b.y + b.h, b.x + ',' + b.y + ',' + b.w + ',' + b.h + ';')
+  for (const [k, t] of res(w, Field).terrain) if (t === 'water' || t === 'meadow') mark(...(unkey(k).flatMap((v) => [v, v]) as [number, number, number, number]), k + ';')
+  return sig
 }
 
 const _c = new Color()
@@ -172,13 +236,13 @@ const _c = new Color()
 /**
  * Does the lawn grow on this cell? Everywhere the ground is free (the author: «должна занимать всё пространство что
  * есть свободное на земле») — round trees, rocks and bushes too, which stand in it, and the hills' tops — but not on
- * water, meadows, buildings and belts, the pen, or where goods lie.
+ * water, meadows, buildings or belts.
  */
-function grows(w: World, x: number, y: number, bare: Set<string>) {
+function grows(w: World, x: number, y: number) {
   if (!inIsland(x, y)) return true
   const t = res(w, Field).terrain.get(key(x, y))
-  if (t === 'water' || t === 'meadow' || t === 'sprout') return false
-  return !get(w, x, y) && !pastureAt(w, x, y) && !bare.has(key(x, y))
+  if (t === 'water' || t === 'meadow') return false
+  return !get(w, x, y)
 }
 
 /** Inside the island's rounded top. */
@@ -194,21 +258,15 @@ function onIsland(px: number, pz: number) {
   return Math.hypot(px - cx, pz - cz) <= R
 }
 
-/** Where the lawn grows: every free cell of the island, tufts scattered over it, laid far side first. */
-function lay(w: World, put: (k: number, x: number, y: number, z: number, yaw: number, s: number, h: number, shade: Color) => void) {
-  // where goods lie on the ground the grass gives way
-  const bare = new Set(res(w, Field).piles.keys())
-  const m = Math.ceil(ISLAND.margin)
-  const spots: [number, number, number, number, number, number, number, Color][] = []
-  for (let y = island.top - m; y < island.bottom + m; y++)
-    for (let x = island.left - m; x < island.right + m; x++) {
-      const inside = inIsland(x, y)
-      if (!grows(w, x, y, bare)) continue
+/** Where a piece's lawn grows: every free cell of it, tufts scattered over it, laid far side first. */
+function lay(w: World, c: { x0: number; y0: number; x1: number; y1: number }, put: (x: number, y: number, z: number, yaw: number, s: number, h: number, shade: Color) => void) {
+  const spots: [number, number, number, number, number, number, Color][] = []
+  for (let y = c.y0; y < c.y1; y++)
+    for (let x = c.x0; x < c.x1; x++) {
+      if (!grows(w, x, y)) continue
       const hill = levelAt(w, x, y) > 1
-      // land for sale grows a deeper green
-      const mine = !inside || owned(w, x, y)
       // by a belt or a building the grass gets short instead of stopping: no leaf lies across it, no bare strip
-      const open = (dx: number, dy: number) => grows(w, x + dx, y + dy, bare)
+      const open = (dx: number, dy: number) => grows(w, x + dx, y + dy)
       const x0 = open(-1, 0) ? 0 : 0.06,
         x1 = open(1, 0) ? 1 : 0.94,
         z0 = open(0, -1) ? 0 : 0.06,
@@ -224,7 +282,6 @@ function lay(w: World, put: (k: number, x: number, y: number, z: number, yaw: nu
         const py = hillHeight(px, pz)
         const v = 0.97 + hash(n + 2) * 0.06
         _c.setRGB(v, v, v)
-        if (!mine) _c.multiplyScalar(0.95)
         // tufts by a building or a belt sit in its shade, a touch darker
         const near = Math.min(x0 ? px - x : 9, x1 < 1 ? x + 1 - px : 9, z0 ? pz - y : 9, z1 < 1 ? y + 1 - pz : 9)
         // as thick, only shorter and a shade darker, close to what stands there
@@ -232,10 +289,10 @@ function lay(w: World, put: (k: number, x: number, y: number, z: number, yaw: nu
           ease = k * k * (3 - 2 * k)
         _c.multiplyScalar(0.94 + 0.06 * ease)
         const size = 0.85 + hash(n + 5) * 0.35
-        spots.push([Math.floor(hash(n + 3) * KINDS), px, py, pz, (hash(n + 4) - 0.5) * 0.6, size * (0.8 + hash(n + 6) * 0.4), size * (0.45 + 0.55 * ease), _c.clone()])
+        spots.push([px, py, pz, (hash(n + 4) - 0.5) * 0.6, size * (0.8 + hash(n + 6) * 0.4), size * (0.45 + 0.55 * ease), _c.clone()])
       }
     }
   // far side first, so later (nearer) tufts are drawn over earlier ones
-  spots.sort((a, b) => a[3] - b[3])
-  for (const [k, x, y, z, yaw, s, h, c] of spots) put(k, x, y, z, yaw, s, h, c)
+  spots.sort((a, b) => a[2] - b[2])
+  for (const [x, y, z, yaw, s, h, c] of spots) put(x, y, z, yaw, s, h, c)
 }

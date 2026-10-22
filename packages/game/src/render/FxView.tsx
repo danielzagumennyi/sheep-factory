@@ -8,8 +8,7 @@ import { tx } from '@/i18n'
 import { FX_TEXT } from '@/i18n/content'
 import { GEO, mat } from './kit'
 import { Batch, useInstanced } from './instancing'
-import { startCoin, startFlight } from './Market'
-import { clearFalls } from './falls'
+import { startPortal } from './Portal'
 
 interface Puff {
   x: number
@@ -31,7 +30,7 @@ interface Float {
   tone: string
 }
 let floatId = 0
-/** The puffs in the air: from the simulation's events, and from the views (a good landing on a pile, falls.ts). */
+/** The puffs in the air: from the simulation's events, and from the views (a building set down). */
 const puffs: Puff[] = []
 /** A few puffs of `color` bursting from the ground at (x, z). */
 export function puffAt(x: number, z: number, color: string, n: number, y = 0.15) {
@@ -44,8 +43,8 @@ export function puffAt(x: number, z: number, color: string, n: number, y = 0.15)
 
 /**
  * Drains the simulation's effect queue every frame: sounds go to the synth, numbers float up from the field, puffs of
- * wool and grass burst and fall, goods handed to the market hop in, a good a client takes pops up as a coin, goods put on
- * the ground fall onto their piles. Sounds stay quiet while the game is paused.
+ * wool and dust burst and fall, a shorn sheep handed to the portal slides into its ring and its coins pop up
+ * (Portal.tsx). Sounds stay quiet while the game is paused.
  */
 export function FxView() {
   const { world } = useGame()
@@ -54,7 +53,6 @@ export function FxView() {
   const batch = useMemo(() => new Batch(mesh), [mesh])
   // a new world starts with nothing in the air
   useEffect(() => {
-    clearFalls()
     puffs.length = 0
   }, [world])
   useFrame((_, dt) => {
@@ -65,11 +63,7 @@ export function FxView() {
       if (e.kind === 'sound') {
         if (speed > 0) playSound(e.id)
       } else if (e.kind === 'float') add.push({ id: ++floatId, x: e.x, z: e.y, text: FX_TEXT[e.text] ? tx(FX_TEXT[e.text]!) : e.text, tone: e.tone })
-      // a good handed to the market hops onto its client's sign; one a client takes pops up off it as a coin (Market.tsx)
-      else if (e.kind === 'deliver') startFlight(e)
-      else if (e.kind === 'take') startCoin(e)
-      // a good falling onto a pile is frame.ts's: it set it off before the piles were drawn
-      else if (e.kind === 'fall') continue
+      else if (e.kind === 'portal') startPortal(e)
       else
         for (let i = 0; i < e.n; i++) {
           const a = Math.random() * Math.PI * 2,

@@ -1,6 +1,6 @@
-import { BUILDINGS, DIRS, GRID, type Dir } from '../balance'
-import { beltAutoDir, freeCell, get, inGrid, isBeltLike, isStation, outCells, pastureAt, step, targetOk } from '../grid'
-import { Flock, GameState, res, type World } from '../world'
+import { BUILDINGS, GRID, type Dir } from '../balance'
+import { beltAutoDir, freeCell, get, inGrid, isBeltLike, outCells, step, targetOk } from '../grid'
+import { GameState, res, type World } from '../world'
 import { noMoney, place } from './build'
 
 /**
@@ -16,11 +16,8 @@ export interface Cell {
 
 let memo = { k: '', cells: null as Cell[] | null }
 
-/** The cells of the cheapest belt path from a to b (b may be a building, or a pasture: then its way in), or null. */
+/** The cells of the cheapest belt path from a to b (b may be a building), or null. */
 export function routeCells(w: World, a: Cell, b: Cell): Cell[] | null {
-  // a line drawn into a pasture goes to its way in
-  const pa = pastureAt(w, b.x, b.y)
-  if (pa) b = { x: pa.entry.x, y: pa.entry.y }
   const gs = res(w, GameState)
   const mk = a.x + ',' + a.y + '>' + b.x + ',' + b.y + ':' + gs.fieldVersion + ':' + gs.plantVersion
   if (memo.k === mk) return memo.cells
@@ -80,31 +77,6 @@ export const stepDir = (a: Cell, b: Cell): Dir => {
   return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : dy > 0 ? 1 : 3
 }
 
-/** Does the belt line starting here lead to a station or back into a pen (the sheep's lane)? */
-function sheepLane(w: World, x: number, y: number) {
-  for (let i = 0; i < 40; i++) {
-    const t = inGrid(x, y) ? get(w, x, y) : null
-    if (!t) return false
-    if (isStation(t)) return true
-    if (!isBeltLike(t)) return false
-    ;[x, y] = step(x, y, t.dir)
-    if (pastureAt(w, x, y)) return true
-  }
-  return false
-}
-function sheepSource(w: World, c: Cell) {
-  return (
-    res(w, Flock).pastures.some((p) => p.exit.x === c.x && p.exit.y === c.y) ||
-    [0, 1, 2, 3].some((d) => {
-      const sx = c.x - DIRS[d]![0],
-        sy = c.y - DIRS[d]![1]
-      const t = inGrid(sx, sy) ? get(w, sx, sy) : null
-      return !!t && isStation(t) && t.dir === d && outCells(t).some((o) => o.d === d && o.x === c.x && o.y === c.y)
-    }) ||
-    sheepLane(w, c.x, c.y)
-  )
-}
-
 /**
  * Directions along a path; the last cell turns into whatever it can feed, preferring a machine over a belt. A single
  * cell goes the way its neighbours suggest (`beltAutoDir`), the player's R breaking ties.
@@ -114,14 +86,9 @@ export function pathDirs(w: World, cells: Cell[], rot: Dir): Dir[] {
   const L = cells.length - 1
   if (L >= 1) {
     const c = cells[L]!,
-      backD = (stepDir(cells[L - 1]!, c) + 2) % 4,
-      sheepy = sheepSource(w, cells[0]!)
+      backD = (stepDir(cells[L - 1]!, c) + 2) % 4
     if (!targetOk(w, c.x, c.y, dirs[L]!)) {
-      const alt = ([0, 1, 2, 3] as Dir[]).filter((d) => {
-        if (d === backD || !targetOk(w, c.x, c.y, d)) return false
-        const [nx, ny] = step(c.x, c.y, d)
-        return (pastureAt(w, nx, ny) ? sheepy : !!get(w, nx, ny)) && (sheepy || !sheepLane(w, nx, ny))
-      })
+      const alt = ([0, 1, 2, 3] as Dir[]).filter((d) => d !== backD && targetOk(w, c.x, c.y, d) && !!get(w, ...step(c.x, c.y, d)))
       const best = alt.find((d) => !isBeltLike(get(w, ...step(c.x, c.y, d)))) ?? alt[0]
       if (best !== undefined) dirs[L] = best
     }
@@ -134,7 +101,7 @@ export function buildPath(w: World, a: Cell, b: Cell, rot: Dir = 0): boolean {
   if (!cells) return false
   const dirs = pathDirs(w, cells, rot),
     endB = cells.length > 1 && get(w, b.x, b.y)
-  const need = cells.filter((c, i) => !get(w, c.x, c.y) && !(i === cells.length - 1 && pastureAt(w, c.x, c.y))).length * BUILDINGS.belt.cost
+  const need = cells.filter((c) => !get(w, c.x, c.y)).length * BUILDINGS.belt.cost
   if (res(w, GameState).coins < need) {
     noMoney(w)
     return false
@@ -152,12 +119,10 @@ export function buildPath(w: World, a: Cell, b: Cell, rot: Dir = 0): boolean {
   return n > 0
 }
 
-/** Where a line drawn from this cell starts: a machine's free output cell, or the cell itself. */
+/** Where a line drawn from this cell starts: a building's free output cell, or the cell itself. */
 export function beltStart(w: World, c: Cell): Cell | null {
   const b = inGrid(c.x, c.y) ? get(w, c.x, c.y) : null
   if (!b || b.type === 'belt') return c
-  // a shearer's line starts on the side its goods leave by first
-  const outs = outCells(b).sort((p, q) => (b.type === 'shearer' ? (p.d === b.dir ? 1 : 0) - (q.d === b.dir ? 1 : 0) : 0))
-  for (const c of outs) if (freeCell(w, c.x, c.y) || get(w, c.x, c.y)?.type === 'belt') return { x: c.x, y: c.y }
+  for (const c of outCells(b)) if (freeCell(w, c.x, c.y) || get(w, c.x, c.y)?.type === 'belt') return { x: c.x, y: c.y }
   return null
 }

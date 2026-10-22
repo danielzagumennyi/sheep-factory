@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { Group, Mesh, type Object3D } from 'three'
 import { OUTLINE_LAYER, OutlinePass, markOutlined, outlined, unmarkOutlined } from '@kit/outline'
 import { useGame } from '@/game/GameContext'
-import { beltInDir, pastureAt } from '@/game/grid'
+import { beltInDir } from '@/game/grid'
 import { Plant, Ui, key, res } from '@/game/world'
 import { machineYaw, vmat } from './kit'
 import { drawBelt, useBeltPieces } from './Belts'
@@ -11,7 +11,7 @@ import { machineBody } from './machineModels'
 import { pickAt, poseProxy, pointer, sheepPoses, sheepProxy, views } from './pick'
 
 /**
- * What the hand is over — a machine, a dock, a sheep, a belt, a pasture — gets a warm line round its silhouette (the author: «при
+ * What the hand is over — a machine, the portal, a sheep, a belt — gets a warm line round its silhouette (the author: «при
  * наведении на объект он обводится по силуэту»), drawn by Cubocalypse's outline pass (@kit/outline) with only its
  * highlight half on: the hovered object alone goes into the id buffer, its parts share one id, so the line runs round
  * the outside of the whole thing and never between its pieces.
@@ -74,11 +74,6 @@ export function Hover() {
           machine.rotation.y = machineYaw(b.type, b.dir)
           next = machine
         } else if (b) next = views.buildings.get(key(b.x, b.y)) ?? null
-        else {
-          // a pasture is outlined the same way, fence and lawn
-          const pa = pastureAt(world, h.x, h.y)
-          next = pa ? (views.pastures.get(pa.id) ?? null) : null
-        }
       }
     }
     for (const q of Object.values(beltProxy)) q.end()

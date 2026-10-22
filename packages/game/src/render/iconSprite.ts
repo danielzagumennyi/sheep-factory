@@ -1,10 +1,9 @@
-import { CanvasTexture, MeshBasicMaterial, SpriteMaterial, SRGBColorSpace } from 'three'
+import { CanvasTexture, SpriteMaterial, SRGBColorSpace } from 'three'
 import { LOOK } from '@/game/balance'
 import { iconUrl, isRendered } from '@/ui/iconKinds'
 
 const SIZE = 128
 const cache = new Map<string, SpriteMaterial>()
-const bubbles = new Map<string, MeshBasicMaterial>()
 
 /**
  * An icon on a disc ringed in `ring`, drawn once its picture has loaded: the disc's colour, the ring's width and how
@@ -51,20 +50,6 @@ export function badgeMaterial(kind: string, ring: string): SpriteMaterial {
   if (hit) return hit
   const m = new SpriteMaterial({ map: discTexture(kind, ring, '#fffaf0', 10, 0.66), depthTest: false, depthWrite: false, transparent: true, fog: false })
   cache.set(k, m)
-  return m
-}
-
-/**
- * The bubble over a sheep (SheepView.tsx), like the page's `.bubble`: the icon on a white disc with a thin ring. It is
- * for cards facing the camera, one instanced mesh for the whole flock — a page element over each sheep cost a frame
- * of its own once the flock was big. Drawn over everything, as the page's bubbles were.
- */
-export function bubbleMaterial(kind: string, ring: string): MeshBasicMaterial {
-  const k = kind + ring
-  const hit = bubbles.get(k)
-  if (hit) return hit
-  const m = new MeshBasicMaterial({ map: discTexture(kind, ring, '#ffffff', 7, 0.62), depthTest: false, depthWrite: false, transparent: true, fog: false })
-  bubbles.set(k, m)
   return m
 }
 

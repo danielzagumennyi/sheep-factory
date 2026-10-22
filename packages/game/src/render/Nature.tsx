@@ -25,7 +25,7 @@ const ALL = [...SETS.tree, ...SETS.rock]
 /**
  * Trees and rocks of the terrain, in the style of the reference dioramas: soft-tiered firs (only firs: the author), smooth
  * boulders. Each cell picks a model, a turn and a size from a stable per-cell number, so the field looks the same frame
- * to frame and mission to mission.
+ * to frame and game to game.
  */
 export function Nature() {
   const { world } = useGame()

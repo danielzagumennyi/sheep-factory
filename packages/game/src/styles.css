@@ -114,7 +114,35 @@ button:focus-visible {
     transform: translateX(3px);
   }
 }
-.day {
+/* the score towards the goal: shorn of the goal, a bar under it (GDD 7) */
+.score {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 7px;
+  padding: 5px 12px 6px 7px;
+  font-variant-numeric: tabular-nums;
+}
+.score b {
+  font-size: 1.05rem;
+}
+.score__bar {
+  grid-column: 1 / 3;
+  height: 6px;
+  min-width: 120px;
+  border-radius: 3px;
+  background: var(--belt);
+  overflow: hidden;
+  position: relative;
+}
+.score__bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--good);
+}
+.next {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -122,7 +150,7 @@ button:focus-visible {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.day small {
+.next small {
   font-weight: 600;
   color: var(--ink-soft);
 }
@@ -216,65 +244,6 @@ button:focus-visible {
   opacity: 0.5;
 }
 
-/* ===== right: the market's clients ===== */
-.ov-orders {
-  right: 12px;
-  top: 60px;
-  width: 214px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.order {
-  padding: 7px 10px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 4px 8px;
-}
-.order__who {
-  font-weight: 600;
-  font-size: 0.85rem;
-  grid-column: 1 / 3;
-}
-.order__rw {
-  font-size: 0.8rem;
-  color: var(--ink-soft);
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  font-variant-numeric: tabular-nums;
-}
-.order__need {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  grid-column: 1 / 4;
-}
-.order__bar {
-  grid-column: 1 / 4;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--belt);
-  overflow: hidden;
-  position: relative;
-}
-.order__bar i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--good);
-}
-.order--done {
-  opacity: 0.88;
-}
-.order--done .order__who {
-  color: var(--good);
-}
-
 /* ===== bottom: hotbar ===== */
 .ov-bottom {
   left: 50%;
@@ -308,10 +277,6 @@ button:focus-visible {
   align-self: center;
   width: 44px;
   height: 44px;
-}
-.recipes-tip {
-  display: inline-flex;
-  gap: 12px;
 }
 .slot {
   position: relative;
@@ -396,98 +361,6 @@ button:focus-visible {
   gap: 6px;
 }
 
-/* ===== bottom left, over the frame counter: the stock, which is the hand (a column of goods, as in Tower Factory) ===== */
-.ov-stock {
-  left: 12px;
-  bottom: 70px;
-}
-/* what the hand carries, beside the stock */
-.ov-hand {
-  left: 84px;
-  bottom: 70px;
-}
-.hand {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 5px 8px;
-}
-.stock {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 5px;
-}
-.stock__slot {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border-radius: 9px;
-  background: var(--belt);
-  display: grid;
-  place-items: center;
-}
-.stock__slot b {
-  position: absolute;
-  right: 2px;
-  bottom: 0;
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
-  text-shadow:
-    0 0 2px var(--panel),
-    0 0 2px var(--panel),
-    0 0 3px var(--panel);
-}
-
-/* how many: a slider and its number */
-.amount {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.amount input {
-  flex: 1;
-  accent-color: var(--accent);
-}
-.amount b {
-  min-width: 2ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-/* the trading post: one row per good — stock, sell price, buy price */
-.trade {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
-}
-.trade__row {
-  border: 1.5px solid var(--panel-edge);
-  background: var(--panel);
-  border-radius: 8px;
-  padding: 2px 6px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
-}
-.trade__row b {
-  min-width: 2ch;
-}
-.trade__row span {
-  color: var(--ink-soft);
-}
-.trade__row .trade__in {
-  color: var(--good);
-}
-.trade__row[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--belt);
-}
-
 /* ===== popup ===== */
 .pop {
   position: absolute;
@@ -539,23 +412,6 @@ button:focus-visible {
   align-items: center;
   gap: 5px;
   font-variant-numeric: tabular-nums;
-}
-/* a client's row in the market's window: its colour, its good and rate, the stock, its bar */
-.pop__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-.pop__stock {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0.8;
-}
-.pop__need .order__bar {
-  flex: 0 0 52px;
 }
 .pop__acts {
   display: flex;
@@ -759,23 +615,6 @@ button:focus-visible {
   border: 1px solid #e6d2b3;
   box-shadow: 0 2px 6px -3px rgba(90, 60, 30, 0.4);
 }
-.tag--dock {
-  font-size: 11px;
-  color: #8b6f5a;
-}
-.tag--on {
-  color: #4a3428;
-  border-color: #4a3428;
-}
-.tag--plot {
-  font-size: 13px;
-}
-.tag--locked {
-  opacity: 0.6;
-}
-.tag--short {
-  color: #8b6f5a;
-}
 .tag--bad {
   color: #c23b3b;
   border-color: #f0b4b4;
@@ -797,17 +636,32 @@ button:focus-visible {
 .bubble--shear {
   border-color: #e2557f;
 }
-.bubble--sheep {
-  border-color: #4a3428;
-}
 .bubble--warn {
   border-color: #d79a1c;
   background: #fff8e6;
 }
-.bubble--bad {
-  border-color: #d24545;
-  background: #ffecec;
-  color: #c23b3b;
+/* a line standing (Machines.tsx): over the sheep a building may not take, red, with what that sheep needs first */
+.bubble--stop {
+  flex-direction: row;
+  gap: 4px;
+  padding: 3px 7px 3px 9px;
+  border: 2.5px solid #fff;
+  background: #d24545;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  box-shadow: 0 2px 0 rgba(58, 53, 80, 0.35);
+  animation: stop-pulse 1s ease-in-out infinite;
+}
+.bubble--stop .ico {
+  background: #fff;
+  border-radius: 50%;
+  padding: 2px;
+}
+@keyframes stop-pulse {
+  50% {
+    transform: scale(1.12);
+  }
 }
 .bubble__clicks {
   display: flex;
@@ -859,9 +713,6 @@ button:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .ov-orders {
-    width: 170px;
-  }
   .slot {
     width: 44px;
     height: 52px;
@@ -883,35 +734,15 @@ button:focus-visible {
 .out--sheep {
   border-color: #4a3428;
 }
-.tag--market {
-  color: #4a3428;
-  border-color: #e2557f;
-}
 
 /* ===== a workshop's recipe choice ===== */
-.recipes {
-  display: flex;
-  gap: 5px;
-}
-.recipes .rule {
-  height: 34px;
-  min-width: 40px;
-}
-.recipes .rule[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
 
-/* while something is being built the bubbles over sheep and machines go, the plot prices fade (Ghost.tsx sets the class) */
+/* while something is being built the signs over sheep and machines go (Ghost.tsx sets the class) */
 .is-building .bubble {
   visibility: hidden;
 }
-/* land prices step out of the way while building: nothing can be built there anyway */
-.is-building .tag--plot {
-  opacity: 0;
-}
 
-/* ===== the book of buildings and goods (B) ===== */
+/* ===== the book of buildings and sheep (B) ===== */
 .book {
   position: absolute;
   inset: 0;
@@ -949,8 +780,16 @@ button:focus-visible {
   color: var(--ink);
   border-bottom-color: var(--accent);
 }
-.book__close {
+.book__coins {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.book__close {
+  margin-left: 8px;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -1050,11 +889,6 @@ button:focus-visible {
   align-items: center;
   gap: 6px;
 }
-.book__maker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 .book__facts {
   display: flex;
   flex-wrap: wrap;
@@ -1080,8 +914,19 @@ button:focus-visible {
   background: #e1eaff;
   color: #3d5fb8;
 }
-.chip--good {
-  color: var(--good);
+/* a recipe not bought yet: buy it here (GDD 8) */
+.book__buy {
+  margin-top: auto;
+}
+.book__buy .btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.book__buy .btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .book__hint {
   margin: auto 0 0;
@@ -1294,50 +1139,6 @@ button:focus-visible {
   background: var(--good);
   border-radius: 99px;
 }
-.load__cells {
-  display: inline-flex;
-  gap: 3px;
-}
-.load__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
-}
-.load__cells i {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-  border: 1.5px solid var(--panel-edge);
-  background: var(--panel);
-}
-.load__cells i.on {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.load__row button {
-  border: 1.5px solid var(--panel-edge);
-  background: var(--panel);
-  border-radius: 7px;
-  height: 24px;
-  min-width: 34px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.load__row button:hover:not(:disabled) {
-  background: var(--belt);
-}
-.load__row button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.load__stock {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
 .up {
   font-variant-numeric: tabular-nums;
 }
@@ -1414,4 +1215,51 @@ body.is-shearing canvas {
 }
 .shear__dots i.on {
   background: #e0607e;
+}
+/* a sheep that isn't ready: the scissors crossed out, no clicks to count; what it needs stands beside them */
+.shear__x {
+  display: none;
+}
+.shear--no .shear__x {
+  display: inline;
+}
+.shear--no .shear__dots,
+.shear--shorn .shear__svg,
+.shear--shorn .shear__dots {
+  display: none;
+}
+.shear__needs {
+  position: absolute;
+  left: 26px;
+  top: 8px;
+  display: flex;
+  gap: 2px;
+  padding: 3px 5px;
+  border-radius: 999px;
+  background: var(--paper);
+  box-shadow: 0 0 0 1.5px #3a3550;
+}
+/* done: dimmed, a tick over it */
+.shear__need {
+  position: relative;
+  display: flex;
+}
+.shear__need--done img {
+  opacity: 0.45;
+}
+.shear__need--done::after {
+  content: '✓';
+  position: absolute;
+  right: -2px;
+  bottom: -3px;
+  font-size: 15px;
+  font-weight: 900;
+  color: #2e8c59;
+  text-shadow:
+    0 0 2px #fff,
+    0 0 2px #fff;
+}
+.shear--shorn .shear__needs {
+  left: 18px;
+  top: 18px;
 }

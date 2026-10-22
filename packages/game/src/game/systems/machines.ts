@@ -1,249 +1,153 @@
-import { BATH_YIELD, BUILDINGS, COLORED, LOOK, PRODUCERS, SEED, SHEAR_YIELD, SHEEP, SOW, STEPS, type BuildingId, type Dir, type ItemId, type ResId, type StationId } from '../balance'
-import { freeCell, get, inGrid, isMachine, outCells, pastureAt, pileAt, pileOk, reachOf, sowable } from '../grid'
-import { Field, GameState, Plant, key, newItem, noMarks, puff, res, unkey, type Building, type SheepT, type World } from '../world'
+import { BUILDINGS, CARROT, LOOK, STOP, type BuildingId, type NeedId, type StationId } from '../balance'
+import { get, inGrid, outCells } from '../grid'
+import { Flock, Plant, Time, newItem, puff, ready, res, type Building, type SheepT, type World } from '../world'
 import { tryPush } from './belts'
-import { putPile } from './ground'
 import { toRoam } from './sheep'
 
 /**
- * Machines (GDD 4.3). A producer takes one unit from the nearest owned resource cell in reach every `time` seconds; a
- * station works on the sheep that comes in — the salon's stations mark a fluffy one (combed, curled, knitted, felted,
- * coloured), the shearer takes off what grew on it, the feeder feeds a hungry one — and lets any other pass, so the
- * loop never stands; a seeder sows. A finished output waits until it can leave: onto a belt, into a pen or a dock, or
- * onto a small pile beside the machine.
+ * Stations and carrots (GDD 4.3, 4.5). A station takes only the sheep its job is for — the wash a dirty one, the comb an
+ * uncombed one, the picker one with burrs, the shearer a ready one — works on it for its time, and lets it out: onto
+ * the belt or into the building at its way out, or, with nothing there, off to roam. Any other sheep stands at its way
+ * in (systems/belts.ts), and the sign over the station says what that sheep needs. A carrot puts the nearest fluffy
+ * sheep crowding round it onto its way out every BUILDINGS.carrot.time seconds.
  */
 
-/** Take one unit from a resource cell. An empty cell disappears and becomes plain ground (GDD 6.1). */
-export function takeRes(w: World, k: string) {
-  const f = res(w, Field)
-  const r = f.res.get(k)
-  if (!r || r.left <= 0) return false
-  if (--r.left <= 0) {
-    const [x, y] = unkey(k)
-    f.res.delete(k)
-    f.terrain.delete(k)
-    res(w, GameState).fieldVersion++
-    puff(w, x + 0.5, y + 0.5, r.t === 'bush' ? LOOK.bush : LOOK.meadow, 6)
-  }
-  return true
+/** What a sheep needs next, for a sign and the hand's scissors: its first station, shearing, or — shorn — the portal. */
+export function nextFor(s: SheepT): NeedId | 'shear' | 'portal' {
+  if (s.wool < 1) return 'portal'
+  return s.needs[0] ?? 'shear'
 }
 
-/** Put a seed on an empty own cell: it sprouts, and in SOW.grow s it is a meadow cell or a bush (GDD 6.1). */
-export function sowAt(w: World, x: number, y: number, t: ResId) {
-  if (!freeCell(w, x, y)) return false
-  const f = res(w, Field),
-    k = key(x, y)
-  f.sprouts.set(k, { t, left: SOW.grow })
-  f.terrain.set(k, 'sprout')
-  res(w, GameState).fieldVersion++
-  puff(w, x + 0.5, y + 0.5, LOOK.sprout, 4)
-  return true
-}
+/** Is this sheep one for a station's job now? */
+export const takesSheep = (st: StationId, s: SheepT) => (st === 'shear' ? ready(s) : s.wool >= 1 && s.needs.includes(st))
 
-/** Sprouts grow into resource cells. */
-export function sproutSystem(w: World, dt: number) {
-  const f = res(w, Field)
-  for (const [k, s] of f.sprouts) {
-    s.left -= dt
-    if (s.left > 0) continue
-    f.sprouts.delete(k)
-    f.terrain.set(k, s.t)
-    const n = s.t === 'meadow' ? SOW.meadow : SOW.bush
-    f.res.set(k, { t: s.t, left: n, max: n })
-    res(w, GameState).fieldVersion++
-  }
-}
-
-/**
- * What shearing a fluffy sheep gives (GDD 5): by how many of the salon's three steps it went through, in any order —
- * wool, thread, yarn, a sweater; felt from the bath whatever else it went through; the coloured good from the dye.
- */
-export function shearYield(s: SheepT): [ItemId, number] {
-  const m = s.marks
-  const [k, n] = m.bath ? BATH_YIELD : SHEAR_YIELD[STEPS.filter((st) => m[st as keyof typeof m]).length]!
-  return [m.dye ? (COLORED[k] ?? k) : k, n]
-}
-/** A sheep's fleece shorn: what it went through is gone with it. */
-export function shorn(s: SheepT) {
-  s.wool = 0
-  s.clicks = 0
-  s.marks = noMarks()
-}
-
-/** Does a station work on this sheep: one with a fleece it has not marked yet (the dye also needs its dye in). */
-function works(m: Building, st: StationId, s: SheepT) {
-  if (st === 'shear') return s.wool >= 0.95
-  if (st === 'feed') return s.wool < 1 && !s.fed && (m.inv.hay ?? 0) >= 1
-  if (s.wool < 0.95) return false
-  if (st === 'dye') return !s.marks.dye && (m.inv.dye ?? 0) >= 1
-  return !s.marks[st]
-}
-
-/** A sheep comes into a station: work on it or let it pass. True when the station took it. */
-export function stationTake(m: Building, s: SheepT) {
+/** A sheep comes to a station's way in: it takes it if its job is for it; otherwise the sheep stands there. True when taken. */
+export function stationTake(w: World, m: Building, s: SheepT) {
   if (m.slot) return false
   const def = BUILDINGS[m.type as BuildingId]
-  const work = works(m, def.station!, s)
-  if (work && def.uses) m.inv[def.uses] = (m.inv[def.uses] ?? 0) - 1
+  if (!takesSheep(def.station!, s)) {
+    m.wrong = { sheep: s, t: res(w, Time).t }
+    return false
+  }
   s.state = 'machine'
-  m.slot = { sheep: s, pass: !work }
-  m.timer = m.total = work ? def.time! : SHEEP.pass
+  m.slot = { sheep: s }
+  m.timer = m.total = def.time!
   return true
 }
 
-function finishMachine(w: World, m: Building) {
-  const def = BUILDINGS[m.type as BuildingId]
-  const slot = m.slot!
-  if (def.station) {
-    const s = slot.sheep!
-    m.outs.push({ item: newItem('sheep', s), dir: m.dir })
-    if (!slot.pass) {
-      m.count++
-      const st = def.station
-      if (st === 'shear') {
-        const [kind, n] = shearYield(s)
-        puff(w, m.x + 1, m.y + 1, fleeceColor(s), 8)
-        shorn(s)
-        for (let i = 0; i < n; i++) m.outs.push({ item: newItem(kind), dir: ((m.dir + 1) % 4) as Dir })
-      } else if (st === 'feed') s.fed = true
-      else {
-        s.marks[st] = true
-        puff(w, m.x + 1, m.y + 1, fleeceColor(s), 8)
-      }
-    }
+/** A sheep shorn, by a station or by hand: its fleece bursts into a puff of fluff (GDD 3). */
+export function shear(w: World, s: SheepT) {
+  s.wool = 0
+  s.clicks = 0
+  puff(w, s.px, s.py, LOOK.wool, 16)
+}
+
+function finish(w: World, m: Building) {
+  const st = BUILDINGS[m.type as BuildingId].station!,
+    s = m.slot!.sheep
+  m.count++
+  if (st === 'shear') {
+    s.px = m.x + m.w / 2
+    s.py = m.y + m.h / 2
+    shear(w, s)
+  } else {
+    s.needs = s.needs.filter((n) => n !== st)
+    puff(w, m.x + m.w / 2, m.y + m.h / 2, LOOK.wool, 8)
   }
+  m.outs.push({ item: newItem(s), dir: m.dir })
   m.slot = null
 }
 
 /**
- * One finished output tries to leave. It goes to whatever takes it on an output cell (a belt, a pen, a dock, a
- * machine); a full receiver makes it wait. With nothing there it drops onto a pile on the ground by an output cell
- * (PILE), the same pile while it has room; a full one makes it wait. A sheep
- * with nowhere to go roams off over the own land (the author, 19.10.2026: «просто дальше бегают по всей территории»).
+ * A sheep done tries to leave: into whatever stands at the way out (a belt, a station, the portal) — a full one makes
+ * it wait; with nothing there it roams off (the author, 19.10.2026: «просто дальше бегают по всей территории»).
  */
 function pushOut(w: World, m: Building, o: Building['outs'][number]) {
-  const cells = outCells(m).filter((c) => c.d === o.dir)
-  if (o.item.sheep) {
-    const c = cells[0]!
-    const s = o.item.sheep
-    if (!(inGrid(c.x, c.y) && get(w, c.x, c.y)) && !pastureAt(w, c.x, c.y)) {
-      toRoam(w, s, c.x + 0.5, c.y + 0.5)
-      m.status = ''
-      return true
-    }
-    const ok = tryPush(w, o.item, c.sx, c.sy, o.dir)
-    m.status = ok ? '' : 'jam'
-    return ok
-  }
-  let receiver = false
-  for (const c of cells) {
-    if (!pastureAt(w, c.x, c.y) && !(inGrid(c.x, c.y) && get(w, c.x, c.y))) continue
-    receiver = true
-    if (tryPush(w, o.item, c.sx, c.sy, o.dir)) {
-      m.status = ''
-      return true
-    }
-  }
-  if (receiver) {
-    m.status = 'jam'
-    return false
-  }
-  // no belt: onto the pile already lying by an output cell, else a new one on the first that may hold one
-  const spot = cells.find((c) => pileAt(w, c.x, c.y)) ?? cells.find((c) => pileOk(w, c.x, c.y))
-  // it slides out of the machine's way out onto the pile
-  if (spot && putPile(w, spot.x, spot.y, [o.item], { x: spot.sx + 0.5, y: spot.sy + 0.5, h: 0.4 }).length) {
-    m.status = ''
+  const c = outCells(m).find((q) => q.d === o.dir)!
+  if (!(inGrid(c.x, c.y) && get(w, c.x, c.y))) {
+    toRoam(w, o.item.sheep, c.x + 0.5, c.y + 0.5)
     return true
   }
-  m.status = 'full'
-  return false
+  return tryPush(w, o.item, c.sx, c.sy, o.dir)
+}
+
+/** A carrot puts out the nearest fluffy sheep crowding round it, if its way out takes one. */
+function lureOut(w: World, m: Building) {
+  const mx = m.x + m.w / 2,
+    my = m.y + m.h / 2,
+    r = CARROT.take
+  let best: SheepT | null = null,
+    bd = r * r
+  for (const s of res(w, Flock).sheep) {
+    if (s.state !== 'roam' || s.wool < 1 || s.drop !== undefined) continue
+    const d = (s.px - mx) ** 2 + (s.py - my) ** 2
+    if (d < bd) {
+      bd = d
+      best = s
+    }
+  }
+  if (!best) return false
+  const c = outCells(m)[0]!
+  return inGrid(c.x, c.y) && !!get(w, c.x, c.y) && tryPush(w, newItem(best), c.sx, c.sy, c.d)
 }
 
 export function machineSystem(w: World, dt: number) {
   for (const m of res(w, Plant).b.values()) {
-    if (!isMachine(m) || m.type === 'dock') continue
-    if (m.outs.length) {
-      m.outs = m.outs.filter((o) => !pushOut(w, m, o))
-      if (m.outs.length) continue
-    }
+    if (m.type === 'dock') continue
     const def = BUILDINGS[m.type as BuildingId]
     if (def.station) {
+      if (m.outs.length) {
+        m.outs = m.outs.filter((o) => !pushOut(w, m, o))
+        if (m.outs.length) continue
+      }
       if (m.slot) {
         m.timer -= dt
-        if (m.timer <= 0) finishMachine(w, m)
+        if (m.timer <= 0) finish(w, m)
       }
-      continue
-    }
-    if (PRODUCERS.includes(m.type as BuildingId)) {
+    } else if (def.lure) {
       m.prog = Math.min(def.time!, m.prog + dt)
-      if (m.prog >= def.time!) {
-        // the nearest owned cell in reach; nothing left around — it stands still until moved
-        const c = reachOf(w, m, def.near!, true)[0]
-        if (c && takeRes(w, c.k)) {
-          m.prog = 0
-          m.outs.push({ item: newItem(def.gives!), dir: m.dir })
-          m.count++
-          m.status = ''
-        } else m.status = 'empty'
-      }
-      continue
-    }
-    if (def.sows) {
-      const seed = SEED[m.seed ?? 'meadow']
-      m.prog = Math.min(def.time!, m.prog + dt)
-      if (m.prog < def.time!) continue
-      if ((m.inv[seed] ?? 0) < 1) continue
-      const c = sowable(w, m)[0]
-      if (!c) {
-        m.status = 'empty'
-        continue
-      }
-      if (sowAt(w, c.x, c.y, m.seed ?? 'meadow')) {
-        m.inv[seed] = (m.inv[seed] ?? 0) - 1
+      if (m.prog >= def.time! && lureOut(w, m)) {
         m.prog = 0
         m.count++
-        m.status = ''
       }
     }
   }
 }
 
-/** The colour of a sheep's fleece puff: white, or the colour it took at the dye station. */
-export const fleeceColor = (s: SheepT) => (s.marks.dye ? LOOK.fleeceColors[s.id % LOOK.fleeceColors.length]! : s.marks.bath ? LOOK.feltFleece : LOOK.wool)
-
-/** Seconds one job (a sheep worked on, a unit gathered, a cell sown) takes. */
+/** Seconds one job (a sheep worked on, put out) takes. */
 export function cycleTime(b: Building) {
-  return BUILDINGS[b.type as BuildingId]?.time ?? 0
+  return b.type === 'dock' ? 0 : (BUILDINGS[b.type as BuildingId]?.time ?? 0)
 }
 /** How far the job in hand has got, 0..1 (0 when idle). */
 export function jobProgress(b: Building) {
+  if (b.type === 'dock') return 0
   const def = BUILDINGS[b.type as BuildingId]
-  if (PRODUCERS.includes(b.type as BuildingId) || def?.sows) return def?.time ? b.prog / def.time : 0
+  if (def.lure) return def.time ? b.prog / def.time : 0
   return b.slot && b.total > 0 ? 1 - Math.max(0, b.timer) / b.total : 0
 }
 
-/** What a machine is doing, for its popup and its corner dot: [tone, text key, number]. */
+/** A wrong sheep stood at the building's way in just now: the sign over it (GDD 4.3). */
+export function wrongNow(w: World, b: Building) {
+  return !!b.wrong && res(w, Time).t - b.wrong.t < STOP.hold ? b.wrong.sheep : null
+}
+
+/** What a building is doing, for its popup and its sign: [tone, text key, and what the wrong sheep needs]. */
 export type MachineTone = 'ok' | 'warn' | 'bad'
-export function machineState(w: World, b: Building): { tone: MachineTone; text: string; n?: number; item?: string } {
+export function machineState(w: World, b: Building): { tone: MachineTone; text: string; need?: NeedId | 'shear' | 'portal'; n?: number } {
+  const wrong = wrongNow(w, b)
+  if (wrong) return { tone: 'bad', text: 'wrongSheep', need: nextFor(wrong) }
   if (b.type === 'dock') return { tone: 'ok', text: '' }
   const def = BUILDINGS[b.type as BuildingId]
-  if (!def) return { tone: 'ok', text: '' }
   if (def.station) {
-    if (b.status === 'wait') return { tone: 'bad', text: 'sheepWaits' }
-    if (b.status === 'jam' || b.status === 'full') return { tone: 'bad', text: 'outBlocked' }
-    if (def.uses && !(b.inv[def.uses] ?? 0)) return { tone: 'warn', text: 'waitsFor', item: def.uses }
+    if (b.outs.length) return { tone: 'bad', text: 'outBlocked' }
     return b.slot ? { tone: 'ok', text: 'working' } : { tone: 'warn', text: 'waitsSheep' }
   }
-  if (PRODUCERS.includes(b.type as BuildingId)) {
-    if (b.status === 'full' || b.status === 'jam') return { tone: 'bad', text: 'outBlocked' }
-    if (b.status === 'empty') return { tone: 'warn', text: 'emptyAround' }
-    return { tone: 'ok', text: 'producing', n: reachOf(w, b, def.near!, true).reduce((s, c) => s + c.r.left, 0) }
-  }
-  if (def.sows) {
-    const seed = SEED[b.seed ?? 'meadow']
-    if (!(b.inv[seed] ?? 0)) return { tone: 'warn', text: 'waitsFor', item: seed }
-    if (b.status === 'empty') return { tone: 'warn', text: 'noRoom' }
-    return { tone: 'ok', text: 'working' }
+  if (def.lure) {
+    const mx = b.x + b.w / 2,
+      my = b.y + b.h / 2
+    let n = 0
+    for (const s of res(w, Flock).sheep) if (s.state === 'roam' && s.wool >= 1 && s.drop === undefined && (s.px - mx) ** 2 + (s.py - my) ** 2 <= CARROT.radius * CARROT.radius) n++
+    return { tone: n ? 'ok' : 'warn', text: 'nearSheep', n }
   }
   return { tone: 'ok', text: '' }
 }

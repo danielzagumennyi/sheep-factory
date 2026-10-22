@@ -1,5 +1,5 @@
 import { Vector3, type Material, type WebGLProgramParametersWithUniforms, type WebGLRenderer } from 'three'
-import { LOOK, REACH } from '@/game/balance'
+import { CARROT, LOOK } from '@/game/balance'
 
 const srgb = (hex: string) => {
   const n = parseInt(hex.slice(1), 16)
@@ -7,14 +7,14 @@ const srgb = (hex: string) => {
 }
 
 /**
- * The reach of a producer being placed (or hovered) tints everything inside it a cool blue — the ground, the plants —
- * as Tower Factory's circle does. One set of uniforms shared by every lit material; Ghost.tsx sets the circle, the
- * rule's own (grid.ts reachCells).
+ * The circle of a carrot or a scarecrow being placed (or hovered), or a wash's reach for water, tints everything inside
+ * it a cool blue — the ground, the plants — as Tower Factory's circle does. One set of uniforms shared by every lit
+ * material; Ghost.tsx sets the circle and its radius, the rule's own (CARROT, SCARE, WATER_REACH).
  */
 export const reach = {
   /** The middle of the circle, in cells (x, z). */
   uReach: { value: new Vector3() },
-  uReachR: { value: REACH },
+  uReachR: { value: CARROT.radius as number },
   uReachOn: { value: 0 },
   uReachTint: { value: srgb(LOOK.reachTint) },
   uReachMix: { value: 0.35 },

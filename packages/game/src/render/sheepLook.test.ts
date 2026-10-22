@@ -2,7 +2,6 @@ import { expect, it } from 'vitest'
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 import { SHEEP_AT } from './models'
 import { newPose, sheepDrawer, sheepMeshes, standAt } from './sheepLook'
-import { noMarks } from '@/game/world'
 
 /**
  * A sheep is posed by hand-written matrix steps (sheepLook.ts: `standAt`, the fleece's and the head's), not by three's
@@ -21,7 +20,7 @@ it('a sheep is posed exactly as compose would pose it', () => {
     const ref = new Matrix4().compose(new Vector3(3, 0.1, 5), new Quaternion().setFromEuler(new Euler(roll, yaw, 0, 'YXZ')), new Vector3(1, 1, 1))
     expect(pose.base.elements.map((v) => +v.toFixed(6))).toEqual(ref.elements.map((v) => +v.toFixed(6)))
     draw.begin()
-    draw.add({ id: 1, wool: wool!, marks: noMarks() }, pose.base, { nod: nod!, breath: breath!, blink: false }, pose)
+    draw.add({ id: 1, wool: wool!, needs: [] }, pose.base, { nod: nod!, breath: breath!, blink: false }, pose)
     const woolly = wool! > 0.12,
       k = woolly ? 0.62 + 0.38 * wool! : 0.62,
       b = breath! * 0.012

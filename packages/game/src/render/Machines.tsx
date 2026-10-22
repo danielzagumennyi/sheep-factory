@@ -1,40 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
-import { BUILDINGS, LOOK, PRODUCERS, ROOF, type BuildingId } from '@/game/balance'
+import { Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry, type Group } from 'three'
+import { LOOK, ROOF, type BuildingId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
 import { machineState } from '@/game/systems/machines'
-import { Plant, isOn, res, type Building } from '@/game/world'
+import { Plant, isOn, res, type Building, type SplitRule } from '@/game/world'
 import { Icon } from '@/ui/Icon'
 import { GEO, machineYaw, mat, vmat, yawOf } from './kit'
 import { machineModel } from './machineModels'
 import { frame } from './frame'
 
-/** The icon a producer shows when nothing is left in its reach, and a seeder with no empty cell round it. */
-const NEAR_ICON: Readonly<Record<string, string>> = { meadow: 'meadow', bush: 'bush' }
 
-/** A building's own colour: its accents in the field, its stripe on the build tile. */
-export const MACHINE_COLOR = ROOF
-
-/** The colour a splitter shows for a rule: the good's own colour (a coloured good's first stripe). */
-const RULE_COLOR: Readonly<Record<string, string>> = {
-  wool: LOOK.wool,
-  thread: LOOK.thread,
-  yarn: LOOK.yarn,
-  sweater: LOOK.sweater,
-  felt: LOOK.felt,
-  cwool: LOOK.colors[0]!,
-  cthread: LOOK.colors[1]!,
-  cyarn: LOOK.colors[2]!,
-  csweater: LOOK.colors[3]!,
-  cfelt: LOOK.colors[0]!,
-  dye: LOOK.dye,
-  hay: LOOK.hay,
-  sheep: LOOK.skin,
+/** The colour a splitter shows for a rule: the station's own colour, white for a ready sheep, pink for a shorn one. */
+const RULE_COLOR: Readonly<Record<SplitRule, string>> = {
+  any: LOOK.machine,
+  wash: ROOF.wash,
+  comb: ROOF.comb,
+  pick: ROOF.pick,
+  ready: LOOK.wool,
+  shorn: LOOK.skin,
+  off: LOOK.bad,
 }
 
-/** Re-renders the list only when buildings are added, removed, turned, re-ruled or given a new seed. */
+/** Re-renders the list only when buildings are added, removed, turned or re-ruled. */
 function useBuildings() {
   const { world } = useGame()
   const [list, setList] = useState<Building[]>([])
@@ -42,10 +31,10 @@ function useBuildings() {
   useFrame(() => {
     const b = res(world, Plant).b
     let s = ''
-    for (const q of b.values()) if (q.type !== 'belt' && q.type !== 'dock') s += q.type + q.x + ',' + q.y + q.dir + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + (q.seed ?? '') + ';'
+    for (const q of b.values()) if (q.type !== 'belt') s += q.type + q.x + ',' + q.y + q.dir + (q.rules ? q.rules.l + q.rules.f + q.rules.r : '') + ';'
     if (s === sig.current) return
     sig.current = s
-    setList([...b.values()].filter((q) => q.type !== 'belt' && q.type !== 'dock'))
+    setList([...b.values()].filter((q) => q.type !== 'belt'))
   })
   return list
 }
@@ -56,45 +45,62 @@ export function Machines() {
     <group>
       <MachineMeshes list={list} />
       {list.map((b) => (
-        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '') + (b.seed ?? '')} b={b} />
+        <MachineView key={b.type + b.x + ',' + b.y + ':' + b.dir + (b.rules ? b.rules.l + b.rules.f + b.rules.r : '')} b={b} />
       ))}
     </group>
   )
 }
 
 /**
- * One machine's bubble when it stands still (its moving part shows that it works): what it waits for, or a red «!»
- * when its output is blocked. A station with no sheep in it says nothing: on a loop that is most of the time. Its body
- * and parts are drawn with every other machine's (MachineMeshes).
+ * A building's sign (GDD 4.3): over a sheep it may not take, standing at its way in and stopping the line — red, with
+ * what that sheep needs first (the station for it, the shears, or the portal for a shorn one) — and a red «!» over a
+ * station whose way out is blocked. A carrot with no fluffy sheep in its circle shows a sheep. Nothing while it works
+ * or waits: on a line that is most of the time. Its body and parts are drawn with every other machine's
+ * (MachineMeshes); the portal is its own (Portal.tsx).
  */
 function MachineView({ b }: { b: Building }) {
   const { world } = useGame()
   const [mood, setMood] = useState('')
-  const type = b.type as BuildingId
-  const def = BUILDINGS[type]
+  const at = useRef<Group>(null)
   useFrame(() => {
     const st = machineState(world, b)
-    const m =
-      st.tone === 'ok' || st.text === 'waitsSheep' || def.time === undefined
-        ? ''
-        : st.tone + ':' + (st.text === 'waitsFor' ? st.item : st.text === 'emptyAround' ? NEAR_ICON[def.near!] : st.text === 'sheepWaits' ? 'sheep' : st.text === 'noRoom' ? NEAR_ICON[b.seed ?? 'meadow'] : '!')
+    const m = st.text === 'wrongSheep' ? 'bad:' + st.need : st.text === 'outBlocked' ? 'bad:!' : st.text === 'nearSheep' && !st.n ? 'warn:sheep' : ''
     if (m !== mood) setMood(m)
+    // the sign over the wrong sheep itself, where the player must take it off; else over the building
+    const g = at.current
+    if (!g) return
+    const s = b.wrong?.sheep,
+      spot = s && st.text === 'wrongSheep' ? frame.sheep.get(s) : null
+    if (spot) g.position.set(spot.x, 1.35, spot.z)
+    else g.position.set(b.x + b.w / 2, b.type === 'dock' ? 1 : machineModel(b.type).top + 0.55, b.y + b.h / 2)
   })
-  if (type === 'splitter' || type === 'merger') return <BeltPiece b={b} />
-  if (!mood || !isOn(world, 'tags')) return null
-  const signY = machineModel(type).top + 0.3
+  if (b.type === 'splitter' || b.type === 'merger') return <BeltPiece b={b} />
   return (
-    <Html position={[b.x + b.w / 2, signY + 0.25, b.y + b.h / 2]} center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
-      <div className={'bubble bubble--' + mood.split(':')[0]}>{mood.split(':')[1] === '!' ? '!' : <Icon kind={mood.split(':')[1]!} size={16} />}</div>
-    </Html>
+    <group ref={at}>
+      {mood && isOn(world, 'tags') && (
+        <Html center zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
+          {mood.startsWith('bad:') ? (
+            // the line stands: a red stop sign, and what the sheep needs first
+            <div className="bubble bubble--stop">
+              <b>!</b>
+              {mood !== 'bad:!' && <Icon kind={mood.slice(4)} size={22} />}
+            </div>
+          ) : (
+            <div className={'bubble bubble--' + mood.split(':')[0]}>
+              <Icon kind={mood.split(':')[1]!} size={16} />
+            </div>
+          )}
+        </Html>
+      )}
+    </group>
   )
 }
 
 /** A machine just placed: it falls from the height it was held at (Ghost.tsx) for `fall` s, then settles for `settle` s. */
 const DROP = { lift: 0.24, fall: 0.16, settle: 0.24 } as const
 
-/** Is this machine at work: a job in hand, or a producer gathering, or a seeder sowing? Its parts move only then. */
-const busyOf = (b: Building) => !!b.slot || ((PRODUCERS.includes(b.type as BuildingId) || b.type === 'seeder') && b.status === '' && b.prog > 0)
+/** Is this machine at work: a sheep in hand, or a carrot putting the next one out? Its parts move only then. */
+const busyOf = (b: Building) => !!b.slot || (b.type === 'carrot' && b.prog > 0)
 
 const _m = new Matrix4(),
   _n = new Matrix4(),
@@ -112,7 +118,7 @@ const _m = new Matrix4(),
  * machine works: spins keep their angle per machine.
  */
 function MachineMeshes({ list }: { list: Building[] }) {
-  const machines = useMemo(() => list.filter((b) => b.type !== 'splitter' && b.type !== 'merger'), [list])
+  const machines = useMemo(() => list.filter((b) => b.type !== 'splitter' && b.type !== 'merger' && b.type !== 'dock'), [list])
   // one instanced mesh per geometry in use, sized for how many machines use it
   const meshes = useMemo(() => {
     const need = new Map<BufferGeometry, number>()
@@ -250,7 +256,7 @@ function BeltPiece({ b }: { b: Building }) {
         )
       })}
       {!isSplit && <mesh position={[0.31, 0.12, 0]} rotation-z={-Math.PI / 2} geometry={GEO.cone()} material={mat(LOOK.machineEdge)} scale={[0.14, 0.12, 0.14]} />}
-      {/* a splitter's rules: the item each side takes, or a red bar on a closed side */}
+      {/* a splitter's rules: the colour of the sheep each side takes, or a red bar on a closed side */}
       {isSplit &&
         (['f', 'r', 'l'] as const).map((k, i) => {
           const rule = b.rules![k]
@@ -261,7 +267,7 @@ function BeltPiece({ b }: { b: Building }) {
               {rule === 'off' ? (
                 <mesh position={[0.46, 0.14, 0]} geometry={GEO.rbox()} material={mat(LOOK.bad)} scale={[0.07, 0.07, 0.34]} />
               ) : (
-                <mesh position={[0.46, 0.2, 0]} geometry={GEO.ball()} material={mat(RULE_COLOR[rule] ?? '#ffffff')} scale={0.17} />
+                <mesh position={[0.46, 0.2, 0]} geometry={GEO.ball()} material={mat(RULE_COLOR[rule])} scale={0.17} />
               )}
             </group>
           )

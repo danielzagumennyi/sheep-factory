@@ -1,9 +1,9 @@
 import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry } from 'three'
 import { DROP, LOOK } from '@/game/balance'
-import type { SheepMarks } from '@/game/world'
+import type { NeedId } from '@/game/balance'
 import { upload } from './instancing'
 import { sheepVmat } from './kit'
-import { CHUTE, FLEECE_FIT, SHEEP_AT, plain, parachute, fleece, fleeceCurls, fleeceFelt, fleeceSleek, fleeceSweater, fleeceSweaterColored, sheepHead, sheepLegs, sheepLids, sheepShade, sheepShadeHead, sheepShadeSkin, sheepTuft, shorn } from './models'
+import { CHUTE, FLEECE_FIT, SHEEP_AT, plain, parachute, fleece, fleeceBurrs, fleeceFelt, fleeceMud, sheepHead, sheepLegs, sheepLids, sheepShade, sheepShadeHead, sheepShadeSkin, sheepTuft, shorn } from './models'
 import type { SheepPose } from './pick'
 
 /**
@@ -14,11 +14,9 @@ import type { SheepPose } from './pick'
 const PARTS = {
   legs: sheepLegs,
   fleece,
-  sleek: fleeceSleek,
   felt: fleeceFelt,
-  curls: fleeceCurls,
-  sweater: fleeceSweater,
-  sweaterColored: fleeceSweaterColored,
+  burrs: fleeceBurrs,
+  mud: fleeceMud,
   skin: shorn,
   head: sheepHead,
   tuft: sheepTuft,
@@ -31,7 +29,7 @@ const PARTS = {
 export type SheepPart = keyof typeof PARTS
 export type SheepMeshes = Record<SheepPart, InstancedMesh>
 /** The parts tinted per sheep, by the colour of its fleece. */
-const TINTED: readonly SheepPart[] = ['fleece', 'sleek', 'felt', 'curls', 'tuft']
+const TINTED: readonly SheepPart[] = ['fleece', 'felt', 'burrs', 'mud', 'tuft']
 /**
  * The parts drawn only into the sun's shadow map (models.ts, `sheepShade`): the sheep's shadow from a few plain lumps.
  * Of the parts seen, only the legs and the parachute cast their own.
@@ -39,21 +37,22 @@ const TINTED: readonly SheepPart[] = ['fleece', 'sleek', 'felt', 'curls', 'tuft'
 const SHADES: readonly SheepPart[] = ['shade', 'shadeSkin', 'shadeHead']
 const CASTS: readonly SheepPart[] = ['legs', 'chute', ...SHADES]
 /** The parts seen that have a plain build for the flock far off (models.ts `plain`); the rest are cheap already. */
-const PLAINED: readonly SheepPart[] = ['legs', 'fleece', 'sleek', 'felt', 'curls', 'sweater', 'sweaterColored', 'skin', 'head', 'tuft', 'lids']
+const PLAINED: readonly SheepPart[] = ['legs', 'fleece', 'felt', 'burrs', 'mud', 'skin', 'head', 'tuft', 'lids']
 
-/** Tints over the white fleece meshes: plain white, the bath's felt, a coloured sheep's colour. */
+/** Tints over the white meshes: clean white, a tangled sheep's matted cream; the mud's brown, the burrs' brown. */
 const WHITE = new Color('#ffffff'),
   FELT = new Color(LOOK.feltFleece),
-  DYED = LOOK.fleeceColors.map((c) => new Color(c))
-/** How the sweater, and then the curls, are fitted over each fleece. */
+  DIRT = new Color(LOOK.dirtFleece),
+  BURRS = new Color(LOOK.burrs)
+/** How the shadow lump, and then the burrs and the mud, are fitted over each fleece. */
 const FIT = Object.fromEntries(Object.entries(FLEECE_FIT).map(([k, f]) => [k, new Matrix4().compose(new Vector3(0, f.lift, 0), new Quaternion(), new Vector3(...f.scale))])) as Record<keyof typeof FLEECE_FIT, Matrix4>
-const CURLS = Object.fromEntries(Object.entries(FLEECE_FIT).map(([k, f]) => [k, new Matrix4().makeScale(f.curls, f.curls, f.curls)])) as Record<keyof typeof FLEECE_FIT, Matrix4>
+const BURRS_FIT = Object.fromEntries(Object.entries(FLEECE_FIT).map(([k, f]) => [k, new Matrix4().makeScale(f.burrs, f.burrs, f.burrs)])) as Record<keyof typeof FLEECE_FIT, Matrix4>
 
-/** What a sheep looks like: its id (its colour, if dyed), how much fleece it has (0 shorn … 1 full), the salon's marks. */
+/** What a sheep looks like: its id, how much fleece it has (0 shorn … 1 full), what it still needs before shearing. */
 export interface SheepLook {
   id: number
   wool: number
-  marks: SheepMarks
+  needs: readonly NeedId[]
 }
 
 /**
@@ -100,7 +99,7 @@ export function sheepMeshes(cap: number): SheepMeshes {
 const _m = new Matrix4(),
   _e = new Euler(),
   _over = new Matrix4(),
-  _curls = new Matrix4()
+  _burrs = new Matrix4()
 
 /**
  * A sheep's whole pose, written straight into `m`: standing at (x, y, z), turned `yaw` about the vertical, rocked `roll`
@@ -163,9 +162,9 @@ function onNod(out: Matrix4, a: Matrix4, tx: number, ty: number, nod: number) {
 /**
  * Poses sheep into the meshes, a frame at a time: `begin` (`far`: the plain builds, for the flock seen from far off),
  * `add` each sheep where it stands, `end`. The fleece grows
- * from a pink shorn body to a big round cloud, and shows where the sheep has been in the salon (the author, 19.10.2026:
- * the sheep's path must be plain): sleek after the comb, matted after the bath, curls after the curling, a sweater after
- * the knitting, and the colour it took at the dye station (its tuft too; a coloured sweater is striped).
+ * from a pink shorn body to a big round cloud, and shows what the sheep still needs (GDD 5): a dirty one is splashed
+ * with mud, a tangled one shaggy with matted clumps, one with burrs stuck all over with brown burrs; a clean white
+ * cloud is ready for shearing. Each station takes its mark off as it works.
  */
 export function sheepDrawer(meshes: SheepMeshes) {
   const parts = Object.keys(meshes) as SheepPart[]
@@ -195,19 +194,20 @@ export function sheepDrawer(meshes: SheepMeshes) {
       // the fleece sits on the legs however big it is; the head comes a little down and back with it
       pose.woolly = s.wool > 0.12
       const k = pose.woolly ? 0.62 + 0.38 * s.wool : 0.62,
-        m = s.marks,
-        tint = !pose.woolly ? WHITE : m.dye ? DYED[s.id % DYED.length]! : m.bath ? FELT : WHITE
+        tangled = s.needs.includes('comb'),
+        tint = pose.woolly && tangled ? FELT : WHITE
       const [fx, fy] = SHEEP_AT.fleece
       if (pose.woolly) {
         // breathing: the fleece swells a little, more up than out
         const b = mo.breath * 0.012
         onPart(pose.fleece, base, fx, 0.07 + (fy - 0.07) * k, k * (1 + b * 0.5), k * (1 + b), k * (1 + b * 0.5))
-        // the salon's marks: the fleece itself (woolly, sleek or felted), then curls and a sweater over it
-        const fleece = m.bath ? 'felt' : m.comb ? 'sleek' : 'fleece'
+        // what it needs: the fleece itself (woolly or shaggy), then mud and burrs on it
+        const fleece = tangled ? 'felt' : 'fleece'
         put(fleece, pose.fleece, tint)
         _over.multiplyMatrices(pose.fleece, FIT[fleece])
-        if (m.curl) put('curls', _curls.multiplyMatrices(_over, CURLS[fleece]), tint)
-        if (m.knit) put(m.dye ? 'sweaterColored' : 'sweater', _over)
+        if (s.needs.includes('wash') || s.needs.includes('pick')) _burrs.multiplyMatrices(_over, BURRS_FIT[fleece])
+        if (s.needs.includes('wash')) put('mud', _burrs, DIRT)
+        if (s.needs.includes('pick')) put('burrs', _burrs, BURRS)
         put('shade', _over)
       } else {
         onPart(pose.fleece, base, fx, 0.22, 1, 1, 1)
@@ -239,7 +239,7 @@ export function sheepDrawer(meshes: SheepMeshes) {
 const _d = new Matrix4(),
   _y = new Matrix4()
 /**
- * A bought sheep coming down (DROP), `e` seconds after it was bought, to stand at (x, z) facing `yaw`. Into `body` goes
+ * An arriving sheep coming down (DROP), `e` seconds after it set off, to stand at (x, z) facing `yaw`. Into `body` goes
  * the sheep's pose: swaying under the canopy as it sinks, slowing near the grass, then squashing on it and bouncing
  * back. Into `chute` goes the parachute's: over its back while it falls, then keeling over and folding away; false once
  * it has gone.

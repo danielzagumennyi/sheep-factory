@@ -8,8 +8,8 @@ import { machineYaw, vmat } from './kit'
 import { machineBody } from './machineModels'
 import { fleece, sheepHead, sheepLegs, sheepTuft, shorn } from './models'
 
-/** The scene objects the pointer can be over, so the hover line can find them: docks by their cell, pastures by id. */
-export const views = { buildings: new Map<string, Object3D>(), pastures: new Map<number, Object3D>() }
+/** The scene objects the pointer can be over, so the hover line can find them: the portal by its cell. */
+export const views = { buildings: new Map<string, Object3D>() }
 
 /** How a sheep is posed this frame (SheepView.tsx): the whole of it, and each of its meshes. */
 export interface SheepPose {
@@ -87,7 +87,7 @@ const ray = new Raycaster(),
 /** A machine's whole model, put where one stands, for the ray to be tested against. */
 const body = new Mesh(undefined, vmat())
 // one still coming down on its parachute is out of reach (DROP)
-const pickable = (s: SheepT) => (s.state === 'pasture' || s.state === 'transit' || s.state === 'roam' || s.state === 'belt') && s.drop === undefined
+const pickable = (s: SheepT) => (s.state === 'roam' || s.state === 'belt') && s.drop === undefined
 
 /** What the pointer is over: a sheep or a building, and whether the ray met its model or only the ground under it. */
 export interface Picked {

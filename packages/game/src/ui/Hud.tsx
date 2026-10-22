@@ -1,79 +1,55 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { BATH_YIELD, BELT, BUILDINGS, ITEMS, LOOK, SEED, SHEAR_YIELD, STEPS, type BuildingId, type CardId, type ItemId, type ResId } from '@/game/balance'
+import { BUILDINGS, SHEEP, SPLIT_RULES, type BuildingId, type CardId, type KindId, type NeedId } from '@/game/balance'
 import { useGame } from '@/game/GameContext'
-import { pilesBy, plotAdjacent, plotPrice, plotStock, residents } from '@/game/grid'
-import { buyPlot, cycleRule, liftUp, remove, setSeed } from '@/game/actions/build'
+import { cycleRule, liftUp, remove } from '@/game/actions/build'
 import { cycleTime, jobProgress, machineState } from '@/game/systems/machines'
-import { hungry } from '@/game/systems/sheep'
-import { buy, buyPrice, sell, sellPrice } from '@/game/systems/village'
-import { Flock, GameState, Plant, Ui, Unlocks, penOf, res, stockOf, type Building, type SplitRules, type World } from '@/game/world'
+import { GameState, Plant, Ui, Unlocks, res, type Building, type SplitRule, type SplitRules } from '@/game/world'
 import { useAppStore } from '@/app/store'
 import { NewGame } from './Title'
 import { setSoundOn } from '@/audio'
 import { setLang, useT } from '@/i18n'
 import { UI } from '@/i18n/ui'
-import { BUILDING_TEXT, CARD_TEXT, CLIENT_NAMES, ITEM_NAMES, RES_NAMES, STATE_TEXT } from '@/i18n/content'
+import { BUILDING_TEXT, CARD_TEXT, KIND_TEXT, NEED_TEXT, RULE_TEXT, STATE_TEXT } from '@/i18n/content'
 import { setTool } from './actions'
 import { useHudStore } from './hudStore'
 import { Icon } from './Icon'
 import { Book } from './Book'
 import { ShearCursor } from './ShearCursor'
 
-/** m:ss of game time. */
+/** m:ss of game time (h:mm:ss past an hour). */
 export const fmtT = (t: number) => {
-  const s = Math.max(0, Math.ceil(t))
-  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0')
+  const s = Math.max(0, Math.ceil(t)),
+    h = Math.floor(s / 3600),
+    m = Math.floor((s % 3600) / 60),
+    ss = String(s % 60).padStart(2, '0')
+  return h ? h + ':' + String(m).padStart(2, '0') + ':' + ss : m + ':' + ss
 }
 
-type Part = readonly (readonly [string, number])[]
-/** "2× wool + dye → yarn" as icons. */
-function Recipe({ r }: { r: readonly [Part, Part] | null }) {
-  if (!r) return null
-  const part = (l: Part) =>
-    l.map(([k, n], i) => (
-      <span key={k + i} className="recipe__part">
-        {i > 0 && <span className="recipe__arr">+</span>}
-        {n > 1 && n + '×'}
-        <Icon kind={k} size={20} />
-      </span>
-    ))
-  return (
-    <span className="recipe">
-      {part(r[0])}
-      <span className="recipe__arr">→</span>
-      {part(r[1])}
-    </span>
-  )
-}
-/**
- * A building's or card's recipe line. A salon station shows what a sheep that went through it gives when shorn: the
- * comb a step up (thread), the curl as the second step (yarn), the knitting as the third (a sweater), the bath felt,
- * the dye a coloured good.
- */
-export function recipeOf(id: BuildingId | CardId): readonly [Part, Part] | null {
-  if (id === 'shearer') return [[['sheep', 1]], [['wool', 2]]]
-  if (id === 'feeder') return [[['sheep', 1], ['hay', 1]], [['sheep', 1]]]
-  if (id === 'dyer') return [[['sheep', 1], ['dye', 1]], [['cwool', 2]]]
-  if (id === 'bath') return [[['sheep', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]]
-  const step = STEPS.indexOf(id as (typeof STEPS)[number])
-  if (step >= 0) return [STEPS.slice(0, step + 1).map((st) => [st, 1] as const), [[SHEAR_YIELD[step + 1]![0], SHEAR_YIELD[step + 1]![1]]]]
-  if (id === 'sow' || id === 'seeder') return [[['hay', 1]], [['meadow', 1]]]
-  const b = (BUILDINGS as Record<string, (typeof BUILDINGS)[BuildingId]>)[id]
-  if (b?.near) return [[[b.near, 1]], [[b.gives!, 1]]]
+/** The icon of a kind of sheep, as the book and the cards show it. */
+export const KIND_ICON: Readonly<Record<KindId, string>> = { plain: 'sheep', dirty: 'dirty', tangled: 'tangled', burrs: 'burrs' }
+/** The icon of what a sheep needs next: water, a comb, tweezers, the shears, the portal (each one thing, readable small). */
+export const NEED_ICON: Readonly<Record<NeedId | 'shear' | 'portal', string>> = { wash: 'water', comb: 'combing', pick: 'tweezers', shear: 'shear', portal: 'portal' }
+/** The icon of a splitter's rule: the sheep it lets by. */
+const RULE_ICON: Readonly<Record<SplitRule, string | null>> = { any: null, wash: 'dirty', comb: 'tangled', pick: 'burrs', ready: 'sheep', shorn: 'shorn', off: null }
+
+/** "dirty → sheep": what a building does to a sheep, as icons; null for what does nothing to one. */
+export function recipeOf(id: BuildingId | CardId): readonly [string, string] | null {
+  if (id === 'shearer') return ['sheep', 'shorn']
+  if (id === 'wash' || id === 'dirty') return ['dirty', 'sheep']
+  if (id === 'comb' || id === 'tangled') return ['tangled', 'sheep']
+  if (id === 'pick' || id === 'burrs') return ['burrs', 'sheep']
+  if (id === 'shear') return ['sheep', 'shorn']
   return null
 }
-/**
- * What shearing gives, line by line, as far as the farm knows it (the author's sum, 19.10.2026): a sheep that went
- * through none of the steps — wool; through one, two, three of them — thread, yarn, a sweater; out of the bath — felt.
- */
-export function shearLines(met: readonly ItemId[]): (readonly [Part, Part])[] {
-  const lines: (readonly [Part, Part])[] = [[[['sheep', 1]], [[SHEAR_YIELD[0]![0], SHEAR_YIELD[0]![1]]]]]
-  STEPS.forEach((_, i) => {
-    const [k, n] = SHEAR_YIELD[i + 1]!
-    if (met.includes(k)) lines.push([STEPS.slice(0, i + 1).map((st) => [st, 1] as const), [[k, n]]])
-  })
-  if (met.includes(BATH_YIELD[0])) lines.push([[['bath', 1]], [[BATH_YIELD[0], BATH_YIELD[1]]]])
-  return lines
+export function Recipe({ r, size = 22 }: { r: readonly [string, string] | null; size?: number }) {
+  if (!r) return null
+  return (
+    <span className="recipe">
+      <Icon kind={r[0]} size={size} />
+      <span className="recipe__arr">→</span>
+      <Icon kind={r[1]} size={size} />
+    </span>
+  )
 }
 
 export function Hud() {
@@ -82,11 +58,8 @@ export function Hud() {
       <TopLeft />
       <TopCenter />
       <TopRight />
-      <Clients />
       <Bottom />
       <BottomRight />
-      <HandPanel />
-      <StockPanel />
       <Popup />
       <Book />
       <NewCard />
@@ -97,11 +70,14 @@ export function Hud() {
   )
 }
 
+/** The coins; the score towards the goal with its bar (GDD 7); the next kind of sheep and how many shorn it waits for. */
 function TopLeft() {
   const { t } = useT()
   const coins = useHudStore((s) => s.coins)
   const noMoney = useHudStore((s) => s.noMoney)
-  const level = useHudStore((s) => s.level)
+  const shorn = useHudStore((s) => s.shorn)
+  const goal = useHudStore((s) => s.goal)
+  const next = useHudStore((s) => s.nextKind)
   const [shake, setShake] = useState(0)
   const last = useRef(noMoney)
   useEffect(() => {
@@ -116,37 +92,38 @@ function TopLeft() {
         <Icon kind="coin" size={22} />
         <span>{coins}</span>
       </div>
-      <div className="panel day" title={t(UI.level, { n: level })}>
-        <span>{t(UI.levelShort, { n: level })}</span>
+      <div className="panel score" title={t(UI.shornTip)}>
+        <Icon kind="shorn" size={24} />
+        <span>
+          <b>{shorn}</b> / {goal}
+        </span>
+        <span className="score__bar">
+          <i style={{ width: Math.min(100, (shorn / Math.max(1, goal)) * 100).toFixed(1) + '%' }} />
+        </span>
       </div>
+      {next && (
+        <div className="panel next" title={t(UI.nextTip)}>
+          <Icon kind={KIND_ICON[next.kind]} size={22} />
+          <small>{next.left}</small>
+        </div>
+      )}
     </div>
   )
 }
 
 function TopCenter() {
   const { t } = useT()
-  const goal = useHudStore((s) => s.goal)
+  const hint = useHudStore((s) => s.hint)
   const speed = useHudStore((s) => s.speed)
   const card = useHudStore((s) => s.card)
   const menuOver = useAppStore((s) => s.menuOver)
   const nudge = useHudStore((s) => s.pauseNudge)
-  let text: ReactNode = null
-  if (goal) {
-    if (goal.text === 'need') {
-      const p = goal.params!
-      text = (
-        <>
-          {t(ITEM_NAMES[p.kind as ItemId])} <b>{t(UI.perMin, { n: p.rate! })}</b>
-        </>
-      )
-    } else text = t(UI[goal.text as keyof typeof UI])
-  }
   return (
     <div className="ov ov-top">
-      {goal && (
-        <div className={'panel goal' + (goal.tone === 'warn' ? ' goal--warn' : '')}>
-          <Icon kind={goal.icon} size={20} />
-          <span>{text}</span>
+      {hint && (
+        <div className={'panel goal' + (hint.tone === 'warn' ? ' goal--warn' : '')}>
+          <Icon kind={hint.icon} size={20} />
+          <span>{t(UI[hint.text as keyof typeof UI])}</span>
         </div>
       )}
       {speed === 0 && !card && !menuOver && (
@@ -188,90 +165,22 @@ function TopRight() {
 }
 
 /**
- * The market's clients (GDD 7): each one's good, how many it takes a minute, what one pays, and the bar of how content
- * it is. Every bar full at once — the next level opens.
- */
-function Clients() {
-  const { t } = useT()
-  const needs = useHudStore((s) => s.needs)
-  return (
-    <div className="ov ov-orders" title={t(UI.clients)}>
-      {needs.map((n) => {
-        const done = n.fill >= 1
-        return (
-          <div key={n.client + n.kind} className={'panel order' + (done ? ' order--done' : '')}>
-            <span className="order__who" style={{ color: LOOK.client[n.client] }}>
-              {t(CLIENT_NAMES[n.client])}
-              {done ? ' ✓' : ''}
-            </span>
-            <span className="order__rw">
-              +<Icon kind="coin" size={14} />
-              {n.price}
-            </span>
-            <span className="order__need">
-              <Icon kind={n.kind} size={22} />
-              {t(UI.perMin, { n: n.rate })}
-            </span>
-            <span className="order__bar">
-              <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-/** A building's recipes for its tip: the shearer what it gives for each sheep, others their one line. */
-function Recipes({ id }: { id: BuildingId }) {
-  const met = useHudStore((s) => s.met)
-  if (id === 'shearer') return <ShearLines met={met} />
-  return <Recipe r={recipeOf(id)} />
-}
-/** The shearer's lines: what a sheep gives by the stations it went through. */
-function ShearLines({ met }: { met: readonly ItemId[] }) {
-  return (
-    <span className="recipes-tip">
-      {shearLines(met).map((r, i) => (
-        <Recipe key={i} r={r} />
-      ))}
-    </span>
-  )
-}
-
-/** What is sown (by hand, or by a seeder): hay → a meadow, dye → a bush once bushes are known. */
-function SeedPick({ value, set }: { value: ResId; set: (t: ResId) => void }) {
-  const met = useHudStore((s) => s.met)
-  return (
-    <span className="recipes" role="group">
-      {(['meadow', 'bush'] as const)
-        .filter((t) => t === 'meadow' || met.includes('dye'))
-        .map((t) => (
-          <button key={t} type="button" className="rule" aria-pressed={value === t} onClick={() => set(t)}>
-            <Icon kind={SEED[t]} size={18} />→<Icon kind={t} size={18} />
-          </button>
-        ))}
-    </span>
-  )
-}
-
-/**
- * The quick bar, as in Tower Factory: ten slots on keys 1–9 and 0, filled from the book (B) — hover a building there
- * and press a key; the clearing tool stands apart, always on X (the author).
+ * The quick bar, as in Tower Factory: ten slots on keys 1–9 and 0, filled with the recipes bought (the book, B — hover a
+ * building there and press a key to move it); the clearing tool stands apart, always on X (the author). The book's
+ * button stands beside it from the start: the first recipes are bought there.
  */
 function Bottom() {
   const { world } = useGame()
   const { t } = useT()
   const tools = useHudStore((s) => s.tools)
   const tool = useHudStore((s) => s.tool)
-  const seed = useHudStore((s) => s.seed)
   const [hover, setHover] = useState<string | null>(null)
   const pick = (id: string) => {
     setTool(world, (tool === id ? 'hand' : id) as never)
     useHudStore.getState().set({ tool: res(world, Ui).tool })
   }
   const tip = hover ?? (tool !== 'hand' ? tool : null)
-  if (!tools.some(Boolean)) return null
+  const any = tools.some(Boolean)
   return (
     <div className="ov ov-bottom">
       {tip && (
@@ -284,52 +193,40 @@ function Bottom() {
           ) : (
             <>
               <b>{t(BUILDING_TEXT[tip as BuildingId].name)}</b>
-              {tip === 'sow' ? (
-                <SeedPick
-                  value={seed}
-                  set={(v) => {
-                    res(world, Ui).seed = v
-                    useHudStore.getState().set({ seed: v })
-                  }}
-                />
-              ) : (
-                <Recipes id={tip as BuildingId} />
-              )}
+              <Recipe r={recipeOf(tip as BuildingId)} />
               <span className="tip__desc">{t(BUILDING_TEXT[tip as BuildingId].desc)}</span>
-              {tip !== 'belt' && tip !== 'sow' && tip !== 'sheep' && <span className="tip__desc">{t(UI.rotateTip)}</span>}
+              {tip !== 'belt' && <span className="tip__desc">{t(UI.rotateTip)}</span>}
             </>
           )}
         </div>
       )}
       <div className="bar" onMouseLeave={() => setHover(null)}>
-        <nav className="panel hotbar">
-          {tools.map((s, i) =>
-            s ? (
-              <button key={i} type="button" className={'slot' + (s.fresh ? ' slot--fresh' : '')} aria-pressed={tool === s.id} onMouseEnter={() => setHover(s.id)} onClick={() => pick(s.id)}>
-                <span className="slot__k">{(i + 1) % 10}</span>
-                <Icon kind={s.id} size={42} />
-                {s.id === 'sow' ? (
-                  <span className="slot__p">
-                    <Icon kind={SEED[seed]} size={14} />
-                  </span>
-                ) : (
+        {any && (
+          <nav className="panel hotbar">
+            {tools.map((s, i) =>
+              s ? (
+                <button key={i} type="button" className={'slot' + (s.fresh ? ' slot--fresh' : '')} aria-pressed={tool === s.id} onMouseEnter={() => setHover(s.id)} onClick={() => pick(s.id)}>
+                  <span className="slot__k">{(i + 1) % 10}</span>
+                  <Icon kind={s.id} size={42} />
                   <span className={'slot__p' + (s.short ? ' slot__p--short' : '')}>{s.price}</span>
-                )}
-              </button>
-            ) : (
-              <span key={i} className="slot slot--empty" onMouseEnter={() => setHover(null)}>
-                <span className="slot__k">{(i + 1) % 10}</span>
-              </span>
-            ),
-          )}
-        </nav>
-        <nav className="panel hotbar hotbar--erase">
-          <button type="button" className="slot slot--erase" aria-pressed={tool === 'erase'} onMouseEnter={() => setHover('erase')} onClick={() => pick('erase')}>
-            <span className="slot__k">X</span>
-            <Icon kind="erase" size={30} />
-            <span className="slot__p">{t(UI.erase)}</span>
-          </button>
-        </nav>
+                </button>
+              ) : (
+                <span key={i} className="slot slot--empty" onMouseEnter={() => setHover(null)}>
+                  <span className="slot__k">{(i + 1) % 10}</span>
+                </span>
+              ),
+            )}
+          </nav>
+        )}
+        {any && (
+          <nav className="panel hotbar hotbar--erase">
+            <button type="button" className="slot slot--erase" aria-pressed={tool === 'erase'} onMouseEnter={() => setHover('erase')} onClick={() => pick('erase')}>
+              <span className="slot__k">X</span>
+              <Icon kind="erase" size={30} />
+              <span className="slot__p">{t(UI.erase)}</span>
+            </button>
+          </nav>
+        )}
         <button type="button" className="ibtn ibtn--book" title={t(UI.bookTip)} onClick={() => useAppStore.getState().setBook(true)}>
           <Icon kind="book" size={22} />
         </button>
@@ -358,139 +255,13 @@ function BottomRight() {
   )
 }
 
-/** What the hand carries (GDD 3), over the stock: its goods, one icon each; nothing while it is empty. */
-function HandPanel() {
-  const { t } = useT()
-  const hand = useHudStore((s) => s.hand)
-  if (!hand.length) return null
-  return (
-    <div className="ov ov-hand">
-      <div className="panel hand" title={t(UI.hand)}>
-        <Icon kind="hand" size={24} />
-        {hand.map((k, i) => (
-          <Icon key={i} kind={k} size={26} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/**
- * The market's stock, bottom left as in Tower Factory (the author): a column of goods with their counts, only those
- * there are — what has come into the market, by a belt or in the hand.
- */
-const STOCK_ORDER = Object.keys(ITEMS) as ItemId[]
-function StockPanel() {
-  const { t } = useT()
-  const stock = useHudStore((s) => s.stock)
-  const list = STOCK_ORDER.filter((k) => (stock[k] ?? 0) > 0)
-  return (
-    <div className="ov ov-stock">
-      <div className="panel stock" title={t(UI.stock)}>
-        <Icon kind="stock" size={26} />
-        {list.map((k) => (
-          <div key={k} className="stock__slot" title={t(ITEM_NAMES[k])}>
-            <Icon kind={k} size={30} />
-            <b>{stock[k]}</b>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-
-/** How many to move: a slider from 1 to max, the number beside it. */
-function Amount({ n, max, set }: { n: number; max: number; set: (n: number) => void }) {
-  return (
-    <div className="amount">
-      <input type="range" min={1} max={Math.max(1, max)} value={Math.min(n, Math.max(1, max))} onChange={(e) => set(Number(e.target.value))} />
-      <b>{Math.min(n, Math.max(1, max))}</b>
-    </div>
-  )
-}
-
-/** The goods the market deals in: those the farm has met, and whatever is in stock. */
-function marketGoods(w: World, met: readonly ItemId[]): ItemId[] {
-  return STOCK_ORDER.filter((k) => met.includes(k) || stockOf(w, k) > 0)
-}
-
-/** Trade in the market's window (the author: «как продавать так и покупать»): pick a good, how many, then sell or buy. */
-function MarketBody({ refresh }: { refresh: () => void }) {
-  const { world } = useGame()
-  const { t } = useT()
-  const met = useHudStore((s) => s.met)
-  const goods = marketGoods(world, met)
-  const [pick, setPick] = useState<ItemId>(goods.find((k) => stockOf(world, k) > 0) ?? goods[0] ?? 'wool')
-  const [n, setN] = useState(10)
-  const coins = res(world, GameState).coins
-  const have = stockOf(world, pick),
-    sp = sellPrice(pick),
-    bp = buyPrice(pick)
-  const max = Math.max(have, Math.min(99, Math.floor(coins / bp)), 1)
-  const k = Math.min(n, max)
-  return (
-    <>
-      <div className="trade">
-        {goods.map((g) => (
-          <button key={g} type="button" className="trade__row" aria-pressed={g === pick} title={t(ITEM_NAMES[g])} onClick={() => setPick(g)}>
-            <Icon kind={g} size={20} />
-            <b>{stockOf(world, g)}</b>
-            {/* what one brings when sold, what one costs to buy */}
-            <span className="trade__in">+{sellPrice(g) || '—'}</span>
-            <span>−{buyPrice(g)}</span>
-          </button>
-        ))}
-      </div>
-      <Amount n={k} max={max} set={setN} />
-      <div className="pop__acts">
-        <button
-          type="button"
-          disabled={!sp || have < k}
-          onClick={() => {
-            sell(world, pick, k)
-            refresh()
-          }}
-        >
-          {t(UI.sell)} <Icon kind="coin" size={14} />
-          {k * sp}
-        </button>
-        <button
-          type="button"
-          disabled={coins < k * bp}
-          onClick={() => {
-            buy(world, pick, k)
-            refresh()
-          }}
-        >
-          {t(UI.buy)} <Icon kind="coin" size={14} />
-          {k * bp}
-        </button>
-      </div>
-    </>
-  )
-}
-
 /** Seconds, short: 6, 2.5, 1.7. */
 const secs = (n: number) => String(Math.round(n * 10) / 10)
 
-/**
- * How loaded a machine is (the author: «видеть его загруженность»): the job in hand as a bar with one job's seconds;
- * each good it takes with its four places, filled as far as it holds; what is done and waiting to leave (and lying by
- * its way out). Goods come by belt or in the hand (GDD 3), not from the window.
- */
-function MachineLoad({ b }: { b: Building }) {
-  const { world } = useGame()
+/** How far the sheep in hand has got (a station's job, a carrot's next sheep), with one sheep's seconds. */
+function JobBar({ b }: { b: Building }) {
   const { t } = useT()
-  const type = b.type as BuildingId
-  const def = BUILDINGS[type]
-  if (!def.time) return null
-  const kinds: ItemId[] = def.uses ? [def.uses] : def.sows ? [SEED[b.seed ?? 'meadow']] : []
-  // what waits to leave: a producer's good, or what the last sheep's fleece gave
-  const lying = pilesBy(world, b)
-  const waiting = b.outs.find((o) => !o.item.sheep)?.item.kind ?? lying[0]?.kind
-  const out = waiting && waiting !== 'sheep' ? waiting : (def.gives ?? null)
-  const ready = b.outs.filter((o) => !o.item.sheep).length + lying.length
+  if (!cycleTime(b)) return null
   return (
     <div className="load">
       <div className="load__job" title={t(UI.cycle, { a: secs(cycleTime(b)) })}>
@@ -499,43 +270,21 @@ function MachineLoad({ b }: { b: Building }) {
         </span>
         <span className="load__time">⏱ {secs(cycleTime(b))}</span>
       </div>
-      {kinds.map((k) => {
-        const have = b.inv[k] ?? 0
-        return (
-          <div key={k} className="load__row">
-            <Icon kind={k} size={20} />
-            <span className="load__cells">
-              {Array.from({ length: BELT.bufMax }, (_, i) => (
-                <i key={i} className={i < have ? 'on' : ''} />
-              ))}
-            </span>
-          </div>
-        )
-      })}
-      {out && ready > 0 && (
-        <div className="load__row" title={t(UI.readyOut)}>
-          <Icon kind={out} size={20} />
-          <small>
-            {t(UI.readyOut)} {ready}
-          </small>
-        </div>
-      )}
     </div>
   )
 }
 
-/** The popup for the selected building, dock, plot or pen. */
+/** The popup for the selected building or the portal. */
 function Popup() {
   const { world } = useGame()
   const { t } = useT()
   const sel = useHudStore((s) => s.sel)
   const at = useHudStore((s) => s.popAt)
-  const met = useHudStore((s) => s.met)
-  const needs = useHudStore((s) => s.needs)
+  const shorn = useHudStore((s) => s.shorn)
+  const goal = useHudStore((s) => s.goal)
   useHudStore((s) => s.tick)
   const el = useRef<HTMLDivElement>(null)
-  // beside what it is for, kept on the screen by its size as drawn, before the frame shows (the market's window is
-  // wider than a building's)
+  // beside what it is for, kept on the screen by its size as drawn, before the frame shows
   useLayoutEffect(() => {
     const e = el.current
     if (!e || !at) return
@@ -543,177 +292,99 @@ function Popup() {
     e.style.top = Math.max(58, Math.min(window.innerHeight - e.offsetHeight - 90, at.y)) + 'px'
   })
   if (!sel || !at) return null
-  const gs = res(world, GameState)
+  const b = res(world, Plant).b.get(sel.key)
+  if (!b) return null
   const refresh = () => useHudStore.getState().set({ tick: useHudStore.getState().tick + 1, sel: res(world, Ui).sel })
-  let body: ReactNode = null
-  if (sel.kind === 'b') {
-    const b = res(world, Plant).b.get(sel.key)
-    if (!b) return null
-    if (b.type === 'dock') {
-      // the market: every client with its good, how many a minute, how many the stock holds and its bar; trade under them
-      body = (
-        <>
-          <h3>
-            <Icon kind="coin" size={20} />
-            {t(UI.market)}
-          </h3>
-          <div className="pop__rows">
-            {needs.map((n) => (
-              <div key={n.client + n.kind} className="pop__need" title={t(CLIENT_NAMES[n.client])}>
-                <i className="pop__dot" style={{ background: LOOK.client[n.client] }} />
-                <Icon kind={n.kind} size={20} />
-                {t(UI.perMin, { n: n.rate })}
-                <span className="pop__stock" title={t(UI.stock)}>
-                  <Icon kind="stock" size={14} />
-                  {n.stock}
-                </span>
-                <span className="order__bar">
-                  <i style={{ width: (n.fill * 100).toFixed(1) + '%' }} />
-                </span>
-              </div>
-            ))}
+  const st = machineState(world, b)
+  const state = st.text && (
+    <div className={'pop__st pop__st--' + st.tone}>
+      {st.need && <Icon kind={NEED_ICON[st.need]} size={16} />}
+      {t(STATE_TEXT[st.text]!, { n: st.n ?? 0, need: st.need ? t(NEED_TEXT[st.need]) : '' })}
+    </div>
+  )
+  let body: ReactNode
+  if (b.type === 'dock') {
+    // the portal: the score, what a sheep brings, and a sheep stopping it
+    body = (
+      <>
+        <h3>
+          <Icon kind="portal" size={22} />
+          {t(UI.portal)}
+        </h3>
+        <div className="pop__rows">
+          <div>
+            <Icon kind="shorn" size={18} /> {shorn} / {goal}
           </div>
-          {gs.trade && <MarketBody refresh={refresh} />}
-        </>
-      )
-    } else {
-      const type = b.type as BuildingId
-      const st = machineState(world, b)
-      const rules = ['any', ...met, 'sheep', 'off']
-      body = (
-        <>
-          <h3>
-            <Icon kind={type} size={22} />
-            {t(BUILDING_TEXT[type].name)}
-          </h3>
-          {type === 'shearer' ? <ShearLines met={met} /> : <Recipe r={recipeOf(type)} />}
-          <div className="pop__st pop__st--plain">{t(BUILDING_TEXT[type].desc)}</div>
-          {BUILDINGS[type].sows && (
-            <SeedPick
-              value={b.seed ?? 'meadow'}
-              set={(v) => {
-                setSeed(world, b, v)
-                refresh()
-              }}
-            />
-          )}
-          {type === 'splitter' && b.rules && (
-            <div className="split">
-              {(['l', 'f', 'r'] as (keyof SplitRules)[]).map((k) => (
+          <div>
+            <Icon kind="coin" size={16} /> {t(UI.perSheep, { n: SHEEP.coins })}
+          </div>
+        </div>
+        {state}
+      </>
+    )
+  } else {
+    const type = b.type
+    body = (
+      <>
+        <h3>
+          <Icon kind={type} size={22} />
+          {t(BUILDING_TEXT[type].name)}
+        </h3>
+        <Recipe r={recipeOf(type)} />
+        <div className="pop__st pop__st--plain">{t(BUILDING_TEXT[type].desc)}</div>
+        {type === 'splitter' && b.rules && (
+          <div className="split">
+            {(['l', 'f', 'r'] as (keyof SplitRules)[]).map((k) => {
+              const rule = b.rules![k],
+                icon = RULE_ICON[rule]
+              return (
                 <button
                   key={k}
                   type="button"
                   className="rule"
+                  title={t(RULE_TEXT[rule])}
                   onClick={() => {
-                    cycleRule(world, b, k, rules)
+                    cycleRule(world, b, k, SPLIT_RULES)
                     refresh()
                   }}
                 >
-                  {b.rules![k] === 'any' ? t(UI.any) : b.rules![k] === 'off' ? '✕' : <Icon kind={b.rules![k]} size={18} />}
+                  {icon ? <Icon kind={icon} size={18} /> : rule === 'off' ? '✕' : t(RULE_TEXT.any)}
                 </button>
-              ))}
-              {['←', '↑', '→'].map((a) => (
-                <small key={a}>{a}</small>
-              ))}
-            </div>
-          )}
-          {type !== 'belt' && type !== 'merger' && type !== 'splitter' && st.text && (
-            <div className={'pop__st pop__st--' + st.tone}>{t(STATE_TEXT[st.text]!, { n: st.n ?? 0, item: st.item ? t(ITEM_NAMES[st.item as ItemId]).toLowerCase() : '' })}</div>
-          )}
-          <MachineLoad b={b} />
-          <div className="pop__acts">
-            <button
-              type="button"
-              title={t(UI.move)}
-              onClick={() => {
-                liftUp(world, b)
-                refresh()
-              }}
-            >
-              <Icon kind="move" size={18} />
-            </button>
-            <button
-              type="button"
-              title={t(UI.removeTitle)}
-              onClick={() => {
-                remove(world, b.x, b.y)
-                res(world, Ui).sel = null
-                refresh()
-              }}
-            >
-              <Icon kind="erase" size={16} />+{b.paid}
-            </button>
-          </div>
-        </>
-      )
-    }
-  } else if (sel.kind === 'plot') {
-    const price = plotPrice(world, sel.px, sel.py),
-      adj = plotAdjacent(world, sel.px, sel.py)
-    const what = Object.entries(plotStock(world, sel.px, sel.py)) as [ResId, number][]
-    body = (
-      <>
-        <h3>{t(UI.plot)}</h3>
-        <div className="pop__rows">
-          {what.map(([k, n]) => (
-            <div key={k}>
-              <Icon kind={k} size={18} /> {t(RES_NAMES[k])} · <Icon kind={SEED[k]} size={16} />
-              {n}
-            </div>
-          ))}
-        </div>
-        {adj ? (
-          <div className="pop__acts">
-            <button
-              type="button"
-              disabled={gs.coins < price}
-              onClick={() => {
-                if (buyPlot(world, sel.px, sel.py)) res(world, Ui).sel = null
-                refresh()
-              }}
-            >
-              {t(UI.buy)} <Icon kind="coin" size={14} />
-              {price}
-            </button>
-          </div>
-        ) : (
-          <div className="pop__st pop__st--warn">{t(UI.neighbourFirst)}</div>
-        )}
-      </>
-    )
-  } else {
-    const p = penOf(world, sel.id)
-    if (!p) return null
-    const n = residents(world, p),
-      hungryN = res(world, Flock).sheep.filter((s) => s.home === p.id && hungry(s)).length
-    body = (
-      <>
-        <h3>
-          {t(UI.pasture)} · {n}/{p.cap}
-        </h3>
-        {hungryN > 0 && (
-          <div className="pop__st pop__st--warn">
-            <Icon kind="hay" size={16} /> {t(UI.hungryHere, { n: hungryN })}
+              )
+            })}
+            {['←', '↑', '→'].map((a) => (
+              <small key={a}>{a}</small>
+            ))}
           </div>
         )}
+        {type !== 'belt' && type !== 'merger' && type !== 'splitter' && state}
+        {BUILDINGS[type].time !== undefined && <JobBar b={b} />}
         <div className="pop__acts">
           <button
             type="button"
-            title={t(UI.removeTitle)}
-            disabled={n > 0}
+            title={t(UI.move)}
             onClick={() => {
-              remove(world, p.x, p.y)
+              liftUp(world, b)
+              refresh()
+            }}
+          >
+            <Icon kind="move" size={18} />
+          </button>
+          <button
+            type="button"
+            title={t(UI.removeTitle)}
+            onClick={() => {
+              remove(world, b.x, b.y)
               res(world, Ui).sel = null
               refresh()
             }}
           >
-            <Icon kind="erase" size={16} />+{p.paid}
+            <Icon kind="erase" size={16} />+{b.paid}
           </button>
         </div>
       </>
     )
   }
-
   return (
     <div ref={el} className="panel pop">
       {body}
@@ -721,7 +392,13 @@ function Popup() {
   )
 }
 
-/** «Новое»: one new thing, its icon and recipe and one sentence. The game waits until it is closed. */
+/** The icon of a card: its building, its kind of sheep, the shears, the portal for the win. */
+const cardIcon = (c: CardId) => (c === 'shear' ? 'shear' : c === 'win' ? 'portal' : c in KIND_ICON ? KIND_ICON[c as KindId] : c)
+
+/**
+ * «Новое»: one new thing, its icon and what it does to a sheep and one sentence. The game waits until it is closed.
+ * The win is one too (GDD 7): the goal reached, in what time; play on, or start anew.
+ */
 function NewCard() {
   const { world } = useGame()
   const { t } = useT()
@@ -729,28 +406,39 @@ function NewCard() {
   const menuOver = useAppStore((s) => s.menuOver)
   if (!card || menuOver) return null
   const c = CARD_TEXT[card]
-  const icon = card === 'market' ? 'coin' : card === 'land' || card === 'island' ? 'meadow' : card === 'chapter' || card === 'shear' ? 'sheep' : card
   const close = () => {
     res(world, Unlocks).cardQ.shift()
     useHudStore.getState().set({ card: res(world, Unlocks).cardQ[0] ?? null })
   }
+  const win = card === 'win'
+  const kind = card in KIND_TEXT ? (card as KindId) : null
   return (
     <div className="new" onClick={close}>
-      <div className="panel new__card" onClick={(e) => e.stopPropagation()}>
-        <span className="new__tag">{t(UI.newTag)}</span>
-        <Icon kind={icon} size={52} />
+      <div className={'panel new__card' + (win ? ' new__card--win' : '')} onClick={(e) => e.stopPropagation()}>
+        {!win && <span className="new__tag">{t(UI.newTag)}</span>}
+        <Icon kind={cardIcon(card)} size={win ? 72 : 52} />
         <h2>{t(c.title)}</h2>
+        {kind && <small>{t(KIND_TEXT[kind])}</small>}
         <Recipe r={recipeOf(card)} />
-        <p>{t(c.text)}</p>
-        <button type="button" className="btn" onClick={close}>
-          {t(UI.gotIt)}
-        </button>
+        <p>{win ? t(c.text) + ' ' + t(UI.wonIn, { t: fmtT(res(world, GameState).wonAt) }) : t(c.text)}</p>
+        {win ? (
+          <div className="menu__acts">
+            <button type="button" className="btn" onClick={close}>
+              {t(UI.playOn)}
+            </button>
+            <NewGame className="btn btn--ghost" />
+          </div>
+        ) : (
+          <button type="button" className="btn" onClick={close}>
+            {t(UI.gotIt)}
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
-/** The pause menu: the village's level and the game time, then go on, start anew, or leave for the main menu. */
+/** The pause menu: the score and the game time, then go on, start anew, or leave for the main menu. */
 function MenuOverlay() {
   const { world } = useGame()
   const { t } = useT()
@@ -763,7 +451,9 @@ function MenuOverlay() {
       <div className="panel menu__card menu__card--pause" onClick={(e) => e.stopPropagation()}>
         <div className="result">
           <small className="menu__kicker">❚❚</small>
-          <h2>{t(UI.level, { n: gs.level + 1 })}</h2>
+          <h2>
+            <Icon kind="shorn" size={28} /> {gs.shorn} / {useHudStore.getState().goal}
+          </h2>
           <div className="result__rows">{fmtT(gs.clock)}</div>
         </div>
         <div className="menu__acts menu__acts--col">

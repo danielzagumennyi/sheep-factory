@@ -14,7 +14,7 @@
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,css}\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "simulate": "vitest run packages/game/src/game/bot.test.ts"
+    "simulate": "vitest run packages/game/src/game/bot.test.ts --reporter=verbose"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

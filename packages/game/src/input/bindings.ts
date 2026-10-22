@@ -9,7 +9,7 @@ export const BINDINGS: KeyBindings<Action> = {
   confirm: ['Enter', 'NumpadEnter'],
   rotate: ['KeyR'],
   erase: ['KeyX', 'Delete'],
-  /** The book of buildings and goods (B for «build», as the quick bar is filled from it). */
+  /** The book of buildings and sheep (B for «build», as the quick bar is filled from it). */
   book: ['KeyB'],
   panLeft: ['KeyA', 'ArrowLeft'],
   panRight: ['KeyD', 'ArrowRight'],

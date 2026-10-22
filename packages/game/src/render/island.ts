@@ -1,11 +1,12 @@
-import { HILLS, ISLAND_START, RIM } from '@/game/balance'
+import { ISLAND_START, RIM } from '@/game/balance'
+import type { HillRect } from '@/game/land'
 
 /**
- * The island's edges as its parts are built (Field's left, top, right and bottom): until it grows (ISLAND_GROW) the
- * ring round the start is under the sky; and its hills (Field.hills). Scene remounts the island's parts when it grows, and each reads them as it
- * builds.
+ * The island's edges as its parts are built (Field's left, top, right and bottom: the whole map), and its hills
+ * (Field.hills, and their steps' rectangles). Scene sets them before the island's parts mount, and each reads them as
+ * it builds.
  */
-export const island = { ...ISLAND_START, hills: HILLS as ReadonlyMap<string, number> }
+export const island = { ...ISLAND_START, hills: new Map() as ReadonlyMap<string, number>, hillRects: [] as readonly HillRect[] }
 /** Is the cell on the island as built? */
 export const inIsland = (x: number, y: number) => x >= island.left && y >= island.top && x < island.right && y < island.bottom
 /** The level of the ground on a cell as built: 1, or a hill's 2 or 3. */

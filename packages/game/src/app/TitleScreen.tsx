@@ -8,23 +8,18 @@ import { Book } from '@/ui/Book'
 import { Title } from '@/ui/Title'
 
 /**
- * The main menu over a big working farm (the author: «главное меню с фоном в виде большой фермы»): the farm of chapter
- * 1 built whole (game/plan.ts), its land kept full and the bot's hand tending it so it never stops, the camera circling.
- * Only to look at (the author: «в демо на главном меню должно быть только визуально»): the world runs with the DEMO
- * systems — no keys or pointer on the field, no grid, no numbers, no sound, no levels.
+ * The main menu over a big working factory (the author: «главное меню с фоном в виде большой фермы»): a line from each
+ * of the portal's ways in (game/showcase.ts), the flock round it, the camera circling. Only to look at (the author: «в
+ * демо на главном меню должно быть только визуально»): the world runs with the DEMO systems — no keys or pointer on the
+ * field, no grid, no numbers, no sound, no goal. Without the goal no new kinds come, so its lines never stop.
  */
 export function TitleScreen() {
-  const { world, hand } = useMemo(() => {
+  const world = useMemo(() => {
     const w = startWorld({ seed: 5, systems: DEMO })
-    const hand = buildShowcase(w, 40)
+    buildShowcase(w, 40)
     res(w, Unlocks).cardQ.length = 0
-    return { world: w, hand }
+    return w
   }, [])
-  // the bot's hand keeps tending the farm while the menu is up, so it never jams
-  useEffect(() => {
-    const t = setInterval(() => hand.act(), 700)
-    return () => clearInterval(t)
-  }, [hand])
   useEffect(() => () => world.destroy(), [world])
   const ctx = useMemo(() => ({ world }), [world])
   return (

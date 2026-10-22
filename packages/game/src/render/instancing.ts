@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Color, DynamicDrawUsage, Euler, InstancedMesh, Matrix4, Quaternion, Vector3, type BufferGeometry, type Material } from 'three'
 
 /**
- * Instanced meshes for the many small things of the field — tufts, berries, belt pieces, goods (TDD 4.2). A view
+ * Instanced meshes for the many small things of the field — tufts, berries, belt pieces, puffs (TDD 4.2). A view
  * creates one with `useInstanced`, then every frame calls `begin`, `put` per instance and `end`.
  */
 /** `shadows`: cast and receive (true), neither (false), or only receive (flat things whose own shadow nobody sees). */

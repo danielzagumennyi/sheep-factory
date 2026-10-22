@@ -14,13 +14,9 @@ import { Grass } from './Grass'
 import { Ground } from './Ground'
 import { Hills } from './Hills'
 import { Hover } from './Hover'
-import { PlotFence } from './PlotFence'
-import { Items } from './Items'
 import { Machines } from './Machines'
-import { Market } from './Market'
+import { Portal } from './Portal'
 import { Nature } from './Nature'
-import { Pastures } from './Pastures'
-import { PlotTags } from './PlotTags'
 import { Props } from './Props'
 import { Pointer } from './Pointer'
 import { Flock3D } from './SheepView'
@@ -80,13 +76,10 @@ export function Scene() {
       </directionalLight>
       <Island />
       <Ambient />
-      <Pastures />
       <Belts />
       <Machines />
-      <Items />
-      <Market />
+      <Portal />
       <Flock3D />
-      {on('tags') && <PlotTags />}
       {on('ghost') && <Ghost />}
       {on('hover') && <Hover />}
       <FxView />
@@ -107,13 +100,12 @@ function Island() {
     const e = edge()
     if (e !== k) setK(e)
   })
-  Object.assign(island, { left: f.left, top: f.top, right: f.right, bottom: f.bottom, hills: f.hills })
+  Object.assign(island, { left: f.left, top: f.top, right: f.right, bottom: f.bottom, hills: f.hills, hillRects: f.hillRects })
   return (
     <group key={k}>
       <Ground />
       <Water />
       <Hills />
-      <PlotFence />
       <Terrain />
       <Grass />
       <Decor />
